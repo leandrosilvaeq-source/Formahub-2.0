@@ -1,0 +1,107 @@
+/* ==========================================================
+   PALETA OFICIAL — PROVISÓRIA
+   Valores temporários. Substituir aqui quando a paleta oficial
+   do FormaHub for definida; o restante do CSS usa só estas variáveis.
+   ========================================================== */
+:root {
+  --cor-primaria: #2f5d8a;
+  --cor-primaria-texto: #ffffff;
+  --cor-destaque: #e0a526;
+  --cor-fundo: #f5f6f8;
+  --cor-superficie: #ffffff;
+  --cor-texto: #1f2933;
+  --cor-texto-suave: #5b6673;
+  --cor-borda: #dde1e6;
+}
+
+/* Tokens de layout (não fazem parte da paleta) */
+:root {
+  --raio: 10px;
+  --espaco: 1rem;
+  --largura-max: 1080px;
+  --fonte: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--fonte);
+  background: var(--cor-fundo);
+  color: var(--cor-texto);
+  line-height: 1.5;
+}
+
+.container {
+  width: 100%;
+  max-width: var(--largura-max);
+  margin: 0 auto;
+  padding: 0 var(--espaco);
+}
+
+.topo {
+  background: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+  padding: calc(var(--espaco) * 0.75) 0;
+}
+
+.marca {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+.apresentacao {
+  padding: calc(var(--espaco) * 2.5) 0 calc(var(--espaco) * 1.5);
+}
+
+.apresentacao h1 {
+  margin: 0 0 0.25rem;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.apresentacao p {
+  margin: 0;
+  color: var(--cor-texto-suave);
+  font-size: 1.125rem;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--espaco);
+  padding-bottom: calc(var(--espaco) * 2);
+}
+
+.card {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-top: 4px solid var(--cor-primaria);
+  border-radius: var(--raio);
+  padding: calc(var(--espaco) * 1.25);
+}
+
+.card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+}
+
+.card p {
+  margin: 0 0 1rem;
+  color: var(--cor-texto-suave);
+}
+
+.selo {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--cor-destaque);
+  color: var(--cor-texto);
+}

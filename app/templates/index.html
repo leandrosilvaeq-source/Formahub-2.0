@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="apresentacao">
+  <h1>FormaHub 2.0</h1>
+  <p>Produtos, estoque e pedidos em um só lugar</p>
+</section>
+
+<section class="cards">
+  {% for modulo in modulos %}
+  <article class="card">
+    <h2>{{ modulo.titulo }}</h2>
+    <p>{{ modulo.descricao }}</p>
+    <span class="selo">Em breve</span>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}
