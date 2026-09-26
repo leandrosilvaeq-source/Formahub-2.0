@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}Novo pedido · FormaHub 2.0{% endblock %}
+
+{% macro erro(mensagem, id="") -%}
+  {% if mensagem %}<p class="campo-erro"{% if id %} id="{{ id }}-erro"{% endif %}>{{ mensagem }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro invalido(mensagem, id="") -%}
+  {% if mensagem %} aria-invalid="true"{% if id %} aria-describedby="{{ id }}-erro"{% endif %}{% endif %}
+{%- endmacro %}
+
+{# Ícones de referência: SVG simples, sem biblioteca externa. #}
+{% macro icone(nome) -%}
+<svg class="escolha-icone" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  {%- if nome == "PIX" %}
+  <path d="M12 3 21 12 12 21 3 12Z"/><path d="M8 12h8M12 8v8"/>
+  {%- elif nome == "Dinheiro" %}
+  <rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 9.5v5M18 9.5v5"/>
+  {%- elif nome == "Cartão" %}
+  <rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 9.5h19M6 15h4"/>
+  {%- elif nome == "Entrega em mãos" %}
+  <path d="M12 3 20 7.5v9L12 21 4 16.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>
+  {%- elif nome == "Retirada" %}
+  <path d="M4 10v10h16V10"/><path d="M3 10 5 4h14l2 6Z"/><path d="M10 20v-5h4v5"/>
+  {%- endif %}
+</svg>
+{%- endmacro %}
+
+{% macro escolhas(nome, titulo, opcoes, selecionada, mensagem, colunas) -%}
+<fieldset class="secao escolhas{% if mensagem %} tem-erro{% endif %}" id="grupo-{{ nome }}"
+  {%- if mensagem %} aria-describedby="{{ nome }}-erro"{% endif %}>
+  <legend>{{ titulo }} <span class="obrigatorio">*</span></legend>
+  <div class="escolhas-opcoes escolhas-{{ colunas }}">
+    {% for opcao in opcoes %}
+    <label class="escolha">
+      <input class="escolha-input" type="radio" name="{{ nome }}" value="{{ opcao }}"
+        {%- if opcao == selecionada %} checked{% endif %}>
+      <span class="escolha-card">{{ icone(opcao) }}<span class="escolha-titulo">{{ opcao }}</span></span>
+    </label>
+    {% endfor %}
+  </div>
+  {{ erro(mensagem, nome) }}
+</fieldset>
+{%- endmacro %}
+
+{% macro item_linha(item) -%}
+<div class="item">
+  <div class="campo item-produto{% if item.erros.produto %} tem-erro{% endif %}">
+    <span class="item-rotulo" aria-hidden="true">Produto <span class="obrigatorio">*</span></span>
+    <input name="item_produto" type="text" value="{{ item.produto }}" placeholder="Produto"
+      aria-label="Produto"{{ invalido(item.erros.produto) }}>
+    {{ erro(item.erros.produto) }}
+  </div>
+  <div class="campo item-quantidade{% if item.erros.quantidade %} tem-erro{% endif %}">
+    <span class="item-rotulo" aria-hidden="true">Qtd. <span class="obrigatorio">*</span></span>
+    <input name="item_quantidade" type="text" inputmode="numeric" maxlength="5" value="{{ item.quantidade }}"
+      aria-label="Quantidade"{{ invalido(item.erros.quantidade) }}>
+    {{ erro(item.erros.quantidade) }}
+  </div>
+  <div class="campo item-valor{% if item.erros.valor_unitario %} tem-erro{% endif %}">
+    <span class="item-rotulo" aria-hidden="true">Valor unitário <span class="obrigatorio">*</span></span>
+    <input name="item_valor" type="text" inputmode="numeric" value="{{ item.valor_unitario }}" placeholder="R$ 0,00"
+      aria-label="Valor unitário"{{ invalido(item.erros.valor_unitario) }}>
+    {{ erro(item.erros.valor_unitario) }}
+  </div>
+  <div class="item-subtotal">
+    <span class="item-rotulo">Subtotal</span>
+    <output aria-label="Subtotal do item">{{ item.subtotal | brl }}</output>
+  </div>
+  <button type="button" class="botao-icone item-remover" aria-label="Remover item" title="Remover item">&times;</button>
+</div>
+{%- endmacro %}
+
+{% block content %}
+{% set e = pedido.erros %}
+<div class="pedido">
+
+<div class="pagina-topo">
+  <div>
+    <h1>Novo pedido</h1>
+    <p>Cliente, itens, pagamento e entrega.</p>
+  </div>
+  <a class="botao botao-secundario" href="/">Voltar</a>
+</div>
+
+{% if sucesso %}
+<div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>
+{% elif not pedido.valido %}
+<div class="alerta alerta-erro" role="alert">Não foi possível salvar. Corrija os campos destacados.</div>
+{% endif %}
+
+<form id="form-pedido" method="post" action="/pedidos/novo" novalidate>
+
+  <section class="secao">
+    <h2>Dados do cliente</h2>
+    <div class="grade grade-cliente">
+      <div class="campo{% if e.cliente %} tem-erro{% endif %}">
+        <label for="cliente">Nome do cliente <span class="obrigatorio">*</span></label>
+        <input id="cliente" name="cliente" type="text" value="{{ pedido.cliente }}" autocomplete="name"
+          {{- invalido(e.cliente, "cliente") }}>
+        {{ erro(e.cliente, "cliente") }}
+      </div>
+      <div class="campo{% if e.contato %} tem-erro{% endif %}">
+        <label for="contato">Contato <span class="obrigatorio">*</span></label>
+        <input id="contato" name="contato" type="tel" inputmode="numeric" value="{{ pedido.contato }}"
+          placeholder="(00) 00000-0000" maxlength="15" autocomplete="tel-national"
+          {{- invalido(e.contato, "contato") }}>
+        {{ erro(e.contato, "contato") }}
+      </div>
+    </div>
+  </section>
+
+  <section class="secao">
+    <h2>Itens do pedido</h2>
+    <div class="itens-cabecalho" aria-hidden="true">
+      <span>Produto</span><span>Qtd.</span><span>Valor unitário</span><span>Subtotal</span><span></span>
+    </div>
+    <div id="itens" class="itens">
+      {% for item in pedido.itens %}{{ item_linha(item) }}{% endfor %}
+    </div>
+    <p id="itens-vazio" class="itens-vazio"{% if pedido.itens %} hidden{% endif %}>Nenhum item adicionado.</p>
+    {{ erro(e.itens, "itens") }}
+    <button type="button" id="adicionar-item" class="botao botao-secundario">+ Adicionar item</button>
+    <template id="item-modelo">{{ item_linha(novo_item) }}</template>
+  </section>
+
+  <div class="grade-escolhas">
+    {{ escolhas("pagamento", "Forma de pagamento", formas_pagamento, pedido.pagamento, e.pagamento, 3) }}
+    {{ escolhas("entrega", "Entrega", formas_entrega, pedido.entrega, e.entrega, 2) }}
+  </div>
+
+  <section class="secao">
+    <h2><label for="observacoes">Informações complementares</label></h2>
+    <textarea id="observacoes" name="observacoes" rows="2" class="campo-texto"
+      placeholder="Opcional">{{ pedido.observacoes }}</textarea>
+  </section>
+
+  <section class="secao resumo" aria-labelledby="resumo-titulo">
+    <h2 id="resumo-titulo">Resumo</h2>
+    <div class="resumo-conteudo">
+      <dl class="resumo-valores">
+        <div>
+          <dt>Quantidade de itens</dt>
+          <dd id="resumo-quantidade">{{ pedido.quantidade_total }}</dd>
+        </div>
+        <div class="resumo-total">
+          <dt>Total do pedido</dt>
+          <dd id="resumo-total">{{ pedido.total | brl }}</dd>
+        </div>
+      </dl>
+      <div class="acoes">
+        <a class="botao botao-secundario" href="/">Cancelar</a>
+        <button type="submit" class="botao botao-primario">Salvar pedido</button>
+      </div>
+    </div>
+  </section>
+</form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/pedido-novo.js') }}"></script>
+{% endblock %}

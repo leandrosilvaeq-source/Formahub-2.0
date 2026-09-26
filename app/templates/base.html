@@ -9,11 +9,16 @@
 <body>
   <header class="topo">
     <div class="container">
-      <a class="marca" href="/">FormaHub 2.0</a>
+      <a class="marca" href="/">
+        {# Espaço do logotipo: trocar o símbolo provisório por <img class="marca-logo" src="..." alt=""> #}
+        <span class="marca-simbolo" aria-hidden="true">F</span>
+        <span>FormaHub 2.0</span>
+      </a>
     </div>
   </header>
   <main class="container">
     {% block content %}{% endblock %}
   </main>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

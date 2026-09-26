@@ -11,7 +11,11 @@
   <article class="card">
     <h2>{{ modulo.titulo }}</h2>
     <p>{{ modulo.descricao }}</p>
+    {% if modulo.link %}
+    <a class="botao botao-primario" href="{{ modulo.link }}">{{ modulo.link_texto }}</a>
+    {% else %}
     <span class="selo">Em breve</span>
+    {% endif %}
   </article>
   {% endfor %}
 </section>

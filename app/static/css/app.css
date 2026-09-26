@@ -12,6 +12,10 @@
   --cor-texto: #1f2933;
   --cor-texto-suave: #5b6673;
   --cor-borda: #dde1e6;
+  --cor-erro: #b42318;
+  --cor-erro-fundo: #fdecea;
+  --cor-sucesso: #1e7a46;
+  --cor-sucesso-fundo: #e7f5ec;
 }
 
 /* Tokens de layout (não fazem parte da paleta) */
@@ -20,12 +24,17 @@
   --espaco: 1rem;
   --largura-max: 1080px;
   --fonte: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --logo-altura: 32px;
 }
 
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -50,10 +59,29 @@ body {
 }
 
 .marca {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
   color: inherit;
   text-decoration: none;
   font-weight: 700;
   font-size: 1.125rem;
+}
+
+/* Logotipo oficial: <img class="marca-logo"> substitui .marca-simbolo */
+.marca-logo {
+  height: var(--logo-altura);
+  width: auto;
+}
+
+.marca-simbolo {
+  display: grid;
+  place-items: center;
+  width: var(--logo-altura);
+  height: var(--logo-altura);
+  border-radius: 8px;
+  background: var(--cor-destaque);
+  color: var(--cor-texto);
 }
 
 .apresentacao {
@@ -104,4 +132,473 @@ body {
   border-radius: 999px;
   background: var(--cor-destaque);
   color: var(--cor-texto);
+}
+
+/* ---------- Botões ---------- */
+.botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0.5rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.botao-primario {
+  background: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+}
+
+.botao-primario:hover {
+  filter: brightness(1.1);
+}
+
+.botao-secundario {
+  background: var(--cor-superficie);
+  color: var(--cor-primaria);
+  border-color: var(--cor-borda);
+}
+
+.botao-secundario:hover {
+  border-color: var(--cor-primaria);
+}
+
+.botao-icone {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+  background: var(--cor-superficie);
+  color: var(--cor-texto-suave);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.botao-icone:hover {
+  color: var(--cor-erro);
+  border-color: var(--cor-erro);
+}
+
+.botao:focus-visible,
+.botao-icone:focus-visible {
+  outline: 3px solid var(--cor-destaque);
+  outline-offset: 2px;
+}
+
+/* ---------- Cabeçalho de página e alertas ---------- */
+.pagina-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--espaco);
+  padding: calc(var(--espaco) * 1.75) 0 var(--espaco);
+}
+
+.pagina-topo h1 {
+  margin: 0 0 0.25rem;
+  font-size: clamp(1.5rem, 3.5vw, 2rem);
+}
+
+.pagina-topo p {
+  margin: 0;
+  color: var(--cor-texto-suave);
+}
+
+.alerta {
+  margin-bottom: var(--espaco);
+  padding: 0.75rem 1rem;
+  border-radius: var(--raio);
+  border: 1px solid;
+  font-weight: 500;
+}
+
+.alerta-sucesso {
+  background: var(--cor-sucesso-fundo);
+  border-color: var(--cor-sucesso);
+  color: var(--cor-sucesso);
+}
+
+.alerta-erro {
+  background: var(--cor-erro-fundo);
+  border-color: var(--cor-erro);
+  color: var(--cor-erro);
+}
+
+/* ---------- Formulário ---------- */
+.pedido {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.pedido .pagina-topo {
+  padding: calc(var(--espaco) * 1.25) 0 0.75rem;
+}
+
+.secao {
+  min-width: 0;
+  margin: 0 0 0.75rem;
+  padding: 0.85rem var(--espaco) var(--espaco);
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+}
+
+.secao h2,
+.secao legend {
+  margin: 0 0 0.6rem;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--cor-primaria);
+}
+
+/* legend dentro de fieldset precisa flutuar para respeitar o padding */
+.secao legend {
+  float: left;
+  width: 100%;
+}
+
+.secao legend + * {
+  clear: both;
+}
+
+.grade {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.campo label,
+.item-rotulo {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.obrigatorio {
+  color: var(--cor-erro);
+}
+
+.campo input,
+.campo-texto {
+  width: 100%;
+  min-height: 42px;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+  font: inherit;
+}
+
+.campo-texto {
+  display: block;
+  resize: vertical;
+}
+
+.campo input:focus,
+.campo-texto:focus {
+  outline: none;
+  border-color: var(--cor-primaria);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cor-primaria) 20%, transparent);
+}
+
+.tem-erro input {
+  border-color: var(--cor-erro);
+}
+
+.campo-erro {
+  margin: 0.25rem 0 0;
+  color: var(--cor-erro);
+  font-size: 0.8rem;
+}
+
+/* ---------- Itens do pedido ---------- */
+.itens-cabecalho {
+  display: none;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 42px;
+  grid-template-areas:
+    "produto produto produto"
+    "quantidade valor remover"
+    "subtotal subtotal subtotal";
+  gap: 0.5rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.item:first-child {
+  padding-top: 0;
+}
+
+.item-produto { grid-area: produto; }
+.item-quantidade { grid-area: quantidade; }
+.item-valor { grid-area: valor; }
+
+.item-quantidade input {
+  text-align: center;
+}
+
+.item-valor input,
+.item-subtotal output {
+  font-variant-numeric: tabular-nums;
+}
+
+.item-subtotal {
+  grid-area: subtotal;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.item-subtotal output {
+  font-weight: 700;
+}
+
+.item-remover {
+  grid-area: remover;
+  align-self: end;
+  width: 42px;
+  height: 42px;
+}
+
+.itens-vazio {
+  margin: 0 0 0.5rem;
+  color: var(--cor-texto-suave);
+}
+
+#adicionar-item {
+  margin-top: 0.75rem;
+}
+
+/* ---------- Action buttons (pagamento e entrega) ---------- */
+.grade-escolhas {
+  display: grid;
+  gap: 0 0.75rem;
+}
+
+.escolhas-opcoes {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.escolhas-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.escolhas-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.escolha {
+  position: relative;
+  display: block;
+  cursor: pointer;
+}
+
+/* O radio fica invisível, mas continua acessível por teclado e leitor de tela. */
+.escolha-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.escolha-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 76px;
+  padding: 0.6rem 0.4rem;
+  border: 2px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+  color: var(--cor-texto-suave);
+  text-align: center;
+  transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+}
+
+.escolha-icone {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.escolha-titulo {
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.escolha:hover .escolha-card {
+  border-color: var(--cor-primaria);
+}
+
+.escolha-input:focus-visible + .escolha-card {
+  outline: 3px solid var(--cor-destaque);
+  outline-offset: 2px;
+}
+
+.escolha-input:checked + .escolha-card {
+  border-color: var(--cor-primaria);
+  background: color-mix(in srgb, var(--cor-primaria) 10%, var(--cor-superficie));
+  color: var(--cor-primaria);
+}
+
+/* Marca de seleção no canto do card escolhido */
+.escolha-input:checked + .escolha-card::after {
+  content: "✓";
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.escolhas.tem-erro {
+  border-color: var(--cor-erro);
+}
+
+/* ---------- Resumo ---------- */
+.resumo-conteudo {
+  display: grid;
+  gap: var(--espaco);
+}
+
+.resumo-valores {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.resumo-valores > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.resumo-valores dt {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+}
+
+.resumo-valores dd {
+  margin: 0;
+  white-space: nowrap;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.resumo-total {
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cor-primaria) 10%, var(--cor-superficie));
+  text-align: right;
+}
+
+.resumo-total dd {
+  font-size: 1.6rem;
+  color: var(--cor-primaria);
+}
+
+.acoes {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 0.5rem;
+}
+
+/* ---------- Telas médias e largas ---------- */
+@media (min-width: 640px) {
+  .grade-cliente { grid-template-columns: minmax(0, 1fr) 220px; }
+}
+
+@media (min-width: 760px) {
+  .itens-cabecalho,
+  .item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 72px 150px 120px 42px;
+    grid-template-areas: "produto quantidade valor subtotal remover";
+    gap: 0.5rem;
+    align-items: start;
+  }
+
+  .itens-cabecalho {
+    padding-bottom: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--cor-texto-suave);
+  }
+
+  .itens-cabecalho span:nth-child(2) { text-align: center; }
+  .itens-cabecalho span:nth-child(4) { text-align: right; }
+
+  .item {
+    padding: 0 0 0.5rem;
+    border-bottom: 0;
+  }
+
+  .item-rotulo {
+    display: none;
+  }
+
+  .item-subtotal {
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 42px;
+  }
+
+  .item-remover {
+    align-self: start;
+  }
+
+  .grade-escolhas {
+    grid-template-columns: 3fr 2fr;
+  }
+
+  .resumo-conteudo {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .resumo-valores {
+    grid-template-columns: auto 1fr;
+    gap: 0.75rem;
+  }
+
+  .resumo-valores > div:first-child {
+    display: block;
+  }
+
+  .acoes {
+    min-width: 300px;
+  }
 }
