@@ -290,3 +290,28 @@ def test_envio_valido_mostra_sucesso():
     assert "Pedido de Maria Souza validado com sucesso — 3 itens, total R$ 1.271,00." in html
     # O formulário volta limpo para um novo lançamento.
     assert 'value="Maria Souza"' not in html
+
+
+def test_subtitulo_do_cabecalho_removido():
+    html = client.get("/pedidos/novo").text
+
+    assert "<h1>Novo pedido</h1>" in html
+    assert "Cliente, itens, pagamento e entrega" not in html
+    assert 'href="/">Voltar</a>' in html
+
+
+def test_icone_oficial_do_pix_presente():
+    html = client.get("/pedidos/novo").text
+
+    assert 'data-icone="pix"' in html
+    assert "M5.283 18.36a3.505" in html  # início do traçado do símbolo oficial
+    assert "M12 3 21 12 12 21 3 12Z" not in html  # losango genérico antigo
+
+
+def test_icone_de_entrega_em_maos_presente():
+    html = client.get("/pedidos/novo").text
+
+    assert 'data-icone="entrega-em-maos"' in html
+    assert "M12 3 20 7.5v9L12 21 4 16.5v-9Z" not in html  # caixa antiga
+    assert 'class="escolha-titulo">Entrega em mãos<' in html
+    assert html.count('aria-hidden="true" focusable="false"') >= 5  # ícones decorativos

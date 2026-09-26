@@ -408,3 +408,127 @@ def test_desktop_item_em_uma_linha(pagina):
         ".map(el => Math.round(el.getBoundingClientRect().top))"
     )
     assert len(set(topos)) == 1
+
+
+# ---------- Compactação (desktop) e ícones ----------
+
+
+def preencher_dois_itens(tela):
+    tela.digitar("#cliente", "Maria Souza")
+    tela.digitar("#contato", "11987654321")
+    tela.digitar(item(1, "item_produto"), "Caneca")
+    tela.digitar(item(1, "item_valor"), "3550")
+    tela.clicar("#adicionar-item")
+    tela.digitar(item(2, "item_produto"), "Camiseta")
+    tela.digitar(item(2, "item_valor"), "9990")
+    tela.clicar("#grupo-pagamento input[value='PIX']")
+    tela.clicar("#grupo-entrega input[value='Entrega em mãos']")
+
+
+# Elementos visíveis (dentro da página, exceto o cabeçalho) que ultrapassam a janela
+# ou que escondem conteúdo com overflow.
+CORTES = """
+(() => {
+  const ruins = [];
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  document.querySelectorAll('main *').forEach(el => {
+    if (el.closest('template, svg') || el.offsetParent === null) return;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return;
+    const nome = el.tagName + '.' + el.className;
+    if (r.left < -0.5 || r.right > vw + 0.5) ruins.push(nome + ' fora na horizontal');
+    if (LIMITE_VERTICAL && (r.top < -0.5 || r.bottom > vh + 0.5))
+      ruins.push(nome + ' fora na vertical');
+    const o = getComputedStyle(el);
+    const rola = /(auto|scroll|hidden|clip)/.test(o.overflowX + o.overflowY);
+    if (rola && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1))
+      ruins.push(nome + ' com conteúdo cortado');
+  });
+  return ruins;
+})()
+"""
+
+
+def test_dois_itens_cabem_em_1280x720_sem_rolagem_vertical(pagina):
+    pagina.tela(1280, 720)
+    pagina.abrir()
+    preencher_dois_itens(pagina)
+
+    assert pagina.js("document.querySelectorAll('#itens .item').length") == 2
+    assert pagina.js("document.documentElement.scrollHeight") <= 720
+    assert pagina.js("document.body.scrollHeight") <= 720
+    # Sem barra de rolagem: a largura útil é a da janela inteira.
+    assert pagina.js("document.documentElement.clientWidth") == 1280
+    assert pagina.js("document.documentElement.scrollWidth") <= 1280
+    # Campos, resumo e botões finais visíveis, sem cortes nem rolagem interna.
+    assert pagina.js(CORTES.replace("LIMITE_VERTICAL", "true")) == []
+    for seletor in ("#cliente", "#adicionar-item", "#resumo-total", "button[type=submit]"):
+        base = pagina.js(
+            f"document.querySelector({json.dumps(seletor)}).getBoundingClientRect().bottom"
+        )
+        assert base <= 720, seletor
+    assert pagina.texto("#resumo-total") == "R$ 135,40"
+
+
+def test_um_item_tambem_cabe_em_1280x720(pagina):
+    pagina.tela(1280, 720)
+    pagina.abrir()
+
+    assert pagina.js("document.documentElement.scrollHeight") <= 720
+
+
+def test_alvos_de_clique_de_44px_no_desktop_compacto(pagina):
+    pagina.tela(1280, 720)
+    pagina.abrir()
+    menores = pagina.js(
+        "[...document.querySelectorAll('a.botao, button, #form-pedido input:not([type=radio]),"
+        " .escolha-card, textarea')].filter(e => e.getBoundingClientRect().height < 44)"
+        ".map(e => e.className || e.name)"
+    )
+    assert menores == []
+
+
+@pytest.mark.parametrize("largura", [360, 768])
+def test_telas_menores_rolam_na_vertical_sem_cortes(pagina, largura):
+    pagina.tela(largura, 700)
+    pagina.abrir()
+    preencher_dois_itens(pagina)
+
+    assert pagina.js("document.documentElement.scrollHeight") > 700  # rolagem vertical normal
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    assert pagina.js(CORTES.replace("LIMITE_VERTICAL", "false")) == []
+
+
+def test_novos_icones_no_navegador(tela):
+    # Entrega em mãos: ícone próprio, ao lado do título mantido.
+    assert tela.js("!!document.querySelector('svg[data-icone=entrega-em-maos]')")
+    assert (
+        tela.texto("#grupo-entrega input[value='Entrega em mãos'] + .escolha-card .escolha-titulo")
+        == "Entrega em mãos"
+    )
+    # PIX: símbolo preenchido que segue a cor do card (normal e selecionado).
+    cor = (
+        "[getComputedStyle(document.querySelector('svg[data-icone=pix] path')).fill,"
+        " getComputedStyle(document.querySelector("
+        "'#grupo-pagamento input[value=PIX] + .escolha-card')).color]"
+    )
+    esperar(lambda: (c := tela.js(cor)) and c[0] == c[1], tempo=2)
+    tela.clicar("#grupo-pagamento input[value='PIX']")
+    esperar(lambda: (c := tela.js(cor)) and c[0] == c[1], tempo=2)
+    assert (
+        tela.js("getComputedStyle(document.querySelector('svg[data-icone=pix] path')).stroke")
+        == "none"
+    )
+
+
+def test_desktop_secoes_inferiores_alinhadas_as_superiores(pagina):
+    pagina.tela(1280, 720)
+    pagina.abrir()
+    bordas = pagina.js(
+        "['#grupo-pagamento', '.secao-obs', '#grupo-entrega', '.resumo'].map(s => {"
+        " const r = document.querySelector(s).getBoundingClientRect();"
+        " return [Math.round(r.left * 10) / 10, Math.round(r.right * 10) / 10] })"
+    )
+    pagamento, obs, entrega, resumo = bordas
+    assert obs == pagamento  # Informações complementares = largura de Forma de pagamento
+    assert resumo == entrega  # Resumo = largura de Entrega

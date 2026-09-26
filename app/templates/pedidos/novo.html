@@ -10,17 +10,19 @@
   {% if mensagem %} aria-invalid="true"{% if id %} aria-describedby="{{ id }}-erro"{% endif %}{% endif %}
 {%- endmacro %}
 
-{# Ícones de referência: SVG simples, sem biblioteca externa. #}
+{# Ícones: SVG inline, sem biblioteca externa. O PIX é o símbolo oficial (preenchido);
+   "Entrega em mãos" é desenho próprio: mão aberta oferecendo um pacote. #}
 {% macro icone(nome) -%}
-<svg class="escolha-icone" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+<svg class="escolha-icone" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
+  {%- if nome == "PIX" %} data-icone="pix"{% elif nome == "Entrega em mãos" %} data-icone="entrega-em-maos"{% endif %}>
   {%- if nome == "PIX" %}
-  <path d="M12 3 21 12 12 21 3 12Z"/><path d="M8 12h8M12 8v8"/>
+  <path d="M5.283 18.36a3.505 3.505 0 0 0 2.493-1.032l3.6-3.6a.684.684 0 0 1 .946 0l3.613 3.613a3.504 3.504 0 0 0 2.493 1.032h.71l-4.56 4.56a3.647 3.647 0 0 1-5.156 0L4.85 18.36ZM18.428 5.627a3.505 3.505 0 0 0-2.493 1.032l-3.613 3.614a.67.67 0 0 1-.946 0l-3.6-3.6A3.505 3.505 0 0 0 5.283 5.64h-.434l4.573-4.572a3.646 3.646 0 0 1 5.156 0l4.559 4.559ZM1.068 9.422 3.79 6.699h1.492a2.483 2.483 0 0 1 1.744.722l3.6 3.6a1.73 1.73 0 0 0 2.443 0l3.614-3.613a2.482 2.482 0 0 1 1.744-.723h1.767l2.737 2.737a3.646 3.646 0 0 1 0 5.156l-2.736 2.736h-1.768a2.482 2.482 0 0 1-1.744-.722l-3.613-3.613a1.77 1.77 0 0 0-2.444 0l-3.6 3.6a2.483 2.483 0 0 1-1.744.722H3.791l-2.723-2.723a3.646 3.646 0 0 1 0-5.156"/>
   {%- elif nome == "Dinheiro" %}
   <rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 9.5v5M18 9.5v5"/>
   {%- elif nome == "Cartão" %}
   <rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M2.5 9.5h19M6 15h4"/>
   {%- elif nome == "Entrega em mãos" %}
-  <path d="M12 3 20 7.5v9L12 21 4 16.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>
+  <path d="M12 2.5l3.8 2.1v4.3L12 11 8.2 8.9V4.6Z"/><path d="M8.2 4.6 12 6.7l3.8-2.1M12 6.7V11"/><path d="M2.5 14v7.5"/><path d="m2.5 15.2 4-1.4 4.3-.2c.9 0 1.6.4 2.2 1.1l1.5 1.7a1.3 1.3 0 0 1-1.9 1.8l-1-1.1"/><path d="m6.5 19.5 3.3 1.6c.8.4 1.6.5 2.5.5h2.3c.8 0 1.5-.3 2.1-.8l4.1-3.6a1.4 1.4 0 0 0-1.9-2.1L16 16.4"/>
   {%- elif nome == "Retirada" %}
   <path d="M4 10v10h16V10"/><path d="M3 10 5 4h14l2 6Z"/><path d="M10 20v-5h4v5"/>
   {%- endif %}
@@ -79,7 +81,6 @@
 <div class="pagina-topo">
   <div>
     <h1>Novo pedido</h1>
-    <p>Cliente, itens, pagamento e entrega.</p>
   </div>
   <a class="botao botao-secundario" href="/">Voltar</a>
 </div>
@@ -111,7 +112,7 @@
     </div>
   </section>
 
-  <section class="secao">
+  <section class="secao secao-itens">
     <h2>Itens do pedido</h2>
     <div class="itens-cabecalho" aria-hidden="true">
       <span>Produto</span><span>Qtd.</span><span>Valor unitário</span><span>Subtotal</span><span></span>
@@ -130,7 +131,8 @@
     {{ escolhas("entrega", "Entrega", formas_entrega, pedido.entrega, e.entrega, 2) }}
   </div>
 
-  <section class="secao">
+  <div class="grade-final">
+  <section class="secao secao-obs">
     <h2><label for="observacoes">Informações complementares</label></h2>
     <textarea id="observacoes" name="observacoes" rows="2" class="campo-texto"
       placeholder="Opcional">{{ pedido.observacoes }}</textarea>
@@ -155,6 +157,7 @@
       </div>
     </div>
   </section>
+  </div>
 </form>
 </div>
 {% endblock %}

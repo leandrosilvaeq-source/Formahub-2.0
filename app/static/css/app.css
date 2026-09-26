@@ -1,30 +1,70 @@
 /* ==========================================================
-   PALETA OFICIAL — PROVISÓRIA
-   Valores temporários. Substituir aqui quando a paleta oficial
-   do FormaHub for definida; o restante do CSS usa só estas variáveis.
+   IDENTIDADE VISUAL OFICIAL — Forma 3D Studio / FormaHub 2.0
+   Cores da marca definidas uma única vez; o restante do CSS usa
+   só as variáveis semânticas (--cor-*). Para ajustar a paleta,
+   altere apenas este bloco.
    ========================================================== */
+@font-face {
+  font-family: "Sora";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/sora-700-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("../fonts/manrope-latin.woff2") format("woff2");
+}
+
 :root {
-  --cor-primaria: #2f5d8a;
-  --cor-primaria-texto: #ffffff;
-  --cor-destaque: #e0a526;
-  --cor-fundo: #f5f6f8;
-  --cor-superficie: #ffffff;
-  --cor-texto: #1f2933;
-  --cor-texto-suave: #5b6673;
-  --cor-borda: #dde1e6;
+  /* Cores da marca */
+  --azul-ciano: #00e5ff;
+  --rosa-vibrante: #ff2d8f;
+  --coral-criativo: #ff6b57;
+  --azul-marinho: #0d132b;
+  --branco-gelo: #f7f7fa;
+  --branco: #fefefe; /* mesmo branco do fundo do arquivo do logotipo (254,254,254) */
+
+  /* Semânticas */
+  --cor-fundo: var(--branco-gelo);
+  --cor-superficie: var(--branco);
+  --cor-texto: var(--azul-marinho);
+  --cor-texto-suave: color-mix(in srgb, var(--azul-marinho) 74%, var(--branco));
+  --cor-borda: color-mix(in srgb, var(--azul-marinho) 16%, var(--branco));
+  --cor-borda-campo: color-mix(in srgb, var(--azul-marinho) 50%, var(--branco));
+  --cor-primaria: var(--azul-marinho);
+  --cor-primaria-texto: var(--branco-gelo);
+  --cor-destaque: var(--rosa-vibrante);
+  --cor-destaque-frio: var(--azul-ciano);
+  --cor-destaque-quente: var(--coral-criativo);
+  --cor-selecao-fundo: color-mix(in srgb, var(--azul-ciano) 16%, var(--branco));
+  --cor-foco: var(--azul-marinho);
+  --cor-foco-halo: color-mix(in srgb, var(--azul-ciano) 55%, transparent);
+
+  /* Estados (funcionais, fora da paleta da marca) */
   --cor-erro: #b42318;
   --cor-erro-fundo: #fdecea;
   --cor-sucesso: #1e7a46;
   --cor-sucesso-fundo: #e7f5ec;
+
+  --gradiente-marca: linear-gradient(90deg, var(--azul-ciano), var(--rosa-vibrante), var(--coral-criativo));
+  --gradiente-marca-vertical: linear-gradient(180deg, var(--azul-ciano), var(--rosa-vibrante), var(--coral-criativo));
 }
 
-/* Tokens de layout (não fazem parte da paleta) */
+/* Tipografia e tokens de layout (não fazem parte da paleta) */
 :root {
-  --raio: 10px;
+  --fonte-titulo: "Sora", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --fonte: "Manrope", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --raio: 12px;
+  --raio-campo: 8px;
   --espaco: 1rem;
   --largura-max: 1080px;
-  --fonte: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --logo-altura: 32px;
+  --logo-largura: 340px;
+  --alvo-toque: 44px;
 }
 
 *,
@@ -45,6 +85,14 @@ body {
   line-height: 1.5;
 }
 
+h1,
+h2,
+h3 {
+  font-family: var(--fonte-titulo);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
 .container {
   width: 100%;
   max-width: var(--largura-max);
@@ -52,38 +100,195 @@ body {
   padding: 0 var(--espaco);
 }
 
+/* ==========================================================
+   Elementos gráficos (linha, cubo, partículas)
+   Decorativos: nunca interceptam cliques e ficam fora do formulário.
+   ========================================================== */
+.svg-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.topo,
+main {
+  position: relative;
+  z-index: 1;
+}
+
+/* Cabeçalho */
 .topo {
-  background: var(--cor-primaria);
-  color: var(--cor-primaria-texto);
-  padding: calc(var(--espaco) * 0.75) 0;
+  overflow: hidden; /* contém só a área em branco do arquivo do logotipo, ver .marca-logo */
+  background: var(--cor-superficie);
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.topo-conteudo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--espaco);
+  padding-block: 14px;
 }
 
 .marca {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  color: inherit;
-  text-decoration: none;
-  font-weight: 700;
-  font-size: 1.125rem;
+  display: flow-root;
+  flex: none;
+  line-height: 0;
 }
 
-/* Logotipo oficial: <img class="marca-logo"> substitui .marca-simbolo */
+/* Logotipo oficial, exibido inteiro (1672×941), sem cortes, distorção ou recolorização.
+   O arquivo tem margens em branco (a arte ocupa ~15% da altura, entre 34% e 60% do topo):
+   as margens negativas apenas deixam essa área vazia sobrepor o espaço ao redor,
+   proporcionais à largura, para o cabeçalho não ficar alto demais. */
 .marca-logo {
-  height: var(--logo-altura);
-  width: auto;
+  display: block;
+  width: var(--logo-largura);
+  height: auto;
+  margin-top: calc(var(--logo-largura) * -0.19);
+  margin-bottom: calc(var(--logo-largura) * -0.225);
+  pointer-events: none;
 }
 
-.marca-simbolo {
-  display: grid;
-  place-items: center;
-  width: var(--logo-altura);
-  height: var(--logo-altura);
-  border-radius: 8px;
-  background: var(--cor-destaque);
+.topo-produto {
+  flex: none;
+  font-family: var(--fonte-titulo);
+  font-weight: 700;
+  font-size: 1rem;
   color: var(--cor-texto);
+  white-space: nowrap;
 }
 
+/* Partículas: ideias, energia e tecnologia (SVG próprio) */
+.topo-particulas {
+  display: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 300px;
+  height: 60px;
+  margin-left: auto;
+  pointer-events: none;
+}
+
+.topo-particulas circle {
+  fill: var(--azul-marinho);
+}
+
+.topo-particulas .p-c { fill: var(--azul-ciano); }
+.topo-particulas .p-r { fill: var(--rosa-vibrante); }
+.topo-particulas .p-o { fill: var(--coral-criativo); }
+
+/* Linha em movimento: fluidez e conexão (SVG próprio, deslocamento muito lento) */
+.topo-onda {
+  height: 22px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.topo-onda svg {
+  display: block;
+  width: 200%;
+  height: 100%;
+}
+
+.topo-onda path {
+  fill: none;
+  stroke: url(#grad-onda);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Fundo: cubos e partículas nas laterais, somente em telas largas */
+.deco-fundo {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.deco-cubo {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  opacity: 0.4;
+  overflow: visible;
+}
+
+.cubo-traco {
+  fill: none;
+  stroke: url(#grad-cubo);
+  stroke-width: 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.s-ciano { stop-color: var(--azul-ciano); }
+.s-rosa { stop-color: var(--rosa-vibrante); }
+.s-coral { stop-color: var(--coral-criativo); }
+
+.deco-cubo-a { left: calc((100vw - var(--largura-max)) / 4 - 32px); top: 34%; }
+.deco-cubo-b { right: calc((100vw - var(--largura-max)) / 4 - 32px); top: 62%; width: 48px; height: 48px; opacity: 0.32; }
+
+/* Partículas em CSS puro: um ponto + sombras múltiplas */
+.deco-pontos {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--azul-ciano);
+  opacity: 0.55;
+}
+
+.deco-pontos-a {
+  left: calc((100vw - var(--largura-max)) / 4 - 34px);
+  top: calc(34% + 92px);
+  box-shadow:
+    12px 10px 0 -1px var(--rosa-vibrante),
+    26px 4px 0 0 var(--coral-criativo),
+    38px 20px 0 -1px var(--azul-ciano),
+    20px 26px 0 -1px var(--azul-marinho),
+    50px 8px 0 -1.5px var(--rosa-vibrante),
+    4px 34px 0 -1.5px var(--azul-marinho);
+}
+
+.deco-pontos-b {
+  right: calc((100vw - var(--largura-max)) / 4 - 30px);
+  top: calc(62% - 60px);
+  background: var(--rosa-vibrante);
+  box-shadow:
+    -12px 8px 0 -1px var(--azul-ciano),
+    -24px 2px 0 0 var(--coral-criativo),
+    -8px 22px 0 -1px var(--azul-marinho),
+    -32px 18px 0 -1.5px var(--azul-ciano),
+    -44px 6px 0 -1.5px var(--rosa-vibrante);
+}
+
+/* Animações lentas e discretas */
+@keyframes onda-deslizar {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes cubo-flutuar {
+  from { transform: translateY(-6px); }
+  to { transform: translateY(6px); }
+}
+
+@keyframes particula-brilho {
+  from { opacity: 0.25; }
+  to { opacity: 1; }
+}
+
+.topo-onda svg { animation: onda-deslizar 120s linear infinite; }
+.deco-cubo-a { animation: cubo-flutuar 16s ease-in-out infinite alternate; }
+.deco-cubo-b { animation: cubo-flutuar 20s ease-in-out infinite alternate-reverse; }
+.topo-particulas circle:nth-child(3n) { animation: particula-brilho 9s ease-in-out infinite alternate; }
+.topo-particulas circle:nth-child(3n + 1) { animation: particula-brilho 13s ease-in-out infinite alternate-reverse; }
+
+/* ---------- Home ---------- */
 .apresentacao {
   padding: calc(var(--espaco) * 2.5) 0 calc(var(--espaco) * 1.5);
 }
@@ -107,11 +312,11 @@ body {
 }
 
 .card {
-  background: var(--cor-superficie);
+  background: var(--gradiente-marca) top / 100% 4px no-repeat, var(--cor-superficie);
   border: 1px solid var(--cor-borda);
-  border-top: 4px solid var(--cor-primaria);
   border-radius: var(--raio);
   padding: calc(var(--espaco) * 1.25);
+  padding-top: calc(var(--espaco) * 1.25 + 4px);
 }
 
 .card h2 {
@@ -126,12 +331,13 @@ body {
 
 .selo {
   display: inline-block;
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 0.15rem 0.6rem;
+  font-family: var(--fonte-titulo);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.2rem 0.7rem;
   border-radius: 999px;
-  background: var(--cor-destaque);
-  color: var(--cor-texto);
+  background: var(--azul-ciano);
+  color: var(--azul-marinho);
 }
 
 /* ---------- Botões ---------- */
@@ -139,57 +345,64 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 40px;
-  padding: 0.5rem 1rem;
+  min-height: var(--alvo-toque);
+  padding: 0.5rem 1.1rem;
   border: 1px solid transparent;
-  border-radius: 8px;
-  font: inherit;
-  font-weight: 600;
+  border-radius: var(--raio-campo);
+  font-family: var(--fonte-titulo);
+  font-size: 0.875rem;
+  font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, background-size 0.15s;
 }
 
 .botao-primario {
-  background: var(--cor-primaria);
+  background: var(--gradiente-marca) bottom / 100% 3px no-repeat, var(--cor-primaria);
   color: var(--cor-primaria-texto);
 }
 
 .botao-primario:hover {
-  filter: brightness(1.1);
+  background-color: color-mix(in srgb, var(--azul-marinho) 88%, var(--rosa-vibrante));
+  background-size: 100% 6px;
 }
 
 .botao-secundario {
   background: var(--cor-superficie);
-  color: var(--cor-primaria);
-  border-color: var(--cor-borda);
+  color: var(--cor-texto);
+  border-color: var(--cor-borda-campo);
 }
 
 .botao-secundario:hover {
   border-color: var(--cor-primaria);
+  background: var(--cor-selecao-fundo);
 }
 
 .botao-icone {
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--cor-borda);
-  border-radius: 8px;
+  width: var(--alvo-toque);
+  height: var(--alvo-toque);
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
   background: var(--cor-superficie);
-  color: var(--cor-texto-suave);
-  font-size: 1.25rem;
+  color: var(--cor-texto);
+  font-size: 1.35rem;
   line-height: 1;
   cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .botao-icone:hover {
   color: var(--cor-erro);
   border-color: var(--cor-erro);
+  background: var(--cor-erro-fundo);
 }
 
 .botao:focus-visible,
 .botao-icone:focus-visible {
-  outline: 3px solid var(--cor-destaque);
+  outline: 3px solid var(--cor-foco);
   outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--cor-foco-halo);
 }
 
 /* ---------- Cabeçalho de página e alertas ---------- */
@@ -213,11 +426,29 @@ body {
 }
 
 .alerta {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
   margin-bottom: var(--espaco);
   padding: 0.75rem 1rem;
   border-radius: var(--raio);
   border: 1px solid;
-  font-weight: 500;
+  border-left-width: 6px;
+  font-weight: 600;
+}
+
+/* Ícone textual: o estado não depende só da cor */
+.alerta::before {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-top: 0.05rem;
+  border-radius: 50%;
+  font-family: var(--fonte-titulo);
+  font-size: 0.8rem;
+  line-height: 1;
 }
 
 .alerta-sucesso {
@@ -226,10 +457,22 @@ body {
   color: var(--cor-sucesso);
 }
 
+.alerta-sucesso::before {
+  content: "✓";
+  background: var(--cor-sucesso);
+  color: var(--cor-sucesso-fundo);
+}
+
 .alerta-erro {
   background: var(--cor-erro-fundo);
   border-color: var(--cor-erro);
   color: var(--cor-erro);
+}
+
+.alerta-erro::before {
+  content: "!";
+  background: var(--cor-erro);
+  color: var(--cor-erro-fundo);
 }
 
 /* ---------- Formulário ---------- */
@@ -249,15 +492,30 @@ body {
   background: var(--cor-superficie);
   border: 1px solid var(--cor-borda);
   border-radius: var(--raio);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 7%, transparent);
 }
 
 .secao h2,
 .secao legend {
   margin: 0 0 0.6rem;
   padding: 0;
+  font-family: var(--fonte-titulo);
   font-size: 1rem;
   font-weight: 700;
-  color: var(--cor-primaria);
+  color: var(--cor-texto);
+}
+
+/* Separador em linha degradê antes de cada título de seção */
+.secao h2::before,
+.secao legend::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 1em;
+  margin-right: 0.55rem;
+  border-radius: 2px;
+  background: var(--gradiente-marca-vertical);
+  vertical-align: -0.12em;
 }
 
 /* legend dentro de fieldset precisa flutuar para respeitar o padding */
@@ -286,7 +544,7 @@ body {
 .campo label,
 .item-rotulo {
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .obrigatorio {
@@ -296,13 +554,20 @@ body {
 .campo input,
 .campo-texto {
   width: 100%;
-  min-height: 42px;
+  min-height: var(--alvo-toque);
   padding: 0.45rem 0.65rem;
-  border: 1px solid var(--cor-borda);
-  border-radius: 8px;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
   background: var(--cor-superficie);
   color: var(--cor-texto);
   font: inherit;
+  font-weight: 500;
+}
+
+.campo input::placeholder,
+.campo-texto::placeholder {
+  color: var(--cor-texto-suave);
+  opacity: 0.8;
 }
 
 .campo-texto {
@@ -310,21 +575,33 @@ body {
   resize: vertical;
 }
 
+.campo input:hover,
+.campo-texto:hover {
+  border-color: var(--cor-primaria);
+}
+
 .campo input:focus,
 .campo-texto:focus {
   outline: none;
-  border-color: var(--cor-primaria);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cor-primaria) 20%, transparent);
+  border-color: var(--cor-foco);
+  box-shadow: 0 0 0 1px var(--cor-foco), 0 0 0 4px var(--cor-foco-halo);
 }
 
 .tem-erro input {
   border-color: var(--cor-erro);
+  box-shadow: 0 0 0 1px var(--cor-erro);
+}
+
+.tem-erro input:focus {
+  border-color: var(--cor-erro);
+  box-shadow: 0 0 0 1px var(--cor-erro), 0 0 0 4px var(--cor-foco-halo);
 }
 
 .campo-erro {
   margin: 0.25rem 0 0;
   color: var(--cor-erro);
   font-size: 0.8rem;
+  font-weight: 600;
 }
 
 /* ---------- Itens do pedido ---------- */
@@ -334,7 +611,7 @@ body {
 
 .item {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 42px;
+  grid-template-columns: 72px minmax(0, 1fr) var(--alvo-toque);
   grid-template-areas:
     "produto produto produto"
     "quantidade valor remover"
@@ -369,14 +646,13 @@ body {
 }
 
 .item-subtotal output {
+  font-family: var(--fonte-titulo);
   font-weight: 700;
 }
 
 .item-remover {
   grid-area: remover;
   align-self: end;
-  width: 42px;
-  height: 42px;
 }
 
 .itens-vazio {
@@ -386,6 +662,7 @@ body {
 
 #adicionar-item {
   margin-top: 0.75rem;
+  border-style: dashed;
 }
 
 /* ---------- Action buttons (pagamento e entrega) ---------- */
@@ -425,7 +702,7 @@ body {
   gap: 0.35rem;
   min-height: 76px;
   padding: 0.6rem 0.4rem;
-  border: 2px solid var(--cor-borda);
+  border: 2px solid var(--cor-borda-campo);
   border-radius: var(--raio);
   background: var(--cor-superficie);
   color: var(--cor-texto-suave);
@@ -443,6 +720,12 @@ body {
   stroke-linejoin: round;
 }
 
+/* Símbolo oficial do PIX: desenho preenchido, acompanha a cor do estado (currentColor) */
+.escolha-icone[data-icone="pix"] {
+  fill: currentColor;
+  stroke: none;
+}
+
 .escolha-titulo {
   font-size: 0.9rem;
   font-weight: 600;
@@ -451,20 +734,28 @@ body {
 
 .escolha:hover .escolha-card {
   border-color: var(--cor-primaria);
+  background: var(--cor-selecao-fundo);
+  color: var(--cor-texto);
 }
 
 .escolha-input:focus-visible + .escolha-card {
-  outline: 3px solid var(--cor-destaque);
+  outline: 3px solid var(--cor-foco);
   outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--cor-foco-halo);
 }
 
+/* Selecionado: borda marinho, fundo ciano claro, texto em negrito,
+   faixa degradê na base e marca de verificação — não depende só da cor. */
 .escolha-input:checked + .escolha-card {
   border-color: var(--cor-primaria);
-  background: color-mix(in srgb, var(--cor-primaria) 10%, var(--cor-superficie));
-  color: var(--cor-primaria);
+  background: var(--gradiente-marca) bottom / 100% 4px no-repeat, var(--cor-selecao-fundo);
+  color: var(--cor-texto);
 }
 
-/* Marca de seleção no canto do card escolhido */
+.escolha-input:checked + .escolha-card .escolha-titulo {
+  font-weight: 800;
+}
+
 .escolha-input:checked + .escolha-card::after {
   content: "✓";
   position: absolute;
@@ -506,13 +797,14 @@ body {
 
 .resumo-valores dt {
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--cor-texto-suave);
 }
 
 .resumo-valores dd {
   margin: 0;
   white-space: nowrap;
+  font-family: var(--fonte-titulo);
   font-size: 1.25rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -520,14 +812,19 @@ body {
 
 .resumo-total {
   padding: 0.5rem 0.85rem;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--cor-primaria) 10%, var(--cor-superficie));
+  padding-top: calc(0.5rem + 3px);
+  border-radius: var(--raio-campo);
+  background: var(--gradiente-marca) top / 100% 3px no-repeat, var(--cor-primaria);
+  color: var(--cor-primaria-texto);
   text-align: right;
+}
+
+.resumo-total dt {
+  color: color-mix(in srgb, var(--branco-gelo) 80%, var(--azul-marinho));
 }
 
 .resumo-total dd {
   font-size: 1.6rem;
-  color: var(--cor-primaria);
 }
 
 .acoes {
@@ -536,16 +833,28 @@ body {
   gap: 0.5rem;
 }
 
+/* ---------- Telas pequenas ---------- */
+@media (max-width: 640px) {
+  :root { --logo-largura: 250px; }
+}
+
+@media (max-width: 400px) {
+  :root { --logo-largura: 200px; }
+  .topo-produto { font-size: 0.85rem; }
+}
+
 /* ---------- Telas médias e largas ---------- */
 @media (min-width: 640px) {
   .grade-cliente { grid-template-columns: minmax(0, 1fr) 220px; }
 }
 
 @media (min-width: 760px) {
+  .topo-particulas { display: block; }
+
   .itens-cabecalho,
   .item {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 72px 150px 120px 42px;
+    grid-template-columns: minmax(0, 1fr) 72px 150px 120px var(--alvo-toque);
     grid-template-areas: "produto quantidade valor subtotal remover";
     gap: 0.5rem;
     align-items: start;
@@ -554,7 +863,7 @@ body {
   .itens-cabecalho {
     padding-bottom: 0.35rem;
     font-size: 0.8rem;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--cor-texto-suave);
   }
 
@@ -573,7 +882,7 @@ body {
   .item-subtotal {
     justify-content: flex-end;
     align-items: center;
-    min-height: 42px;
+    min-height: var(--alvo-toque);
   }
 
   .item-remover {
@@ -598,7 +907,154 @@ body {
     display: block;
   }
 
+  .resumo-total {
+    justify-self: end;
+    min-width: 240px;
+  }
+
   .acoes {
     min-width: 300px;
+  }
+}
+
+/* ---------- Desktop: tela do pedido cabe em 1280×720 com até dois itens ----------
+   Compacta espaços verticais (cabeçalho, cards, linhas) e reorganiza:
+   "Adicionar item" na linha do título, opções em linha e observações ao lado do resumo.
+   Nada é escondido: em alturas menores a página apenas rola. */
+@media (min-width: 1024px) {
+  :root { --logo-largura: 300px; }
+
+  .topo-conteudo { padding-block: 5px; }
+  .topo-onda { height: 14px; }
+
+  .pedido { max-width: none; }
+
+  .pedido .pagina-topo {
+    align-items: center;
+    padding: 0.3rem 0;
+  }
+
+  .pedido .pagina-topo h1 {
+    margin: 0;
+    font-size: 1.5rem;
+  }
+
+  .pedido .secao {
+    margin-bottom: 0.4rem;
+    padding: 0.5rem 0.85rem 0.6rem;
+  }
+
+  .pedido .secao h2,
+  .pedido .secao legend {
+    margin-bottom: 0.3rem;
+  }
+
+  .pedido .alerta {
+    margin-bottom: 0.5rem;
+    padding: 0.5rem 1rem;
+  }
+
+  /* Itens: título e botão na mesma linha, linhas mais próximas */
+  .secao-itens {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "titulo botao"
+      "cabecalho cabecalho"
+      "itens itens"
+      "vazio vazio"
+      "erro erro";
+    align-items: center;
+  }
+
+  .secao-itens > h2 { grid-area: titulo; margin: 0; }
+  .secao-itens > #adicionar-item { grid-area: botao; margin: 0; }
+  .secao-itens > .itens-cabecalho { grid-area: cabecalho; padding-top: 0.15rem; padding-bottom: 0.2rem; }
+  .secao-itens > #itens { grid-area: itens; }
+  .secao-itens > #itens-vazio { grid-area: vazio; margin: 0.25rem 0 0; }
+  .secao-itens > #itens-erro { grid-area: erro; }
+
+  .item { gap: 0.4rem; padding-bottom: 0.3rem; }
+
+  /* Pagamento e entrega: ícone ao lado do título */
+  /* Mesma grade em "pagamento/entrega" e "observações/resumo": bordas alinhadas */
+  .grade-escolhas,
+  .grade-final {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+    column-gap: 0.4rem;
+  }
+
+  .escolha-card {
+    flex-direction: row;
+    gap: 0.5rem;
+    min-height: 52px;
+    padding: 0.35rem 1.6rem 0.35rem 0.6rem;
+  }
+
+  .escolha-input:checked + .escolha-card::after { top: 4px; right: 6px; }
+
+  /* Observações ao lado do resumo */
+  .grade-final {
+    display: grid;
+  }
+
+  .grade-final .secao { margin-bottom: 0; }
+
+  .secao-obs {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .secao-obs .campo-texto {
+    flex: 1;
+    min-height: var(--alvo-toque);
+  }
+
+  .resumo-conteudo {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  /* O total nunca quebra; a quantidade cede espaço (o rótulo pode quebrar) */
+  .resumo-valores {
+    grid-template-columns: minmax(min-content, 1fr) minmax(max-content, 2fr);
+    align-items: center;
+    gap: 0.5rem 1rem;
+  }
+
+  .resumo-valores > div:first-child {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .resumo-total {
+    display: flex;
+    justify-self: stretch;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: baseline;
+    min-width: 0;
+    white-space: nowrap;
+    padding: calc(0.3rem + 3px) 0.85rem 0.3rem;
+  }
+
+  .resumo-total dd { font-size: 1.4rem; line-height: 1.3; }
+
+  .acoes { min-width: 0; }
+}
+
+/* Laterais livres: só em telas largas, fora da área do formulário */
+@media (min-width: 1240px) {
+  .deco-fundo { display: block; }
+}
+
+/* Sem movimento para quem prefere assim */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }
