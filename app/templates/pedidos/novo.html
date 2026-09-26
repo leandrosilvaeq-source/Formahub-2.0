@@ -70,6 +70,25 @@
     <span class="item-rotulo">Subtotal</span>
     <output aria-label="Subtotal do item">{{ item.subtotal | brl }}</output>
   </div>
+  {# Imagem de referência do item (opcional: zero ou uma). Somente frontend: o arquivo fica na memória
+     do navegador e não é enviado; o input não tem "name" para não entrar no envio do formulário.
+     Próximo MVP: enviar window.ImagensReferencia.arquivos()[n] ao Supabase Storage e gravar no item
+     apenas o caminho retornado. #}
+  <div class="campo item-imagem">
+    <span class="item-rotulo" aria-hidden="true">Imagem de referência <span class="item-opcional">(opcional · PNG, JPG ou WebP, até 10 MB)</span></span>
+    <div class="upload-item" role="group" aria-label="Imagem de referência" data-max-mb="10">
+      <span class="upload-dica" title="PNG, JPG ou WebP, até 10 MB">Arraste uma imagem aqui</span>
+      <img class="upload-miniatura" alt="Miniatura da imagem de referência" width="40" height="40" hidden>
+      <p class="upload-erro" role="alert" hidden></p>
+      <p class="upload-info" hidden><span class="upload-nome"></span><span class="upload-tamanho"></span></p>
+      <span class="upload-ou" aria-hidden="true">ou</span>
+      <button type="button" class="botao botao-secundario upload-botao upload-selecionar">Selecionar imagem</button>
+      <button type="button" class="botao botao-secundario upload-botao upload-trocar" aria-label="Trocar imagem" hidden>Trocar</button>
+      <button type="button" class="botao botao-secundario upload-botao upload-remover" hidden>Remover imagem</button>
+      <input type="file" class="upload-arquivo" accept="image/png,image/jpeg,image/webp" hidden tabindex="-1">
+      <span class="visualmente-oculto upload-status" role="status" aria-live="polite"></span>
+    </div>
+  </div>
   <button type="button" class="botao-icone item-remover" aria-label="Remover item" title="Remover item">&times;</button>
 </div>
 {%- endmacro %}
@@ -115,7 +134,7 @@
   <section class="secao secao-itens">
     <h2>Itens do pedido</h2>
     <div class="itens-cabecalho" aria-hidden="true">
-      <span>Produto</span><span>Qtd.</span><span>Valor unitário</span><span>Subtotal</span><span></span>
+      <span>Produto</span><span>Qtd.</span><span>Valor unitário</span><span>Subtotal</span><span>Imagem de referência <span class="item-opcional">PNG, JPG ou WebP · até 10 MB</span></span><span></span>
     </div>
     <div id="itens" class="itens">
       {% for item in pedido.itens %}{{ item_linha(item) }}{% endfor %}
@@ -164,4 +183,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', path='js/pedido-novo.js') }}"></script>
+<script src="{{ url_for('static', path='js/imagem-referencia.js') }}"></script>
 {% endblock %}

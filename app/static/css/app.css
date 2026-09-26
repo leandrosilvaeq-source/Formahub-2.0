@@ -615,7 +615,8 @@ main {
   grid-template-areas:
     "produto produto produto"
     "quantidade valor remover"
-    "subtotal subtotal subtotal";
+    "subtotal subtotal subtotal"
+    "imagem imagem imagem";
   gap: 0.5rem;
   padding: 0.75rem 0;
   border-bottom: 1px solid var(--cor-borda);
@@ -833,6 +834,137 @@ main {
   gap: 0.5rem;
 }
 
+/* ---------- Imagem de referência do item (opcional) ---------- */
+.visualmente-oculto {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.item-imagem { grid-area: imagem; }
+
+.item-opcional {
+  font-weight: 500;
+  color: var(--cor-texto-suave);
+}
+
+/* Área de soltar: a linha inteira aceita o arquivo. No arraste ganha contorno contínuo e fundo. */
+.upload-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.5rem;
+  min-height: var(--alvo-toque);
+  border-radius: var(--raio-campo);
+}
+
+.upload-item.arrastando {
+  outline: 2px solid var(--cor-primaria);
+  outline-offset: 3px;
+  background: var(--cor-selecao-fundo);
+}
+
+.upload-dica {
+  flex: 1 1 9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--alvo-toque);
+  padding: 0.15rem 0.5rem;
+  border: 2px dashed var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  background: var(--cor-superficie);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  transition: border-color 0.12s;
+}
+
+.upload-item:hover .upload-dica,
+.upload-item:focus-within .upload-dica {
+  border-color: var(--cor-primaria);
+}
+
+.upload-item.arrastando .upload-dica {
+  border-style: solid;
+  border-color: var(--cor-primaria);
+  font-weight: 800;
+}
+
+.upload-ou {
+  font-size: 0.8rem;
+  color: var(--cor-texto-suave);
+}
+
+.upload-botao {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+}
+
+.upload-botao:focus-visible {
+  outline: 3px solid var(--cor-foco);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--cor-foco-halo);
+}
+
+.upload-miniatura {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: 6px;
+  background: var(--cor-fundo);
+}
+
+/* Nome (com reticências; o texto completo fica no title) e tamanho, um sob o outro */
+.upload-info {
+  flex: 1 1 6rem;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  line-height: 1.25;
+}
+
+.upload-nome {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.upload-tamanho {
+  font-size: 0.75rem;
+  color: var(--cor-texto-suave);
+}
+
+/* Erro no lugar da dica (ou do nome do arquivo): borda contínua e ícone, não só cor */
+.upload-erro {
+  flex: 1 1 9rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.1rem 0.45rem;
+  border: 2px solid var(--cor-erro);
+  border-radius: var(--raio-campo);
+  background: var(--cor-erro-fundo);
+  color: var(--cor-erro);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.upload-erro::before {
+  content: "⚠ ";
+}
+
 /* ---------- Telas pequenas ---------- */
 @media (max-width: 640px) {
   :root { --logo-largura: 250px; }
@@ -855,7 +987,9 @@ main {
   .item {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 72px 150px 120px var(--alvo-toque);
-    grid-template-areas: "produto quantidade valor subtotal remover";
+    grid-template-areas:
+      "produto quantidade valor subtotal remover"
+      "imagem imagem imagem imagem imagem";
     gap: 0.5rem;
     align-items: start;
   }
@@ -876,6 +1010,15 @@ main {
   }
 
   .item-rotulo {
+    display: none;
+  }
+
+  .item-imagem .item-rotulo {
+    display: block;
+  }
+
+  /* Sem espaço para a coluna de imagem: o cabeçalho da tabela não a mostra */
+  .itens-cabecalho span:nth-child(5) {
     display: none;
   }
 
@@ -1042,6 +1185,33 @@ main {
   .resumo-total dd { font-size: 1.4rem; line-height: 1.3; }
 
   .acoes { min-width: 0; }
+}
+
+/* Telas largas: a imagem de referência fica na própria linha do item (sem aumentar a altura) */
+@media (min-width: 1100px) {
+  .itens-cabecalho,
+  .item {
+    grid-template-columns: minmax(0, 1fr) 72px 150px 120px 360px var(--alvo-toque);
+    grid-template-areas: "produto quantidade valor subtotal imagem remover";
+  }
+
+  .itens-cabecalho span:nth-child(5) {
+    display: block;
+  }
+
+  .item-imagem .item-rotulo {
+    display: none;
+  }
+
+  .upload-item {
+    flex-wrap: nowrap;
+  }
+
+  .upload-dica,
+  .upload-erro,
+  .upload-info {
+    flex-basis: 0;
+  }
 }
 
 /* Laterais livres: só em telas largas, fora da área do formulário */

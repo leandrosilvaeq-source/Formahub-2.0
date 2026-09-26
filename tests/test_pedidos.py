@@ -315,3 +315,70 @@ def test_icone_de_entrega_em_maos_presente():
     assert "M12 3 20 7.5v9L12 21 4 16.5v-9Z" not in html  # caixa antiga
     assert 'class="escolha-titulo">Entrega em mãos<' in html
     assert html.count('aria-hidden="true" focusable="false"') >= 5  # ícones decorativos
+
+
+def test_cada_item_tem_imagem_de_referencia_opcional_sem_envio_ao_servidor():
+    html = client.get("/pedidos/novo").text
+
+    assert html.count('class="upload-item"') == 2  # o item da tela + o modelo dos novos itens
+    assert "Imagem de referência" in html
+    assert "Arraste uma imagem aqui" in html
+    assert ">Selecionar imagem</button>" in html
+    assert ">Remover imagem</button>" in html
+    assert 'accept="image/png,image/jpeg,image/webp"' in html
+    assert 'data-max-mb="10"' in html
+    assert "/static/js/imagem-referencia.js" in html
+    # Input de arquivo sem "name": não entra no envio do formulário (que continua sem multipart).
+    entradas = [t for t in html.split("<input") if 'type="file"' in t.split(">")[0]]
+    assert entradas and all("name=" not in t.split(">")[0] for t in entradas)
+    assert "multipart" not in html
+    assert "enctype" not in html
+    # Opcional: nenhum campo obrigatório nem erro de imagem no HTML inicial.
+    assert "required" not in html
+    assert 'class="upload-erro" role="alert" hidden' in html
+
+
+def test_pedido_sem_imagem_de_referencia_e_validado():
+    resposta = client.post("/pedidos/novo", data=form_valido())
+
+    assert "validado com sucesso" in resposta.text
+    assert "upload-erro" in resposta.text  # só o elemento oculto, nunca uma mensagem de imagem
+    assert "Formato não aceito" not in resposta.text
+
+
+def test_pedido_invalido_nao_reclama_de_imagem():
+    resposta = client.post("/pedidos/novo", data=form_valido(cliente=""))
+
+    assert "Corrija os campos destacados" in resposta.text
+    assert "imagem obrigatória" not in resposta.text.lower()
+
+
+def test_javascript_da_imagem_nao_usa_rede_base64_nem_armazenamento():
+    codigo = client.get("/static/js/imagem-referencia.js").text.lower()
+    # Só o código conta: os comentários explicam o plano do próximo MVP (Supabase Storage).
+    js = " ".join(linha.split("//")[0] for linha in codigo.splitlines())
+
+    for proibido in (
+        "fetch(",
+        "xmlhttprequest",
+        "sendbeacon",
+        "websocket",
+        "supabase",
+        "filereader",
+        "readasdataurl",
+        "todataurl",
+        "btoa",
+        "base64",
+        "localstorage",
+        "sessionstorage",
+        "indexeddb",
+    ):
+        assert proibido not in js, proibido
+    assert "createobjecturl" in js
+    assert "revokeobjecturl" in js
+
+
+def test_envio_com_observacoes_continua_igual_com_o_campo_de_imagem():
+    resposta = client.post("/pedidos/novo", data=form_valido(observacoes="Embalar para presente"))
+
+    assert "validado com sucesso" in resposta.text
