@@ -30,6 +30,18 @@ uvicorn app.main:app --reload
 - http://127.0.0.1:8000/ — página inicial
 - http://127.0.0.1:8000/health — verificação de saúde
 
+## Login
+
+Três usuários fixos (Leandro, Kassia e Marise), sem e-mail, sem Supabase Auth e sem código de ativação.
+No primeiro acesso cada pessoa cria e confirma a própria senha; depois disso, só o login normal. A senha
+é guardada apenas como hash Argon2id, e cada usuário só pode cadastrá-la uma vez pela tela pública.
+
+- Variáveis no `.env` (veja `.env.example`): `SUPABASE_SECRET_KEY` (só no servidor), `COOKIE_SECURE`
+  (`true` em produção com HTTPS) e `SESSAO_DURACAO_HORAS`.
+- Tabelas em `supabase/migrations/20260926120000_criar_autenticacao.sql`. A migration só é aplicada
+  ao Supabase por pedido explícito (`supabase db push`).
+- Os testes usam um repositório em memória e nunca acessam o Supabase.
+
 ## Qualidade
 
 ```powershell

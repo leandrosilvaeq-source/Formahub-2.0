@@ -115,7 +115,10 @@ class Pagina:
         )
 
     def enviar(self):
-        self.js("window.__antiga = true; document.querySelector('button[type=submit]').click()")
+        self.js(
+            "window.__antiga = true;"
+            " document.querySelector('#form-pedido button[type=submit]').click()"
+        )
         self._esperar_carregar()
 
     def digitar(self, seletor: str, texto: str):
@@ -489,7 +492,12 @@ def test_dois_itens_cabem_em_1280x720_sem_rolagem_vertical(pagina):
     assert pagina.js("document.documentElement.scrollWidth") <= 1280
     # Campos, resumo e botões finais visíveis, sem cortes nem rolagem interna.
     assert pagina.js(CORTES.replace("LIMITE_VERTICAL", "true")) == []
-    for seletor in ("#cliente", "#adicionar-item", "#resumo-total", "button[type=submit]"):
+    for seletor in (
+        "#cliente",
+        "#adicionar-item",
+        "#resumo-total",
+        "#form-pedido button[type=submit]",
+    ):
         base = pagina.js(
             f"document.querySelector({json.dumps(seletor)}).getBoundingClientRect().bottom"
         )

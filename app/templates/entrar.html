@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Entrar · FormaHub 2.0{% endblock %}
+
+{% macro campo_senha(id, nome, rotulo, autocomplete, dica="") -%}
+<div class="campo">
+  <label for="{{ id }}">{{ rotulo }}</label>
+  <div class="senha-campo">
+    <input id="{{ id }}" name="{{ nome }}" type="password" autocomplete="{{ autocomplete }}"
+      minlength="{{ tamanho_minimo }}" maxlength="{{ tamanho_maximo }}" required
+      {%- if dica %} aria-describedby="{{ id }}-dica"{% endif %}>
+    <button type="button" class="botao botao-secundario senha-alternar" data-alvo="{{ id }}"
+      aria-controls="{{ id }}" aria-pressed="false" hidden>Mostrar</button>
+  </div>
+  {% if dica %}<p class="campo-dica" id="{{ id }}-dica">{{ dica }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{% block content %}
+<section class="acesso">
+  <div class="acesso-card">
+    <h1>Entrar no FormaHub</h1>
+
+    {% if indisponivel %}
+    <div class="alerta alerta-erro" role="alert">O acesso está indisponível no momento. Verifique a configuração do servidor e tente de novo.</div>
+    {% else %}
+
+    {% if erro %}<div class="alerta alerta-erro" role="alert">{{ erro }}</div>{% endif %}
+    {% if aviso %}<div class="alerta alerta-sucesso" role="status">{{ aviso }}</div>{% endif %}
+
+    <nav aria-labelledby="acesso-escolha">
+      <p class="acesso-ajuda" id="acesso-escolha">Escolha o seu nome</p>
+      <ul class="acesso-nomes">
+        {% for n in nomes %}
+        <li><a class="acesso-nome" href="{{ n.url }}"{% if n.ativo %} aria-current="true"{% endif %}>{{ n.nome }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    {% if usuario and primeiro_acesso %}
+    <form class="acesso-form" method="post" action="/entrar/criar-senha">
+      <h2>Primeiro acesso de {{ usuario.nome }}</h2>
+      <p class="acesso-ajuda">Crie a sua senha. Ela só pode ser cadastrada uma vez.</p>
+      <input type="hidden" name="usuario" value="{{ usuario.nome }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ proximo }}">
+      {{ campo_senha("senha", "senha", "Criar senha", "new-password", "De " ~ tamanho_minimo ~ " a " ~ tamanho_maximo ~ " caracteres, diferente do seu nome.") }}
+      {{ campo_senha("confirmacao", "confirmacao", "Confirmar senha", "new-password") }}
+      <button type="submit" class="botao botao-primario">Cadastrar senha</button>
+    </form>
+    {% elif usuario %}
+    <form class="acesso-form" method="post" action="/entrar">
+      <h2>Olá, {{ usuario.nome }}</h2>
+      <input type="hidden" name="usuario" value="{{ usuario.nome }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ proximo }}">
+      {{ campo_senha("senha", "senha", "Senha", "current-password") }}
+      <button type="submit" class="botao botao-primario">Entrar</button>
+    </form>
+    {% endif %}
+
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/entrar.js') }}"></script>
+{% endblock %}

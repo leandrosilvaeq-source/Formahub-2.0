@@ -5,8 +5,12 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "navegador: testes em navegador real (Edge/Chrome); pule com -m \"not navegador\"",
+    "sem_login: testes da autenticação, sem o usuário simulado dos demais testes",
 ]

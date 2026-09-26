@@ -1219,6 +1219,170 @@ main {
   .deco-fundo { display: block; }
 }
 
+/* ---------- Usuário autenticado no cabeçalho ---------- */
+.topo-direita {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.topo-usuario {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--cor-borda);
+}
+
+.topo-nome {
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.topo-sair {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  /* Com o usuário logado, o nome e o botão Sair ocupam o lugar do texto da marca */
+  .topo-direita:has(.topo-usuario) .topo-produto { display: none; }
+  .topo-usuario { padding-left: 0; border-left: 0; }
+  .topo-nome { max-width: 5.5rem; font-size: 0.85rem; }
+}
+
+/* ---------- Tela de entrada ---------- */
+.acesso {
+  display: flex;
+  justify-content: center;
+  padding: calc(var(--espaco) * 2) 0 calc(var(--espaco) * 3);
+}
+
+.acesso-card {
+  width: 100%;
+  max-width: 460px;
+  padding: calc(var(--espaco) * 1.25);
+  padding-top: calc(var(--espaco) * 1.25 + 4px);
+  background: var(--gradiente-marca) top / 100% 4px no-repeat, var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 7%, transparent);
+}
+
+.acesso-card h1 {
+  margin: 0 0 var(--espaco);
+  font-size: 1.5rem;
+}
+
+.acesso-card h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+}
+
+.acesso-ajuda {
+  margin: 0 0 0.6rem;
+  color: var(--cor-texto-suave);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.acesso-nomes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0 0 var(--espaco);
+  padding: 0;
+  list-style: none;
+}
+
+/* Nomes como cartões: o selecionado tem borda forte, faixa degradê, negrito e ✓ (não só cor) */
+.acesso-nome {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 0.4rem 0.5rem;
+  border: 2px solid var(--cor-borda-campo);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+  color: var(--cor-texto-suave);
+  font-family: var(--fonte-titulo);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  transition: border-color 0.12s, background-color 0.12s, color 0.12s;
+}
+
+.acesso-nome:hover {
+  border-color: var(--cor-primaria);
+  background: var(--cor-selecao-fundo);
+  color: var(--cor-texto);
+}
+
+.acesso-nome:focus-visible {
+  outline: 3px solid var(--cor-foco);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--cor-foco-halo);
+}
+
+.acesso-nome[aria-current="true"] {
+  border-color: var(--cor-primaria);
+  background: var(--gradiente-marca) bottom / 100% 4px no-repeat, var(--cor-selecao-fundo);
+  color: var(--cor-texto);
+}
+
+.acesso-nome[aria-current="true"]::after {
+  content: "✓";
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+  font-size: 0.65rem;
+}
+
+.acesso-form {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: var(--espaco);
+  border-top: 1px solid var(--cor-borda);
+}
+
+.acesso-form .botao-primario {
+  width: 100%;
+}
+
+.senha-campo {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.senha-campo input {
+  flex: 1;
+  min-width: 0;
+}
+
+.senha-alternar {
+  flex: none;
+  min-width: 5.5rem;
+}
+
+.campo-dica {
+  margin: 0;
+  color: var(--cor-texto-suave);
+  font-size: 0.8rem;
+}
+
 /* Sem movimento para quem prefere assim */
 @media (prefers-reduced-motion: reduce) {
   *,
