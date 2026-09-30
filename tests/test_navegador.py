@@ -115,11 +115,15 @@ class Pagina:
         )
 
     def enviar(self):
+        """Salva o pedido (envio por fetch, sem recarregar) e espera a resposta ser aplicada."""
         self.js(
-            "window.__antiga = true;"
+            "document.getElementById('form-pedido').dataset.envio = '';"
             " document.querySelector('#form-pedido button[type=submit]').click()"
         )
-        self._esperar_carregar()
+        esperar(
+            lambda: self.js("document.getElementById('form-pedido').dataset.envio === 'concluido'"),
+            mensagem="o envio do pedido não terminou",
+        )
 
     def digitar(self, seletor: str, texto: str):
         self.js(f"document.querySelector({json.dumps(seletor)}).focus()")
@@ -389,7 +393,7 @@ def test_envio_valido_mostra_sucesso(tela):
     tela.enviar()
 
     assert tela.texto(".alerta-sucesso").startswith(
-        "Pedido de Maria Souza validado com sucesso — 2 itens, total R$ 71,00."
+        "Pedido de Maria Souza salvo com sucesso — 2 itens, total R$ 71,00."
     )
 
 
@@ -724,7 +728,7 @@ def test_pedido_sem_imagem_e_valido_e_nao_mostra_erro_de_imagem(tela):
     assert tela.js("window.ImagensReferencia.arquivos()") == [None, None]
     tela.enviar()
 
-    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza validado com sucesso")
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
     assert not tela.js("!!document.querySelector('.alerta-erro')")
     assert tela.js("[...document.querySelectorAll('.upload-erro')].every(e => e.hidden)")
 
@@ -1039,7 +1043,7 @@ def test_pedido_com_imagem_em_um_item_e_sem_no_outro_e_salvo_e_limpa(tela):
     assert arquivos_por_item(tela) == ["referencia.png", None]
     tela.enviar()
 
-    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza validado com sucesso")
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
     # Depois do sucesso o formulário volta limpo, sem nenhuma imagem.
     assert not tela.js("[...document.querySelectorAll('.upload-miniatura')].some(i => !i.hidden)")
     assert tela.js("window.ImagensReferencia.arquivos().every(a => a === null)")
@@ -1131,3 +1135,114 @@ def test_telas_menores_com_imagens_sem_rolagem_horizontal(pagina, largura):
 
     pagina.clicar(".upload-remover")
     assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+# ---------- Gravação do pedido (repositório e Storage falsos) ----------
+
+
+def imagem_no_item(tela, nome, n, tipo="image/png"):
+    novo_arquivo(tela, nome, tipo)
+    soltar(tela, n)
+    esperar_previa(tela, nome, n)
+
+
+def test_envio_grava_pedido_e_imagens_sem_recarregar(tela, repo_pedidos):
+    preencher_dois_itens(tela)
+    imagem_no_item(tela, "segundo.jpg", 1, "image/jpeg")
+    tela.js("window.__mesma_pagina = true")
+    tela.enviar()
+
+    assert tela.js("window.__mesma_pagina") is True  # não recarregou
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
+    pedido = next(iter(repo_pedidos.pedidos.values()))
+    assert pedido.criado_por == 1
+    assert pedido.itens[0].imagem_caminho is None
+    caminho = pedido.itens[1].imagem_caminho
+    assert caminho.startswith(f"pedidos/{pedido.id}/itens/2/") and caminho.endswith(".jpg")
+    conteudo, tipo = repo_pedidos.arquivos[caminho]
+    assert tipo == "image/jpeg" and conteudo[:3] == b"\xff\xd8\xff"
+    # Formulário limpo, com uma linha vazia e sem imagens.
+    assert tela.valor("#cliente") == ""
+    assert tela.js("document.querySelectorAll('#itens .item').length") == 1
+    assert tela.js("window.ImagensReferencia.arquivos()") == [None]
+    assert not tela.js("!!document.querySelector('#form-pedido input:checked')")
+    assert tela.texto("#resumo-total") == "R$ 0,00"
+    assert tela.texto(".upload-selecionar") == "Selecionar imagem"
+
+
+def test_erro_de_validacao_preserva_dados_e_imagens(tela, repo_pedidos):
+    preencher_dois_itens(tela)
+    imagem_no_item(tela, "primeiro.png", 0)
+    imagem_no_item(tela, "segundo.webp", 1, "image/webp")
+    tela.js("document.getElementById('cliente').value = ''")
+    tela.enviar()
+
+    assert tela.js("!!document.getElementById('cliente-erro')")
+    assert tela.js("!!document.querySelector('.alerta-erro')")
+    assert repo_pedidos.pedidos == {} and repo_pedidos.arquivos == {}
+    assert arquivos_por_item(tela) == ["primeiro.png", "segundo.webp"]
+    assert previa_visivel(tela, 0) and previa_visivel(tela, 1)
+    assert tela.valor(item(1, "item_produto")) == "Caneca"
+    assert tela.valor(item(2, "item_valor")) == "R$ 99,90"
+    assert tela.js("document.querySelector('#grupo-pagamento input[value=PIX]').checked")
+
+    # Corrigido o erro, o mesmo formulário salva com as duas imagens.
+    tela.digitar("#cliente", "Maria Souza")
+    assert not tela.js("!!document.getElementById('cliente-erro')")
+    tela.enviar()
+
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
+    pedido = next(iter(repo_pedidos.pedidos.values()))
+    assert [i.imagem_caminho.rsplit(".", 1)[1] for i in pedido.itens] == ["png", "webp"]
+    assert len(repo_pedidos.arquivos) == 2
+
+
+def test_falha_ao_gravar_preserva_tudo_e_mostra_mensagem_simples(tela, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoGravar
+
+    repo_pedidos.falhar_em["criar_pedido"] = FalhaAoGravar()
+    preencher_dois_itens(tela)
+    imagem_no_item(tela, "foto.png", 0)
+    tela.enviar()
+
+    assert tela.texto(".alerta-erro") == (
+        "Não foi possível salvar o pedido agora. Tente novamente em instantes."
+    )
+    assert repo_pedidos.pedidos == {} and repo_pedidos.arquivos == {}
+    assert len(repo_pedidos.removidos) == 1
+    assert arquivos_por_item(tela) == ["foto.png", None]
+    assert tela.valor("#cliente") == "Maria Souza"
+
+    del repo_pedidos.falhar_em["criar_pedido"]  # o serviço volta: nova tentativa funciona
+    tela.enviar()
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
+    assert len(repo_pedidos.pedidos) == 1
+
+
+def test_pagina_expirada_renova_o_token_e_permite_salvar(tela, repo_pedidos):
+    preencher_dois_itens(tela)
+    imagem_no_item(tela, "foto.png", 1)
+    tela.js("document.getElementById('csrf-pedido').value = 'token-antigo'")
+    tela.enviar()
+
+    assert "A página expirou" in tela.texto(".alerta-erro")
+    assert repo_pedidos.pedidos == {}
+    assert tela.valor("#csrf-pedido") == "csrf-de-teste"
+    assert arquivos_por_item(tela) == [None, "foto.png"]
+
+    tela.enviar()
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
+
+
+def test_botao_indica_envio_e_evita_duplo_clique(tela, repo_pedidos):
+    preencher_dois_itens(tela)
+    tela.js(
+        "document.getElementById('form-pedido').dataset.envio = '';"
+        " const b = document.querySelector('#form-pedido button[type=submit]');"
+        " b.click(); window.__durante = b.textContent; b.click()"
+    )
+    esperar(lambda: tela.js("document.getElementById('form-pedido').dataset.envio === 'concluido'"))
+
+    assert tela.js("window.__durante") == "Salvando…"
+    assert tela.texto("#form-pedido button[type=submit]") == "Salvar pedido"
+    assert len(repo_pedidos.pedidos) == 1

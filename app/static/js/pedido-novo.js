@@ -129,6 +129,130 @@
     }
   });
 
+  // Trocar a imagem apaga o aviso de imagem recusada pelo servidor.
+  listaItens.addEventListener("imagemreferencia:alterada", function (evento) {
+    const aviso = evento.target.querySelector(".item-imagem-erro");
+    if (aviso) aviso.remove();
+  });
+
+  // ---------- Envio sem recarregar a página ----------
+  // O formulário vai como multipart/form-data, com a imagem de cada item em item_imagem_{posição}.
+  // A resposta é a própria página renderizada pelo servidor: dela são copiados o aviso, os campos
+  // e os erros. Com erro, as linhas dos itens (e as imagens escolhidas) continuam na tela.
+
+  const MENSAGEM_FALHA = "Não foi possível salvar o pedido agora. Tente novamente em instantes.";
+  const MENSAGEM_SESSAO = "Sua sessão expirou. Entre novamente para salvar o pedido.";
+  const CAMPOS_DO_ITEM = [".item-produto", ".item-quantidade", ".item-valor", ".item-subtotal"];
+  const botaoSalvar = form.querySelector('button[type="submit"]');
+
+  function importar(no) {
+    return document.importNode(no, true);
+  }
+
+  function trocarAlerta(novo) {
+    document.querySelectorAll(".pedido > .alerta").forEach(function (a) { a.remove(); });
+    if (novo) form.before(novo);
+  }
+
+  function alertaDeErro(texto) {
+    const alerta = document.createElement("div");
+    alerta.className = "alerta alerta-erro";
+    alerta.setAttribute("role", "alert");
+    alerta.textContent = texto;
+    return alerta;
+  }
+
+  function trocarItens(pagina, sucesso) {
+    const novas = pagina.querySelectorAll("#itens > .item");
+    if (sucesso) {
+      listaItens.replaceChildren.apply(listaItens, Array.prototype.map.call(novas, importar));
+      return;
+    }
+    // Erro: só os campos de texto de cada linha são trocados; a área da imagem fica intacta.
+    listaItens.querySelectorAll(":scope > .item").forEach(function (linha, i) {
+      const nova = pagina.querySelector('#itens > .item[data-indice="' + i + '"]');
+      if (!nova) return; // linha em branco: o servidor a ignorou
+      CAMPOS_DO_ITEM.forEach(function (seletor) {
+        linha.querySelector(seletor).replaceWith(importar(nova.querySelector(seletor)));
+      });
+      const aviso = linha.querySelector(".item-imagem-erro");
+      if (aviso) aviso.remove();
+      const novoAviso = nova.querySelector(".item-imagem-erro");
+      if (novoAviso) linha.querySelector(".item-imagem").appendChild(importar(novoAviso));
+    });
+  }
+
+  function aplicarResposta(pagina, status) {
+    const novoCsrf = pagina.getElementById("csrf-pedido");
+    if (novoCsrf) document.getElementById("csrf-pedido").value = novoCsrf.value;
+    trocarAlerta(pagina.querySelector(".pedido > .alerta"));
+    if (status !== 200 && status !== 422) return; // falha ao gravar: a tela fica como está
+
+    pagina.querySelectorAll("[data-regiao]").forEach(function (nova) {
+      const atual = document.getElementById(nova.id);
+      if (atual) atual.replaceWith(importar(nova));
+    });
+    const erroItens = document.getElementById("itens-erro");
+    if (erroItens) erroItens.remove();
+    const novoErroItens = pagina.getElementById("itens-erro");
+    if (novoErroItens) document.getElementById("adicionar-item").before(importar(novoErroItens));
+
+    trocarItens(pagina, status === 200);
+    prepararCampos(form);
+    recalcular();
+  }
+
+  async function enviar() {
+    const dados = new FormData(form);
+    const arquivos = window.ImagensReferencia ? window.ImagensReferencia.arquivos() : [];
+    arquivos.forEach(function (arquivo, i) {
+      if (arquivo) dados.append("item_imagem_" + i, arquivo, arquivo.name);
+    });
+
+    let resposta;
+    try {
+      resposta = await fetch(form.action, {
+        method: "POST",
+        body: dados,
+        credentials: "same-origin",
+        redirect: "manual", // sessão expirada vira redirecionamento para /entrar
+      });
+    } catch (erro) {
+      trocarAlerta(alertaDeErro(MENSAGEM_FALHA));
+      return;
+    }
+    if (resposta.type === "opaqueredirect") {
+      trocarAlerta(alertaDeErro(MENSAGEM_SESSAO));
+      return;
+    }
+    const pagina = new DOMParser().parseFromString(await resposta.text(), "text/html");
+    if (!pagina.getElementById("form-pedido")) {
+      trocarAlerta(alertaDeErro(MENSAGEM_FALHA));
+      return;
+    }
+    aplicarResposta(pagina, resposta.status);
+  }
+
+  form.addEventListener("submit", function (evento) {
+    if (!window.fetch || !window.FormData || !window.DOMParser) return; // envio tradicional
+    evento.preventDefault();
+    if (form.dataset.envio === "enviando") return;
+
+    form.dataset.envio = "enviando";
+    form.setAttribute("aria-busy", "true");
+    form.inert = true; // nada muda na tela enquanto o servidor responde
+    botaoSalvar.textContent = "Salvando…";
+    enviar()
+      .catch(function () { trocarAlerta(alertaDeErro(MENSAGEM_FALHA)); })
+      .finally(function () {
+        form.inert = false;
+        form.removeAttribute("aria-busy");
+        botaoSalvar.textContent = "Salvar pedido";
+        form.dataset.envio = "concluido";
+        window.scrollTo(0, 0);
+      });
+  });
+
   prepararCampos(form);
   recalcular();
 })();

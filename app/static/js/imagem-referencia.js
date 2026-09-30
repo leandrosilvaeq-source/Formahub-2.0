@@ -1,10 +1,10 @@
-// Tela "Novo pedido": imagem de referência de cada item (opcional: zero ou uma). Somente frontend.
+// Tela "Novo pedido": imagem de referência de cada item (opcional: zero ou uma).
 //
-// O arquivo escolhido fica apenas na memória do navegador: a miniatura usa uma URL
-// temporária (blob:) e nada é enviado, convertido em texto ou guardado no navegador.
-// A falta de imagem nunca é um erro e não impede o salvamento do pedido.
-// Próximo MVP: enviar `window.ImagensReferencia.arquivos()[n]` ao Supabase Storage e gravar
-// no item somente o caminho retornado (o banco nunca guarda os bytes da imagem).
+// Este arquivo só escolhe, valida e mostra a imagem: a miniatura usa uma URL temporária
+// (blob:) e nada é convertido em texto ou guardado no navegador. A falta de imagem nunca é
+// um erro e não impede o salvamento do pedido.
+// Ao salvar, pedido-novo.js envia `window.ImagensReferencia.arquivos()[n]` junto com o
+// formulário; o servidor grava a imagem no Supabase Storage e o banco guarda só o caminho.
 (function () {
   "use strict";
 

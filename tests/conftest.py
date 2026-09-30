@@ -1,6 +1,6 @@
-"""Configuração comum dos testes: repositório de login falso e usuário logado simulado.
+"""Configuração comum dos testes: repositórios falsos (login e pedidos) e usuário logado simulado.
 
-Nenhum teste acessa o Supabase: o repositório real é sempre trocado pelo de memória.
+Nenhum teste acessa o Supabase: os repositórios reais são sempre trocados pelos de memória.
 Os testes de autenticação (marcados com `sem_login`) usam o login de verdade, sobre esse
 repositório falso; os demais testes rodam como se o Leandro estivesse logado.
 """
@@ -13,7 +13,9 @@ from app.auth import senhas
 from app.auth.repositorio import Usuario, get_repositorio
 from app.auth.rotas import exigir_usuario
 from app.main import app
+from app.pedidos_repositorio import get_repositorio_pedidos
 from tests.fake_auth import RepositorioMemoria
+from tests.fake_pedidos import RepositorioPedidosMemoria
 
 
 @pytest.fixture(autouse=True)
@@ -29,9 +31,15 @@ def repo():
     return RepositorioMemoria()
 
 
+@pytest.fixture
+def repo_pedidos():
+    return RepositorioPedidosMemoria()
+
+
 @pytest.fixture(autouse=True)
-def autenticacao_de_teste(request, repo):
+def autenticacao_de_teste(request, repo, repo_pedidos):
     app.dependency_overrides[get_repositorio] = lambda: repo
+    app.dependency_overrides[get_repositorio_pedidos] = lambda: repo_pedidos
     if not request.node.get_closest_marker("sem_login"):
 
         def usuario_logado(request: Request) -> Usuario:

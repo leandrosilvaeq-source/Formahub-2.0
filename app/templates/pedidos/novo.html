@@ -30,7 +30,7 @@
 {%- endmacro %}
 
 {% macro escolhas(nome, titulo, opcoes, selecionada, mensagem, colunas) -%}
-<fieldset class="secao escolhas{% if mensagem %} tem-erro{% endif %}" id="grupo-{{ nome }}"
+<fieldset class="secao escolhas{% if mensagem %} tem-erro{% endif %}" id="grupo-{{ nome }}" data-regiao
   {%- if mensagem %} aria-describedby="{{ nome }}-erro"{% endif %}>
   <legend>{{ titulo }} <span class="obrigatorio">*</span></legend>
   <div class="escolhas-opcoes escolhas-{{ colunas }}">
@@ -47,7 +47,7 @@
 {%- endmacro %}
 
 {% macro item_linha(item) -%}
-<div class="item">
+<div class="item" data-indice="{{ item.indice }}">
   <div class="campo item-produto{% if item.erros.produto %} tem-erro{% endif %}">
     <span class="item-rotulo" aria-hidden="true">Produto <span class="obrigatorio">*</span></span>
     <input name="item_produto" type="text" value="{{ item.produto }}" placeholder="Produto"
@@ -70,10 +70,9 @@
     <span class="item-rotulo">Subtotal</span>
     <output aria-label="Subtotal do item">{{ item.subtotal | brl }}</output>
   </div>
-  {# Imagem de referência do item (opcional: zero ou uma). Somente frontend: o arquivo fica na memória
-     do navegador e não é enviado; o input não tem "name" para não entrar no envio do formulário.
-     Próximo MVP: enviar window.ImagensReferencia.arquivos()[n] ao Supabase Storage e gravar no item
-     apenas o caminho retornado. #}
+  {# Imagem de referência do item (opcional: zero ou uma). O input não tem "name": o JavaScript
+     envia o arquivo como item_imagem_{posição}; o servidor o grava no Storage e o banco guarda só
+     o caminho. O erro abaixo só aparece se o servidor recusar a imagem. #}
   <div class="campo item-imagem">
     <span class="item-rotulo" aria-hidden="true">Imagem de referência <span class="item-opcional">(opcional · PNG, JPG ou WebP, até 10 MB)</span></span>
     <div class="upload-item" role="group" aria-label="Imagem de referência" data-max-mb="10">
@@ -88,6 +87,7 @@
       <input type="file" class="upload-arquivo" accept="image/png,image/jpeg,image/webp" hidden tabindex="-1">
       <span class="visualmente-oculto upload-status" role="status" aria-live="polite"></span>
     </div>
+    {% if item.erros.imagem %}<p class="campo-erro item-imagem-erro">{{ item.erros.imagem }}</p>{% endif %}
   </div>
   <button type="button" class="botao-icone item-remover" aria-label="Remover item" title="Remover item">&times;</button>
 </div>
@@ -106,22 +106,25 @@
 
 {% if sucesso %}
 <div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>
+{% elif erro_geral %}
+<div class="alerta alerta-erro" role="alert">{{ erro_geral }}</div>
 {% elif not pedido.valido %}
 <div class="alerta alerta-erro" role="alert">Não foi possível salvar. Corrija os campos destacados.</div>
 {% endif %}
 
 <form id="form-pedido" method="post" action="/pedidos/novo" novalidate>
+  <input type="hidden" id="csrf-pedido" name="csrf" value="{{ request.state.csrf }}">
 
   <section class="secao">
     <h2>Dados do cliente</h2>
     <div class="grade grade-cliente">
-      <div class="campo{% if e.cliente %} tem-erro{% endif %}">
+      <div class="campo{% if e.cliente %} tem-erro{% endif %}" id="campo-cliente" data-regiao>
         <label for="cliente">Nome do cliente <span class="obrigatorio">*</span></label>
         <input id="cliente" name="cliente" type="text" value="{{ pedido.cliente }}" autocomplete="name"
           {{- invalido(e.cliente, "cliente") }}>
         {{ erro(e.cliente, "cliente") }}
       </div>
-      <div class="campo{% if e.contato %} tem-erro{% endif %}">
+      <div class="campo{% if e.contato %} tem-erro{% endif %}" id="campo-contato" data-regiao>
         <label for="contato">Contato <span class="obrigatorio">*</span></label>
         <input id="contato" name="contato" type="tel" inputmode="numeric" value="{{ pedido.contato }}"
           placeholder="(00) 00000-0000" maxlength="15" autocomplete="tel-national"
@@ -153,7 +156,7 @@
   <div class="grade-final">
   <section class="secao secao-obs">
     <h2><label for="observacoes">Informações complementares</label></h2>
-    <textarea id="observacoes" name="observacoes" rows="2" class="campo-texto"
+    <textarea id="observacoes" name="observacoes" rows="2" class="campo-texto" data-regiao
       placeholder="Opcional">{{ pedido.observacoes }}</textarea>
   </section>
 
@@ -163,11 +166,11 @@
       <dl class="resumo-valores">
         <div>
           <dt>Quantidade de itens</dt>
-          <dd id="resumo-quantidade">{{ pedido.quantidade_total }}</dd>
+          <dd id="resumo-quantidade" data-regiao>{{ pedido.quantidade_total }}</dd>
         </div>
         <div class="resumo-total">
           <dt>Total do pedido</dt>
-          <dd id="resumo-total">{{ pedido.total | brl }}</dd>
+          <dd id="resumo-total" data-regiao>{{ pedido.total | brl }}</dd>
         </div>
       </dl>
       <div class="acoes">

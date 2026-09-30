@@ -19,6 +19,7 @@ def form_valido(**extra):
         "pagamento": "PIX",
         "entrega": "Retirada",
         "observacoes": "",
+        "csrf": "csrf-de-teste",
     }
     dados.update(extra)
     return dados
@@ -257,7 +258,9 @@ def test_varios_itens_e_item_removido():
 
 
 def test_envio_invalido_mostra_erros_junto_aos_campos():
-    resposta = client.post("/pedidos/novo", data={"cliente": "", "contato": ""})
+    resposta = client.post(
+        "/pedidos/novo", data={"cliente": "", "contato": "", "csrf": "csrf-de-teste"}
+    )
 
     assert resposta.status_code == 422
     html = resposta.text
@@ -267,7 +270,7 @@ def test_envio_invalido_mostra_erros_junto_aos_campos():
     assert "Adicione pelo menos um item." in html
     assert '<p class="campo-erro" id="pagamento-erro">Escolha a forma de pagamento.</p>' in html
     assert '<p class="campo-erro" id="entrega-erro">Escolha a forma de entrega.</p>' in html
-    assert "validado com sucesso" not in html
+    assert "salvo com sucesso" not in html
 
 
 def test_envio_invalido_mantem_valores_e_selecoes():
@@ -287,7 +290,7 @@ def test_envio_valido_mostra_sucesso():
     assert resposta.status_code == 200
     html = resposta.text
     assert 'class="alerta alerta-sucesso"' in html
-    assert "Pedido de Maria Souza validado com sucesso — 3 itens, total R$ 1.271,00." in html
+    assert "Pedido de Maria Souza salvo com sucesso — 3 itens, total R$ 1.271,00." in html
     # O formulário volta limpo para um novo lançamento.
     assert 'value="Maria Souza"' not in html
 
@@ -317,7 +320,7 @@ def test_icone_de_entrega_em_maos_presente():
     assert html.count('aria-hidden="true" focusable="false"') >= 5  # ícones decorativos
 
 
-def test_cada_item_tem_imagem_de_referencia_opcional_sem_envio_ao_servidor():
+def test_cada_item_tem_imagem_de_referencia_opcional():
     html = client.get("/pedidos/novo").text
 
     assert html.count('class="upload-item"') == 2  # o item da tela + o modelo dos novos itens
@@ -328,7 +331,7 @@ def test_cada_item_tem_imagem_de_referencia_opcional_sem_envio_ao_servidor():
     assert 'accept="image/png,image/jpeg,image/webp"' in html
     assert 'data-max-mb="10"' in html
     assert "/static/js/imagem-referencia.js" in html
-    # Input de arquivo sem "name": não entra no envio do formulário (que continua sem multipart).
+    # Input de arquivo sem "name": o JavaScript envia o arquivo à parte (item_imagem_{n}).
     entradas = [t for t in html.split("<input") if 'type="file"' in t.split(">")[0]]
     assert entradas and all("name=" not in t.split(">")[0] for t in entradas)
     assert "multipart" not in html
@@ -338,10 +341,10 @@ def test_cada_item_tem_imagem_de_referencia_opcional_sem_envio_ao_servidor():
     assert 'class="upload-erro" role="alert" hidden' in html
 
 
-def test_pedido_sem_imagem_de_referencia_e_validado():
+def test_pedido_sem_imagem_de_referencia_e_salvo():
     resposta = client.post("/pedidos/novo", data=form_valido())
 
-    assert "validado com sucesso" in resposta.text
+    assert "salvo com sucesso" in resposta.text
     assert "upload-erro" in resposta.text  # só o elemento oculto, nunca uma mensagem de imagem
     assert "Formato não aceito" not in resposta.text
 
@@ -355,7 +358,7 @@ def test_pedido_invalido_nao_reclama_de_imagem():
 
 def test_javascript_da_imagem_nao_usa_rede_base64_nem_armazenamento():
     codigo = client.get("/static/js/imagem-referencia.js").text.lower()
-    # Só o código conta: os comentários explicam o plano do próximo MVP (Supabase Storage).
+    # Só o código conta: os comentários explicam como o envio acontece (em pedido-novo.js).
     js = " ".join(linha.split("//")[0] for linha in codigo.splitlines())
 
     for proibido in (
@@ -381,4 +384,4 @@ def test_javascript_da_imagem_nao_usa_rede_base64_nem_armazenamento():
 def test_envio_com_observacoes_continua_igual_com_o_campo_de_imagem():
     resposta = client.post("/pedidos/novo", data=form_valido(observacoes="Embalar para presente"))
 
-    assert "validado com sucesso" in resposta.text
+    assert "salvo com sucesso" in resposta.text

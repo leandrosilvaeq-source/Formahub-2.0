@@ -97,7 +97,7 @@ async def _ler_formulario(request: Request) -> dict[str, str]:
     return {chave: valores[0] for chave, valores in dados.items()}
 
 
-def _origem_confiavel(request: Request) -> bool:
+def origem_confiavel(request: Request) -> bool:
     """Se o navegador enviou Origin, ele precisa ser o próprio site."""
     origem = request.headers.get("origin")
     if origem is None:
@@ -241,7 +241,7 @@ async def entrar(
     dados = await _ler_formulario(request)
     nome = dados.get("usuario", "")
     proximo = sessoes.caminho_interno_seguro(dados.get("next"))
-    if not _origem_confiavel(request) or not sessoes.csrf_valido(
+    if not origem_confiavel(request) or not sessoes.csrf_valido(
         _csrf_do_cookie(request), dados.get("csrf")
     ):
         return _csrf_recusado(request, repo, settings, nome, proximo)
@@ -312,7 +312,7 @@ async def criar_senha(
     dados = await _ler_formulario(request)
     nome = dados.get("usuario", "")
     proximo = sessoes.caminho_interno_seguro(dados.get("next"))
-    if not _origem_confiavel(request) or not sessoes.csrf_valido(
+    if not origem_confiavel(request) or not sessoes.csrf_valido(
         _csrf_do_cookie(request), dados.get("csrf")
     ):
         return _csrf_recusado(request, repo, settings, nome, proximo)
@@ -352,7 +352,7 @@ async def sair(
         return RedirectResponse("/entrar", status_code=303)
 
     dados = await _ler_formulario(request)
-    if not _origem_confiavel(request) or not sessoes.csrf_valido(
+    if not origem_confiavel(request) or not sessoes.csrf_valido(
         sessoes.csrf_da_sessao(token), dados.get("csrf")
     ):
         return HTMLResponse(
