@@ -40,6 +40,8 @@ alter table public.sessoes enable row level security;
 
 revoke all on public.usuarios from anon, authenticated, service_role;
 revoke all on public.sessoes from anon, authenticated, service_role;
+-- A sequence da identity também recebe os privilégios padrão do projeto; ninguém insere usuários.
+revoke all on sequence public.usuarios_id_seq from anon, authenticated, service_role;
 
 -- O servidor lê usuários e só altera o controle de tentativas. Não cria nem apaga usuários e
 -- não grava senha_hash diretamente: a senha só entra pela função abaixo.
