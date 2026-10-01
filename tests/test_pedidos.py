@@ -17,6 +17,7 @@ def form_valido(**extra):
         "item_quantidade": ["2", "1"],
         "item_valor": ["R$ 35,50", "R$ 1.200,00"],
         "pagamento": "PIX",
+        "status_pagamento": "Pendente",
         "entrega": "Retirada",
         "observacoes": "",
         "csrf": "csrf-de-teste",

@@ -1,8 +1,12 @@
--- Teste transacional da migration de pedidos (20260930120000_criar_pedidos.sql).
+-- Teste transacional da migration de pedidos (20260930120000_criar_pedidos.sql), com a
+-- assinatura de criar_pedido vigente depois de 20261002120000_status_pagamento.sql.
+--
+-- ATENÇÃO: este teste reserva ids reais e depois RESTAURA as sequências (setval). Com o
+-- sistema em uso, um pedido salvo durante o teste poderia colidir com ids futuros. Só rode
+-- com o sistema parado; para verificações rotineiras use consulta_pedidos_test.sql e
+-- status_pagamento_test.sql, que não tocam nas sequências.
 --
 -- Tudo roda dentro de BEGIN/ROLLBACK: nenhum pedido ou item de teste permanece.
--- As sequências (que não voltam com ROLLBACK) são restauradas ao valor anterior ao teste;
--- por isso, rode-o com o sistema parado (sem ninguém salvando pedidos ao mesmo tempo).
 -- Qualquer falha interrompe com RAISE EXCEPTION. Usa somente dados fictícios.
 -- Não toca no Storage: só confere a configuração do bucket.
 -- Execução: supabase db query --linked -f supabase/tests/pedidos_test.sql
@@ -46,14 +50,15 @@ create function pg_temp.chamada(
   p_itens jsonb,
   p_cliente text default 'Cliente teste',
   p_pagamento text default 'pix',
-  p_entrega text default 'retirada'
+  p_entrega text default 'retirada',
+  p_status text default 'pendente'
 )
 returns text
 language sql
 as $f$
   select format(
-    'select public.criar_pedido(%s, %s, %L, null, %L, %L, null, %s, %L::jsonb)',
-    p_id, p_usuario, p_cliente, p_pagamento, p_entrega, p_total, p_itens
+    'select public.criar_pedido(%s, %s, %L, null, %L, %L, %L, null, %s, %L::jsonb)',
+    p_id, p_usuario, p_cliente, p_pagamento, p_status, p_entrega, p_total, p_itens
   );
 $f$;
 
@@ -93,7 +98,7 @@ declare
   v_pedidos_antes constant bigint := (select count(*) from public.pedidos);
   v_itens_antes   constant bigint := (select count(*) from public.pedido_itens);
   v_criar constant text :=
-    'public.criar_pedido(bigint, bigint, text, text, text, text, text, numeric, jsonb)';
+    'public.criar_pedido(bigint, bigint, text, text, text, text, text, text, numeric, jsonb)';
   v_usuario bigint;
   v_papel text;
   v_caminho text;
@@ -175,8 +180,8 @@ begin
       raise exception 'reservar o id não deveria gravar nada';
     end if;
 
-    if public.criar_pedido(v_id, v_usuario, 'Cliente teste', '(00) 00000-0000', 'pix', 'retirada',
-                           null, 26.00, pg_temp.itens_teste(v_id)) <> v_id then
+    if public.criar_pedido(v_id, v_usuario, 'Cliente teste', '(00) 00000-0000', 'pix', 'pendente',
+                           'retirada', null, 26.00, pg_temp.itens_teste(v_id)) <> v_id then
       raise exception 'criar_pedido deveria devolver o id';
     end if;
 
@@ -250,6 +255,11 @@ begin
       pg_temp.chamada(v_outro, v_usuario, 26.00, pg_temp.itens_teste(v_outro),
                       p_pagamento => 'boleto'),
       '23514', 'pedidos_forma_pagamento_check');
+
+    perform pg_temp.deve_falhar('status do pagamento fora da lista',
+      pg_temp.chamada(v_outro, v_usuario, 26.00, pg_temp.itens_teste(v_outro),
+                      p_status => 'quitado'),
+      '23514', 'pedidos_status_pagamento_check');
 
     perform pg_temp.deve_falhar('tipo de entrega fora da lista',
       pg_temp.chamada(v_outro, v_usuario, 26.00, pg_temp.itens_teste(v_outro),

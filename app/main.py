@@ -18,23 +18,34 @@ from app.auth.rotas import (
 )
 from app.auth.rotas import router as rotas_auth
 from app.pedidos import (
+    ESCOLHA_OBRIGATORIA,
     FORMAS_ENTREGA,
     FORMAS_PAGAMENTO,
     LIMITE_IMAGEM_BYTES,
+    ROTULOS_ENTREGA,
+    ROTULOS_PAGAMENTO,
+    ROTULOS_STATUS,
+    STATUS_PAGAMENTO,
     Item,
     PedidoNaoSalvo,
     formatar_brl,
+    formatar_contato,
     gravar_pedido,
     ler_formulario,
     pedido_vazio,
     validar,
 )
-from app.pedidos_repositorio import RepositorioPedidos, get_repositorio_pedidos
+from app.pedidos_repositorio import FalhaAoConsultar, RepositorioPedidos, get_repositorio_pedidos
 
 BASE_DIR = Path(__file__).resolve().parent
 
 # Imagem do item na posição n do formulário (enviada pelo JavaScript da tela).
 CAMPO_IMAGEM = re.compile(r"item_imagem_(\d{1,5})")
+# Id de pedido na URL: só dígitos, dentro do limite de um bigint.
+ID_PEDIDO = re.compile(r"[0-9]{1,18}")
+MENSAGEM_CONSULTA_INDISPONIVEL = (
+    "Não foi possível carregar os pedidos agora. Tente novamente em instantes."
+)
 
 app = FastAPI(title="FormaHub 2.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -43,6 +54,11 @@ app.add_exception_handler(NaoAutenticado, tratar_nao_autenticado)
 app.add_exception_handler(ServicoIndisponivel, tratar_servico_indisponivel)
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.filters["brl"] = formatar_brl
+templates.env.filters["contato"] = lambda texto: formatar_contato(texto) if texto else "—"
+templates.env.filters["data_hora"] = lambda momento: momento.strftime("%d/%m/%Y às %H:%M")
+templates.env.filters["pagamento"] = lambda codigo: ROTULOS_PAGAMENTO.get(codigo, codigo)
+templates.env.filters["entrega"] = lambda codigo: ROTULOS_ENTREGA.get(codigo, codigo)
+templates.env.filters["status_pagamento"] = lambda codigo: ROTULOS_STATUS.get(codigo, codigo)
 
 MODULOS = [
     {"titulo": "Produtos", "descricao": "Cadastro e consulta dos produtos."},
@@ -50,8 +66,10 @@ MODULOS = [
     {
         "titulo": "Pedidos",
         "descricao": "Registro e acompanhamento de pedidos.",
-        "link": "/pedidos/novo",
-        "link_texto": "Novo pedido",
+        "links": [
+            {"url": "/pedidos", "texto": "Ver pedidos", "principal": True},
+            {"url": "/pedidos/novo", "texto": "Novo pedido"},
+        ],
     },
 ]
 
@@ -78,6 +96,8 @@ def _tela_pedido(
             "sucesso": sucesso,
             "erro_geral": erro_geral,
             "formas_pagamento": FORMAS_PAGAMENTO,
+            "status_pagamento": STATUS_PAGAMENTO,
+            "escolha_obrigatoria": ESCOLHA_OBRIGATORIA,
             "formas_entrega": FORMAS_ENTREGA,
         },
         status_code=status_code,
@@ -145,3 +165,70 @@ async def salvar_pedido(
         f"{pedido.quantidade_total} {unidades}, total {formatar_brl(pedido.total)}."
     )
     return _tela_pedido(request, pedido_vazio(), sucesso=sucesso)
+
+
+# ---------- Consulta ----------
+
+
+def _pagina_sem_cache(request: Request, modelo: str, contexto: dict, status_code: int = 200):
+    """Telas de consulta: dados de clientes e URLs temporárias não ficam no cache."""
+    resposta = templates.TemplateResponse(request, modelo, contexto, status_code=status_code)
+    resposta.headers["Cache-Control"] = "no-store"
+    return resposta
+
+
+@app.get("/pedidos", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
+def listar_pedidos(
+    request: Request, repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos)
+):
+    try:
+        if repo is None:
+            raise FalhaAoConsultar
+        pedidos = repo.listar_pedidos()
+    except FalhaAoConsultar:
+        contexto = {"pedidos": [], "imagens": {}, "erro": MENSAGEM_CONSULTA_INDISPONIVEL}
+        return _pagina_sem_cache(request, "pedidos/lista.html", contexto, status_code=503)
+
+    # No máximo uma foto por card (a de destaque, escolhida no banco), assinadas num só pedido
+    # ao Storage. Se falhar, os cards aparecem sem foto, com um aviso discreto.
+    caminhos = [p.imagem_caminho for p in pedidos if p.imagem_caminho]
+    try:
+        imagens = repo.assinar_imagens(caminhos) if caminhos else {}
+    except FalhaAoConsultar:
+        imagens = {}
+    contexto = {"pedidos": pedidos, "imagens": imagens, "erro": ""}
+    return _pagina_sem_cache(request, "pedidos/lista.html", contexto)
+
+
+@app.get(
+    "/pedidos/{pedido_id}", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)]
+)
+def ver_pedido(
+    request: Request,
+    pedido_id: str,
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    try:
+        if repo is None:
+            raise FalhaAoConsultar
+        pedido = repo.consultar_pedido(int(pedido_id)) if ID_PEDIDO.fullmatch(pedido_id) else None
+    except FalhaAoConsultar:
+        contexto = {"erro": MENSAGEM_CONSULTA_INDISPONIVEL}
+        return _pagina_sem_cache(request, "pedidos/indisponivel.html", contexto, status_code=503)
+    if pedido is None:
+        return _pagina_sem_cache(request, "pedidos/nao_encontrado.html", {}, status_code=404)
+
+    # URLs assinadas só para as imagens que existem; sem elas o pedido aparece mesmo assim.
+    caminhos = [item.imagem_caminho for item in pedido.itens if item.imagem_caminho]
+    imagens_indisponiveis = False
+    try:
+        imagens = repo.assinar_imagens(caminhos) if caminhos else {}
+    except FalhaAoConsultar:
+        imagens, imagens_indisponiveis = {}, True
+    contexto = {
+        "pedido": pedido,
+        "imagens": imagens,
+        "imagens_indisponiveis": imagens_indisponiveis,
+        "quantidade_total": sum(item.quantidade for item in pedido.itens),
+    }
+    return _pagina_sem_cache(request, "pedidos/detalhe.html", contexto)

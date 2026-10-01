@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "pedidos/_status.html" import selo_status %}
+
+{% block title %}Pedido de {{ pedido.cliente_nome }} · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="consulta">
+
+<div class="pagina-topo">
+  <h1>Pedido de {{ pedido.cliente_nome }}</h1>
+  <div class="pagina-topo-acoes">
+    <a class="botao botao-secundario" href="/pedidos">Voltar para pedidos</a>
+    <a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>
+  </div>
+</div>
+
+{% if imagens_indisponiveis %}
+<div class="alerta alerta-erro" role="alert">Não foi possível carregar as imagens agora. Os demais dados do pedido estão abaixo.</div>
+{% endif %}
+
+<div class="detalhe-grade">
+  <section class="secao">
+    <h2>Cliente</h2>
+    <dl class="detalhe-dados">
+      <div><dt>Nome</dt><dd>{{ pedido.cliente_nome }}</dd></div>
+      <div><dt>Contato</dt><dd>{{ pedido.contato | contato }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="secao">
+    <h2>Pagamento e entrega</h2>
+    <dl class="detalhe-dados">
+      <div><dt>Pagamento</dt><dd>{{ pedido.forma_pagamento | pagamento }}</dd></div>
+      <div><dt>Status do pagamento</dt><dd>{{ selo_status(pedido.status_pagamento) }}</dd></div>
+      <div><dt>Entrega</dt><dd>{{ pedido.tipo_entrega | entrega }}</dd></div>
+    </dl>
+  </section>
+
+  <section class="secao">
+    <h2>Cadastro</h2>
+    <dl class="detalhe-dados">
+      <div><dt>Cadastrado por</dt><dd>{{ pedido.criado_por_nome }}</dd></div>
+      <div><dt>Data</dt><dd><time datetime="{{ pedido.criado_em.isoformat(timespec='minutes') }}">{{ pedido.criado_em | data_hora }}</time></dd></div>
+    </dl>
+  </section>
+</div>
+
+<section class="secao">
+  <h2>Itens</h2>
+  <div class="detalhe-itens-cabecalho" aria-hidden="true">
+    <span>Produto</span><span>Qtd.</span><span>Valor unitário</span><span>Subtotal</span>
+  </div>
+  <ol class="detalhe-itens">
+    {% for item in pedido.itens %}
+    {% set url = imagens.get(item.imagem_caminho) if item.imagem_caminho else None %}
+    <li class="detalhe-item">
+      <div class="detalhe-produto">
+        {% if url %}
+        <a class="detalhe-miniatura" href="{{ url }}" target="_blank" rel="noopener noreferrer"
+          data-ampliar data-legenda="{{ item.produto }}" aria-label="Ampliar a imagem de {{ item.produto }}">
+          <img src="{{ url }}" alt="Imagem de referência de {{ item.produto }}" width="56" height="56"
+            loading="lazy" referrerpolicy="no-referrer">
+        </a>
+        {% endif %}
+        <span>{{ item.produto }}</span>
+      </div>
+      <span class="detalhe-quantidade"><span class="detalhe-rotulo">Qtd.</span> {{ item.quantidade }}</span>
+      <span class="detalhe-valor"><span class="detalhe-rotulo">Valor unitário</span> {{ item.valor_unitario | brl }}</span>
+      <span class="detalhe-subtotal"><span class="detalhe-rotulo">Subtotal</span> {{ item.subtotal | brl }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  <dl class="detalhe-total">
+    <div><dt>Unidades</dt><dd>{{ quantidade_total }}</dd></div>
+    <div class="resumo-total"><dt>Total do pedido</dt><dd>{{ pedido.valor_total | brl }}</dd></div>
+  </dl>
+</section>
+
+<section class="secao">
+  <h2>Observações</h2>
+  {% if pedido.observacoes %}
+  <p class="detalhe-observacoes">{{ pedido.observacoes }}</p>
+  {% else %}
+  <p class="detalhe-vazio">Sem observações.</p>
+  {% endif %}
+</section>
+
+</div>
+
+<dialog id="imagem-ampliada" class="imagem-ampliada" aria-labelledby="imagem-ampliada-legenda">
+  <figure>
+    <img alt="" referrerpolicy="no-referrer">
+    <figcaption id="imagem-ampliada-legenda"></figcaption>
+  </figure>
+  <form method="dialog">
+    <button type="submit" class="botao botao-secundario">Fechar</button>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/pedido-detalhe.js') }}"></script>
+{% endblock %}

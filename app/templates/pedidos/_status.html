@@ -1,0 +1,10 @@
+{# Selo do status do pagamento: ícone + texto (o estado não depende só da cor). #}
+{% macro selo_status(codigo) -%}
+<span class="selo-status selo-status-{{ codigo }}">
+  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    {%- if codigo == "pago" %}<circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>
+    {%- else %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>{% endif -%}
+  </svg>
+  {{- codigo | status_pagamento -}}
+</span>
+{%- endmacro %}

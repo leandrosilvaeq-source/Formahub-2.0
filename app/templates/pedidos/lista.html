@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "pedidos/_status.html" import selo_status %}
+
+{% block title %}Pedidos · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="consulta">
+
+<div class="pagina-topo">
+  <h1>Pedidos</h1>
+  <a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>
+</div>
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+{% elif not pedidos %}
+<section class="secao lista-vazia">
+  <h2>Nenhum pedido cadastrado</h2>
+  <p>Os pedidos salvos aparecem aqui, do mais recente para o mais antigo.</p>
+  <a class="botao botao-primario" href="/pedidos/novo">Cadastrar primeiro pedido</a>
+</section>
+{% else %}
+<ul class="lista-pedidos">
+  {% for p in pedidos %}
+  {% set foto = imagens.get(p.imagem_caminho) if p.imagem_caminho else None %}
+  <li class="pedido-card{% if foto %} tem-foto{% endif %}">
+    {% if foto %}
+    <img class="pedido-card-foto" src="{{ foto }}" alt="Foto de referência: {{ p.imagem_produto }}"
+      width="112" height="112" loading="lazy" referrerpolicy="no-referrer">
+    {% endif %}
+    <div class="pedido-card-corpo">
+      <h2>{{ p.cliente_nome }}</h2>
+      <dl class="pedido-card-dados">
+        <div>
+          <dt>Pagamento</dt>
+          <dd class="pedido-card-pagamento">{{ p.forma_pagamento | pagamento }} {{ selo_status(p.status_pagamento) }}</dd>
+        </div>
+        <div><dt>Cadastrado por</dt><dd>{{ p.criado_por_nome }}</dd></div>
+        <div class="pedido-card-largo">
+          <dt>Produtos</dt>
+          <dd>
+            <span class="pedido-card-produtos">{{ p.produtos | join(", ") }}</span>
+            <span class="pedido-card-unidades">{{ p.quantidade_total }} {{ "unidade" if p.quantidade_total == 1 else "unidades" }}</span>
+          </dd>
+        </div>
+        <div class="pedido-card-largo">
+          <dt>Observações</dt>
+          {% if p.observacoes %}
+          <dd class="pedido-card-obs">{{ p.observacoes }}</dd>
+          {% else %}
+          <dd class="pedido-card-vazio">Sem observações</dd>
+          {% endif %}
+        </div>
+      </dl>
+      {% if p.imagem_caminho and not foto %}
+      <p class="pedido-card-aviso">Foto indisponível no momento.</p>
+      {% endif %}
+    </div>
+    <a class="botao botao-secundario pedido-card-ver" href="/pedidos/{{ p.id }}"
+      aria-label="Ver pedido de {{ p.cliente_nome }}">Ver pedido</a>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+</div>
+{% endblock %}

@@ -20,11 +20,25 @@ from app.pedidos_repositorio import (
 logger = logging.getLogger("formahub.pedidos")
 
 FORMAS_PAGAMENTO = ["PIX", "Dinheiro", "Cartão"]
+STATUS_PAGAMENTO = ["Pendente", "Pago"]
 FORMAS_ENTREGA = ["Entrega em mãos", "Retirada"]
+
+# Grupos de escolha obrigatórios -> mensagem quando nada foi escolhido
+# (a mesma no servidor e na marcação imediata feita no navegador).
+ESCOLHA_OBRIGATORIA = {
+    "pagamento": "Escolha a forma de pagamento.",
+    "status_pagamento": "Escolha o status do pagamento.",
+    "entrega": "Escolha a forma de entrega.",
+}
 
 # Opção da tela -> valor gravado no banco.
 CODIGOS_PAGAMENTO = {"PIX": "pix", "Dinheiro": "dinheiro", "Cartão": "cartao"}
+CODIGOS_STATUS = {"Pendente": "pendente", "Pago": "pago"}
 CODIGOS_ENTREGA = {"Entrega em mãos": "entrega", "Retirada": "retirada"}
+# Valor do banco -> texto das telas de consulta.
+ROTULOS_PAGAMENTO = {codigo: rotulo for rotulo, codigo in CODIGOS_PAGAMENTO.items()}
+ROTULOS_STATUS = {codigo: rotulo for rotulo, codigo in CODIGOS_STATUS.items()}
+ROTULOS_ENTREGA = {codigo: rotulo for rotulo, codigo in CODIGOS_ENTREGA.items()}
 
 # Imagem de referência do item: opcional, uma por item, PNG/JPEG/WebP até 10 MB.
 LIMITE_IMAGEM_MB = 10
@@ -102,6 +116,7 @@ class Pedido:
     cliente: str = ""
     contato: str = ""
     pagamento: str = ""
+    status_pagamento: str = ""
     entrega: str = ""
     observacoes: str = ""
     itens: list[Item] = field(default_factory=list)
@@ -156,6 +171,7 @@ def ler_formulario(dados: dict[str, list[str]], imagens: dict[int, bytes] | None
         cliente=campo("cliente"),
         contato=campo("contato"),
         pagamento=campo("pagamento"),
+        status_pagamento=campo("status_pagamento"),
         entrega=campo("entrega"),
         observacoes=campo("observacoes"),
         itens=itens,
@@ -178,10 +194,13 @@ def validar(pedido: Pedido) -> Pedido:
         erros["contato"] = "Informe DDD e número: (00) 00000-0000."
     pedido.contato = formatar_contato(pedido.contato) if "contato" not in erros else pedido.contato
 
+    # Só valores da lista: qualquer outro texto enviado pelo navegador é recusado.
     if pedido.pagamento not in FORMAS_PAGAMENTO:
-        erros["pagamento"] = "Escolha a forma de pagamento."
+        erros["pagamento"] = ESCOLHA_OBRIGATORIA["pagamento"]
+    if pedido.status_pagamento not in STATUS_PAGAMENTO:
+        erros["status_pagamento"] = ESCOLHA_OBRIGATORIA["status_pagamento"]
     if pedido.entrega not in FORMAS_ENTREGA:
-        erros["entrega"] = "Escolha a forma de entrega."
+        erros["entrega"] = ESCOLHA_OBRIGATORIA["entrega"]
 
     if not pedido.itens:
         erros["itens"] = "Adicione pelo menos um item."
@@ -289,6 +308,7 @@ def gravar_pedido(
                 cliente_nome=pedido.cliente,
                 contato=pedido.contato or None,
                 forma_pagamento=CODIGOS_PAGAMENTO[pedido.pagamento],
+                status_pagamento=CODIGOS_STATUS[pedido.status_pagamento],
                 tipo_entrega=CODIGOS_ENTREGA[pedido.entrega],
                 observacoes=pedido.observacoes or None,
                 valor_total=pedido.total,

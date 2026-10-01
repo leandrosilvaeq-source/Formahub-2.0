@@ -1136,31 +1136,49 @@ main {
 
   .escolha-input:checked + .escolha-card::after { top: 4px; right: 6px; }
 
-  /* Observações ao lado do resumo */
+  /* Linha final: Informações complementares (5fr) e Entrega (4fr), alinhadas às colunas de
+     cima e com a mesma altura; o Resumo ocupa a largura toda na linha de baixo. */
   .grade-final {
     display: grid;
+    row-gap: 0.4rem;
   }
 
   .grade-final .secao { margin-bottom: 0; }
+
+  .grade-final > .resumo { grid-column: 1 / -1; }
 
   .secao-obs {
     display: flex;
     flex-direction: column;
   }
 
+  /* O campo acompanha a altura da Entrega (base 0), sem ficar abaixo do alvo de toque;
+     o texto maior rola dentro dele e ele pode ser aumentado pelo canto. */
   .secao-obs .campo-texto {
-    flex: 1;
+    flex: 1 1 0;
     min-height: var(--alvo-toque);
   }
 
-  .resumo-conteudo {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.5rem;
+  /* Resumo em uma linha: título, quantidade, total (sem quebra) e botões */
+  .pedido .resumo {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
   }
 
-  /* O total nunca quebra; a quantidade cede espaço (o rótulo pode quebrar) */
+  .pedido .resumo h2 { flex: none; margin: 0; }
+
+  .resumo-conteudo {
+    flex: 1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
   .resumo-valores {
-    grid-template-columns: minmax(min-content, 1fr) minmax(max-content, 2fr);
+    grid-template-columns: auto minmax(max-content, 1fr);
     align-items: center;
     gap: 0.5rem 1rem;
   }
@@ -1173,18 +1191,21 @@ main {
 
   .resumo-total {
     display: flex;
-    justify-self: stretch;
+    justify-self: end;
     justify-content: space-between;
     gap: 0.75rem;
     align-items: baseline;
-    min-width: 0;
+    min-width: 260px;
     white-space: nowrap;
     padding: calc(0.3rem + 3px) 0.85rem 0.3rem;
   }
 
   .resumo-total dd { font-size: 1.4rem; line-height: 1.3; }
 
-  .acoes { min-width: 0; }
+  .acoes {
+    grid-template-columns: auto auto;
+    min-width: 0;
+  }
 }
 
 /* Telas largas: a imagem de referência fica na própria linha do item (sem aumentar a altura) */
@@ -1381,6 +1402,403 @@ main {
   margin: 0;
   color: var(--cor-texto-suave);
   font-size: 0.8rem;
+}
+
+/* ---------- Consulta de pedidos (listagem e detalhes) ---------- */
+.consulta {
+  max-width: 920px;
+  margin: 0 auto;
+  padding-bottom: calc(var(--espaco) * 2);
+}
+
+.pagina-topo-acoes,
+.card-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.lista-vazia {
+  padding: calc(var(--espaco) * 2) var(--espaco);
+  text-align: center;
+}
+
+.lista-vazia h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.4rem;
+}
+
+.lista-vazia p {
+  margin: 0 0 var(--espaco);
+  color: var(--cor-texto-suave);
+}
+
+.lista-vazia .pagina-topo-acoes {
+  justify-content: center;
+}
+
+.lista-pedidos {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Card: foto de destaque (só quando existe) à esquerda, dados ao lado, "Ver pedido" embaixo.
+   Sem foto, os dados ocupam a largura toda (nenhum espaço vazio). */
+.pedido-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "corpo"
+    "ver";
+  gap: 0.75rem;
+  padding: var(--espaco);
+  padding-top: calc(var(--espaco) + 3px);
+  background: var(--gradiente-marca) top / 100% 3px no-repeat, var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 7%, transparent);
+}
+
+.pedido-card.tem-foto {
+  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-areas:
+    "foto corpo"
+    "ver ver";
+}
+
+.pedido-card-foto {
+  grid-area: foto;
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  background: var(--cor-fundo);
+}
+
+.pedido-card-corpo {
+  grid-area: corpo;
+  min-width: 0;
+}
+
+.pedido-card-corpo h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.pedido-card-dados,
+.detalhe-dados {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.detalhe-dados {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.pedido-card-largo { grid-column: 1 / -1; }
+
+.pedido-card-pagamento {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.pedido-card-produtos { margin-right: 0.35rem; }
+
+.pedido-card-unidades {
+  font-family: var(--fonte-titulo);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pedido-card-obs { white-space: pre-line; }
+
+.pedido-card-vazio,
+.pedido-card-aviso {
+  color: var(--cor-texto-suave);
+  font-weight: 500;
+}
+
+.pedido-card-aviso {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+}
+
+/* Status do pagamento: ícone + texto + cor (não depende só da cor) */
+.selo-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.55rem 0.1rem 0.4rem;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.selo-status svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.selo-status-pendente {
+  border-color: var(--coral-criativo);
+  background: color-mix(in srgb, var(--coral-criativo) 12%, var(--branco));
+  color: var(--cor-texto);
+}
+
+.selo-status-pago {
+  border-color: var(--cor-sucesso);
+  background: var(--cor-sucesso-fundo);
+  color: var(--cor-sucesso);
+}
+
+.pedido-card-dados dt,
+.detalhe-dados dt,
+.detalhe-rotulo {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--cor-texto-suave);
+}
+
+.pedido-card-dados dd,
+.detalhe-dados dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pedido-card-ver {
+  grid-area: ver;
+  width: 100%;
+}
+
+.detalhe-grade {
+  display: grid;
+  gap: 0 0.75rem;
+}
+
+.detalhe-itens-cabecalho {
+  display: none;
+}
+
+.detalhe-itens {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Celular: produto em cima; quantidade e valor lado a lado; subtotal embaixo */
+.detalhe-item {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-areas:
+    "produto produto"
+    "quantidade valor"
+    "subtotal subtotal";
+  gap: 0.35rem 0.75rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--cor-borda);
+  font-variant-numeric: tabular-nums;
+}
+
+.detalhe-item:first-child { padding-top: 0; }
+
+.detalhe-produto {
+  grid-area: produto;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.detalhe-produto > span { min-width: 0; }
+
+.detalhe-quantidade { grid-area: quantidade; }
+.detalhe-valor { grid-area: valor; }
+
+.detalhe-subtotal {
+  grid-area: subtotal;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--fonte-titulo);
+  font-weight: 700;
+}
+
+.detalhe-subtotal .detalhe-rotulo { font-family: var(--fonte); }
+
+.detalhe-quantidade .detalhe-rotulo,
+.detalhe-valor .detalhe-rotulo {
+  display: block;
+}
+
+.detalhe-miniatura {
+  flex: none;
+  display: block;
+  border-radius: 6px;
+  line-height: 0;
+}
+
+.detalhe-miniatura img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: 6px;
+  background: var(--cor-fundo);
+}
+
+.detalhe-miniatura:hover img { border-color: var(--cor-primaria); }
+
+.detalhe-miniatura:focus-visible {
+  outline: 3px solid var(--cor-foco);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--cor-foco-halo);
+}
+
+.detalhe-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.75rem 0 0;
+}
+
+.detalhe-total dt {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--cor-texto-suave);
+}
+
+.detalhe-total dd {
+  margin: 0;
+  font-family: var(--fonte-titulo);
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detalhe-total .resumo-total dt {
+  color: color-mix(in srgb, var(--branco-gelo) 80%, var(--azul-marinho));
+}
+
+.detalhe-observacoes {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detalhe-vazio {
+  margin: 0;
+  color: var(--cor-texto-suave);
+}
+
+/* Imagem ampliada */
+.imagem-ampliada {
+  max-width: min(92vw, 900px);
+  max-height: 92vh;
+  padding: 0.75rem;
+  border: 0;
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+}
+
+.imagem-ampliada::backdrop {
+  background: color-mix(in srgb, var(--azul-marinho) 75%, transparent);
+}
+
+.imagem-ampliada figure { margin: 0; }
+
+.imagem-ampliada img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(92vh - 7rem);
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.imagem-ampliada figcaption {
+  margin: 0.5rem 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.imagem-ampliada form {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (min-width: 760px) {
+  .pedido-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "corpo ver";
+    align-items: end;
+  }
+
+  .pedido-card.tem-foto {
+    grid-template-columns: 112px minmax(0, 1fr) auto;
+    grid-template-areas: "foto corpo ver";
+  }
+
+  .pedido-card-foto { align-self: start; }
+
+  .pedido-card-largo { grid-column: auto; }
+  .pedido-card-ver { width: auto; }
+
+  .detalhe-grade { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  .detalhe-itens-cabecalho,
+  .detalhe-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 72px 150px 130px;
+    grid-template-areas: "produto quantidade valor subtotal";
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .detalhe-itens-cabecalho {
+    padding-bottom: 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--cor-texto-suave);
+  }
+
+  .detalhe-itens-cabecalho span:nth-child(2),
+  .detalhe-quantidade { text-align: center; }
+
+  .detalhe-itens-cabecalho span:nth-child(n + 3),
+  .detalhe-valor { text-align: right; }
+
+  .detalhe-subtotal { justify-content: flex-end; }
+
+  .detalhe-item .detalhe-rotulo { display: none; }
+
+  .detalhe-item:first-child { padding-top: 0.65rem; }
 }
 
 /* Sem movimento para quem prefere assim */

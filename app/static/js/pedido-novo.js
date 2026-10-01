@@ -88,7 +88,11 @@
     const campo = elemento.closest(".tem-erro");
     if (!campo) return;
     campo.classList.remove("tem-erro");
-    campo.querySelectorAll("[aria-invalid]").forEach(function (el) { el.removeAttribute("aria-invalid"); });
+    campo.removeAttribute("aria-describedby"); // apontava para a mensagem removida abaixo
+    campo.querySelectorAll("[aria-invalid]").forEach(function (el) {
+      el.removeAttribute("aria-invalid");
+      el.removeAttribute("aria-describedby");
+    });
     const msg = campo.querySelector(".campo-erro");
     if (msg) msg.remove();
   }
@@ -233,10 +237,28 @@
     aplicarResposta(pagina, resposta.status);
   }
 
+  // Validação imediata no navegador: grupo de escolha obrigatório sem seleção ganha o mesmo
+  // aviso que o servidor daria. O envio segue, e o servidor valida tudo de novo (todos os
+  // campos de uma vez); a seleção feita depois apaga o aviso (limparErro).
+  function marcarEscolhasPendentes() {
+    form.querySelectorAll("fieldset.escolhas[data-obrigatorio]").forEach(function (grupo) {
+      if (grupo.querySelector("input:checked") || grupo.classList.contains("tem-erro")) return;
+      const nome = grupo.id.replace("grupo-", "");
+      const aviso = document.createElement("p");
+      aviso.className = "campo-erro";
+      aviso.id = nome + "-erro";
+      aviso.textContent = grupo.dataset.obrigatorio;
+      grupo.appendChild(aviso);
+      grupo.classList.add("tem-erro");
+      grupo.setAttribute("aria-describedby", aviso.id);
+    });
+  }
+
   form.addEventListener("submit", function (evento) {
     if (!window.fetch || !window.FormData || !window.DOMParser) return; // envio tradicional
     evento.preventDefault();
     if (form.dataset.envio === "enviando") return;
+    marcarEscolhasPendentes();
 
     form.dataset.envio = "enviando";
     form.setAttribute("aria-busy", "true");

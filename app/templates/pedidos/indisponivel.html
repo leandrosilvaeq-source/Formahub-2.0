@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Pedido indisponível · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="consulta">
+<div class="pagina-topo">
+  <h1>Pedido</h1>
+  <a class="botao botao-secundario" href="/pedidos">Voltar para pedidos</a>
+</div>
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+</div>
+{% endblock %}

@@ -187,6 +187,7 @@ def pagina(servidor, tmp_path_factory):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    porta = None
     try:
         arquivo_porta = perfil / "DevToolsActivePort"
         esperar(arquivo_porta.exists, mensagem="navegador não abriu a porta de depuração")
@@ -198,8 +199,28 @@ def pagina(servidor, tmp_path_factory):
         yield p
         p.fechar()
     finally:
+        if porta:
+            fechar_navegador(porta)
         processo.terminate()
         processo.wait(timeout=10)
+
+
+def fechar_navegador(porta):
+    """Pede ao navegador que feche inteiro (Browser.close).
+
+    O executável do Edge relança o navegador e sai; encerrar só o processo iniciado aqui
+    deixava o navegador e os processos filhos abertos a cada execução dos testes.
+    """
+    from websockets.sync.client import connect
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{porta}/json/version") as r:
+            endereco = json.load(r)["webSocketDebuggerUrl"]
+        with connect(endereco) as ws:
+            ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
+            ws.recv(timeout=5)
+    except Exception:
+        pass  # já fechado, ou fechou antes de responder
 
 
 @pytest.fixture
@@ -328,7 +349,11 @@ def test_adicionar_e_remover_itens(tela):
 
 @pytest.mark.parametrize(
     ("grupo", "primeira", "segunda"),
-    [("pagamento", "PIX", "Cartão"), ("entrega", "Entrega em mãos", "Retirada")],
+    [
+        ("pagamento", "PIX", "Cartão"),
+        ("status_pagamento", "Pendente", "Pago"),
+        ("entrega", "Entrega em mãos", "Retirada"),
+    ],
 )
 def test_selecao_exclusiva_e_destacada(tela, grupo, primeira, segunda):
     marcadas = f"[...document.querySelectorAll('[name={grupo}]:checked')].map(i => i.value)"
@@ -389,6 +414,7 @@ def test_envio_valido_mostra_sucesso(tela):
     tela.digitar(item(1, "item_quantidade"), "2")
     tela.digitar(item(1, "item_valor"), "3550")
     tela.clicar("#grupo-pagamento input[value='Dinheiro']")
+    tela.clicar("#grupo-status_pagamento input[value='Pago']")
     tela.clicar("#grupo-entrega input[value='Entrega em mãos']")
     tela.enviar()
 
@@ -454,6 +480,7 @@ def preencher_dois_itens(tela):
     tela.digitar(item(2, "item_produto"), "Camiseta")
     tela.digitar(item(2, "item_valor"), "9990")
     tela.clicar("#grupo-pagamento input[value='PIX']")
+    tela.clicar("#grupo-status_pagamento input[value='Pendente']")
     tela.clicar("#grupo-entrega input[value='Entrega em mãos']")
 
 
@@ -565,13 +592,47 @@ def test_desktop_secoes_inferiores_alinhadas_as_superiores(pagina):
     pagina.tela(1280, 720)
     pagina.abrir()
     bordas = pagina.js(
-        "['#grupo-pagamento', '.secao-obs', '#grupo-entrega', '.resumo'].map(s => {"
+        "['#grupo-pagamento', '#grupo-status_pagamento', '#grupo-entrega', '.secao-obs',"
+        " '.resumo'].map(s => {"
         " const r = document.querySelector(s).getBoundingClientRect();"
-        " return [Math.round(r.left * 10) / 10, Math.round(r.right * 10) / 10] })"
+        " return [Math.round(r.left * 10) / 10, Math.round(r.right * 10) / 10,"
+        " Math.round(r.top), Math.round(r.bottom)] })"
     )
-    pagamento, obs, entrega, resumo = bordas
-    assert obs == pagamento  # Informações complementares = largura de Forma de pagamento
-    assert resumo == entrega  # Resumo = largura de Entrega
+    pagamento, status, entrega, obs, resumo = bordas
+    # Linha 1: Forma de pagamento (5fr) e Status do pagamento (4fr), lado a lado.
+    assert status[0] > pagamento[1] and status[2:] == pagamento[2:]
+    # Linha 2: Informações complementares na coluna da Forma de pagamento e Entrega na do
+    # Status, mesmas bordas externas e mesma altura.
+    assert obs[:2] == pagamento[:2]
+    assert entrega[:2] == status[:2]
+    assert obs[2:] == entrega[2:]
+    # Linha 3: Resumo abaixo das duas, com a largura toda.
+    assert resumo[2] > obs[3]
+    assert resumo[0] == pagamento[0] and resumo[1] == status[1]
+    # Total em uma linha só e o botão Salvar visível dentro do Resumo.
+    assert pagina.js("document.querySelector('#resumo-total').getClientRects().length") == 1
+    salvar = pagina.js(
+        "(() => { const r = document.querySelector('#form-pedido button[type=submit]')"
+        ".getBoundingClientRect(); return [r.top, r.bottom, r.width] })()"
+    )
+    assert salvar[2] > 100 and resumo[2] <= salvar[0] and salvar[1] <= resumo[3]
+
+
+def test_desktop_dois_itens_cabem_com_o_resumo_embaixo(pagina):
+    pagina.tela(1280, 720)
+    pagina.abrir()
+    preencher_dois_itens(pagina)
+
+    assert pagina.js("document.documentElement.scrollHeight") <= 720
+    assert (
+        pagina.js(
+            "document.querySelector('#form-pedido button[type=submit]').getBoundingClientRect()"
+            ".bottom"
+        )
+        <= 720
+    )
+    assert pagina.js("document.querySelector('.resumo').getBoundingClientRect().bottom") <= 720
+    assert pagina.js("document.documentElement.scrollWidth") <= 1280
 
 
 # ---------- Imagem de referência de cada item (opcional, somente frontend) ----------
@@ -1246,3 +1307,287 @@ def test_botao_indica_envio_e_evita_duplo_clique(tela, repo_pedidos):
     assert tela.js("window.__durante") == "Salvando…"
     assert tela.texto("#form-pedido button[type=submit]") == "Salvar pedido"
     assert len(repo_pedidos.pedidos) == 1
+
+
+# ---------- Consulta de pedidos (repositório falso, sem Supabase) ----------
+
+
+def pedidos_de_exemplo(repo, servidor, com_imagem=True):
+    """Dois pedidos fictícios; o segundo com nome longo, observação longa e uma imagem."""
+    from tests.test_pedidos_consulta import item, novo_pedido
+
+    novo_pedido(repo, cliente="Ana", itens=[item(1, "Caneca", 11, "12.00")])
+    caminho = "pedidos/2/itens/1/00000000-0000-4000-8000-000000000001.png"
+    pedido = novo_pedido(
+        repo,
+        cliente="Cliente com um nome bem comprido para testar a quebra de linha na tela",
+        itens=[
+            item(
+                1,
+                "Produto com imagem e nome comprido para testar",
+                2,
+                "1234.56",
+                caminho if com_imagem else None,
+            ),
+            item(2, "Chaveiro", 99999, "0.05"),
+        ],
+        observacoes="Observação longa " * 20,
+        forma_pagamento="dinheiro",
+        tipo_entrega="retirada",
+    )
+    repo.arquivos[caminho] = (b"", "image/png")
+    # URL "assinada" falsa que o navegador consegue abrir: uma imagem do próprio servidor.
+    repo.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    return pedido
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_listagem_sem_rolagem_horizontal_nem_cortes(pagina, servidor, repo_pedidos, largura):
+    pedidos_de_exemplo(repo_pedidos, servidor)
+    pagina.tela(largura, 800)
+    pagina.abrir("/pedidos")
+
+    assert pagina.js("document.querySelectorAll('.pedido-card').length") == 2
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    assert pagina.js(CORTES.replace("LIMITE_VERTICAL", "false")) == []
+    # Botões com alvo de toque confortável.
+    alturas = pagina.js(
+        "[...document.querySelectorAll('main .botao')].map(b => b.getBoundingClientRect().height)"
+    )
+    assert alturas and min(alturas) >= 44
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_listagem_vazia_responsiva(pagina, largura):
+    pagina.tela(largura, 800)
+    pagina.abrir("/pedidos")
+
+    assert pagina.texto(".lista-vazia .botao") == "Cadastrar primeiro pedido"
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_detalhe_sem_rolagem_horizontal_nem_cortes(pagina, servidor, repo_pedidos, largura):
+    pedido = pedidos_de_exemplo(repo_pedidos, servidor)
+    pagina.tela(largura, 800)
+    pagina.abrir(f"/pedidos/{pedido.id}")
+    # A miniatura carrega sob demanda (loading="lazy"): rola até ela, como a pessoa faria.
+    pagina.js("document.querySelector('.detalhe-miniatura').scrollIntoView({block: 'center'})")
+    esperar(
+        lambda: pagina.js(
+            "(() => { const i = document.querySelector('.detalhe-miniatura img');"
+            " return i.complete && i.naturalWidth > 0 })()"
+        )
+    )
+    pagina.js("window.scrollTo(0, 0)")
+
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    assert pagina.js(CORTES.replace("LIMITE_VERTICAL", "false")) == []
+    assert pagina.js("document.querySelector('.detalhe-miniatura img').naturalWidth") > 0
+    assert pagina.js("document.querySelectorAll('.detalhe-miniatura').length") == 1
+
+
+def test_item_sem_imagem_nao_reserva_espaco(pagina, servidor, repo_pedidos):
+    pedido = pedidos_de_exemplo(repo_pedidos, servidor, com_imagem=False)
+    pagina.tela(1280, 800)
+    pagina.abrir(f"/pedidos/{pedido.id}")
+
+    assert (
+        pagina.js(
+            "document.querySelectorAll('#imagem-ampliada img[src], .detalhe-item img').length"
+        )
+        == 0
+    )
+    # O nome do produto começa na borda da célula (nenhum espaço vazio antes dele).
+    assert (
+        pagina.js(
+            "(() => { const c = document.querySelector('.detalhe-produto');"
+            " return c.querySelector('span').getBoundingClientRect().left"
+            " - c.getBoundingClientRect().left })()"
+        )
+        == 0
+    )
+
+
+def test_imagem_ampliada_abre_e_fecha(pagina, servidor, repo_pedidos):
+    pedido = pedidos_de_exemplo(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir(f"/pedidos/{pedido.id}")
+
+    pagina.clicar(".detalhe-miniatura")
+    assert pagina.js("document.getElementById('imagem-ampliada').open") is True
+    assert pagina.js("location.pathname") == f"/pedidos/{pedido.id}"  # não saiu da página
+    assert pagina.js("document.querySelector('#imagem-ampliada img').src").endswith(
+        "/static/img/logo-forma3d-horizontal.png"
+    )
+    assert pagina.texto("#imagem-ampliada figcaption").startswith("Produto com imagem")
+    esperar(lambda: pagina.js("document.querySelector('#imagem-ampliada img').naturalWidth > 0"))
+    largura_ampliada = pagina.js(
+        "document.querySelector('#imagem-ampliada img').getBoundingClientRect().width"
+    )
+    assert largura_ampliada > 56 * 4
+
+    pagina.clicar("#imagem-ampliada button")
+    esperar(lambda: pagina.js("!document.getElementById('imagem-ampliada').open"))
+    assert pagina.js("document.activeElement.classList.contains('detalhe-miniatura')")
+    esperar(
+        lambda: not pagina.js("document.querySelector('#imagem-ampliada img').hasAttribute('src')")
+    )
+
+
+def test_pagina_404_responsiva(pagina):
+    pagina.tela(360, 800)
+    pagina.abrir("/pedidos/999")
+
+    assert pagina.texto("h1") == "Pedido não encontrado"
+    assert pagina.js("document.documentElement.scrollWidth") <= 360
+
+
+# ---------- Status do pagamento (formulário) ----------
+
+
+def test_status_pelo_teclado_e_acessivel(tela):
+    tela.js("document.querySelector(\"input[name=status_pagamento][value='Pendente']\").focus()")
+    tecla = {"key": "ArrowRight", "code": "ArrowRight", "windowsVirtualKeyCode": 39}
+    tela.cmd("Input.dispatchKeyEvent", type="rawKeyDown", **tecla)
+    tela.cmd("Input.dispatchKeyEvent", type="keyUp", **tecla)
+
+    assert tela.js("document.querySelector('[name=status_pagamento]:checked').value") == "Pago"
+    # Nome acessível: o rótulo do radio é o card; o grupo é um fieldset com legend.
+    assert (
+        tela.js(
+            "document.querySelector(\"input[name=status_pagamento][value='Pago']\").labels[0]"
+            ".textContent.trim()"
+        )
+        == "Pago"
+    )
+    assert (
+        tela.js(
+            "document.querySelector('#grupo-status_pagamento').tagName"
+            " + '|' + document.querySelector('#grupo-status_pagamento legend').textContent.trim()"
+        )
+        == "FIELDSET|Status do pagamento *"
+    )
+    # Selecionado: além da cor, o card ganha o símbolo ✓.
+    assert (
+        tela.js(
+            "getComputedStyle(document.querySelector(\"input[name=status_pagamento][value='Pago']"
+            " + .escolha-card\"), '::after').content"
+        )
+        == '"✓"'
+    )
+    assert tela.js(
+        "getComputedStyle(document.querySelector(\"input[name=status_pagamento][value='Pendente']"
+        " + .escolha-card\"), '::after').content"
+    ) in ("none", "normal")
+
+
+def test_status_marcado_no_navegador_antes_da_resposta(tela):
+    # A resposta do servidor nunca chega: o aviso visto vem só da validação no navegador.
+    tela.js("window.fetch = () => new Promise(() => {})")
+    tela.js("document.querySelector('#form-pedido button[type=submit]').click()")
+
+    assert tela.texto("#status_pagamento-erro") == "Escolha o status do pagamento."
+    assert tela.js(
+        "document.getElementById('grupo-status_pagamento').classList.contains('tem-erro')"
+    )
+    assert (
+        tela.js(
+            "document.getElementById('grupo-status_pagamento').getAttribute('aria-describedby')"
+        )
+        == "status_pagamento-erro"
+    )
+
+
+def test_status_preservado_no_erro_e_limpo_no_sucesso(tela, repo_pedidos):
+    preencher_dois_itens(tela)
+    tela.clicar("#grupo-status_pagamento input[value='Pago']")
+    tela.js("document.getElementById('cliente').value = ''")
+    tela.enviar()
+
+    assert tela.js("!!document.getElementById('cliente-erro')")
+    assert tela.js("document.querySelector('[name=status_pagamento]:checked').value") == "Pago"
+    assert not tela.js("!!document.getElementById('status_pagamento-erro')")
+
+    tela.digitar("#cliente", "Maria Souza")
+    tela.enviar()
+
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
+    assert next(iter(repo_pedidos.pedidos.values())).status_pagamento == "pago"
+    assert tela.js("document.querySelectorAll('[name=status_pagamento]:checked').length") == 0
+
+
+def test_erro_do_status_some_ao_escolher(tela):
+    tela.enviar()
+    assert tela.js("!!document.getElementById('status_pagamento-erro')")
+
+    tela.clicar("#grupo-status_pagamento input[value='Pendente']")
+
+    assert not tela.js("!!document.getElementById('status_pagamento-erro')")
+    assert not tela.js(
+        "document.getElementById('grupo-status_pagamento').hasAttribute('aria-describedby')"
+    )
+
+
+def test_celular_secoes_empilhadas_na_ordem(pagina):
+    pagina.tela(360, 800)
+    pagina.abrir()
+    caixas = pagina.js(
+        "['#grupo-pagamento', '#grupo-status_pagamento', '.secao-obs', '#grupo-entrega',"
+        " '.resumo'].map(s => { const r = document.querySelector(s).getBoundingClientRect();"
+        " return [Math.round(r.left), Math.round(r.right), Math.round(r.top)] })"
+    )
+
+    assert len({(c[0], c[1]) for c in caixas}) == 1  # mesma largura, uma embaixo da outra
+    assert [c[2] for c in caixas] == sorted(c[2] for c in caixas)
+    alturas = pagina.js(
+        "[...document.querySelectorAll('#grupo-status_pagamento .escolha-card')]"
+        ".map(c => c.getBoundingClientRect().height)"
+    )
+    assert min(alturas) >= 44
+    assert pagina.js("document.documentElement.scrollWidth") <= 360
+
+
+@pytest.mark.parametrize("largura", [768, 1280])
+def test_alvos_do_status_e_da_entrega_com_44px(pagina, largura):
+    pagina.tela(largura, 800)
+    pagina.abrir()
+    alturas = pagina.js(
+        "[...document.querySelectorAll('#grupo-status_pagamento .escolha-card,"
+        " #grupo-entrega .escolha-card')].map(c => c.getBoundingClientRect().height)"
+    )
+
+    assert len(alturas) == 4 and min(alturas) >= 44
+
+
+# ---------- Card da listagem com foto ----------
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_foto_do_card_compacta_quadrada_e_sem_deformar(pagina, servidor, repo_pedidos, largura):
+    pedidos_de_exemplo(repo_pedidos, servidor)
+    pagina.tela(largura, 800)
+    pagina.abrir("/pedidos")
+    pagina.js("document.querySelector('.pedido-card-foto').scrollIntoView({block: 'center'})")
+    esperar(lambda: pagina.js("document.querySelector('.pedido-card-foto').naturalWidth > 0"))
+
+    foto = pagina.js(
+        "(() => { const i = document.querySelector('.pedido-card-foto');"
+        " const r = i.getBoundingClientRect();"
+        " return [r.width, r.height, getComputedStyle(i).objectFit, i.alt] })()"
+    )
+    largura_foto, altura_foto, ajuste, alternativo = foto
+    assert ajuste == "cover"
+    assert abs(largura_foto - altura_foto) < 1  # quadrada, recorte sem distorção
+    assert 60 <= largura_foto <= 120  # compacta
+    assert alternativo.startswith("Foto de referência: ")
+    # Só o card com imagem tem foto; o outro não tem espaço reservado.
+    assert pagina.js("document.querySelectorAll('.pedido-card-foto').length") == 1
+    assert pagina.js(
+        "[...document.querySelectorAll('.pedido-card')].filter(c => !c.querySelector('img'))"
+        ".every(c => c.querySelector('.pedido-card-corpo').getBoundingClientRect().left"
+        " - c.getBoundingClientRect().left < 20)"
+    )
+    assert pagina.js("document.documentElement.scrollWidth") <= largura

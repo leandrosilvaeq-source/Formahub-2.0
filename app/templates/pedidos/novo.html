@@ -11,10 +11,12 @@
 {%- endmacro %}
 
 {# Ícones: SVG inline, sem biblioteca externa. O PIX é o símbolo oficial (preenchido);
-   "Entrega em mãos" é desenho próprio: mão aberta oferecendo um pacote. #}
+   "Entrega em mãos" é desenho próprio: mão aberta oferecendo um pacote.
+   Status: relógio (Pendente) e círculo com visto (Pago). #}
 {% macro icone(nome) -%}
 <svg class="escolha-icone" viewBox="0 0 24 24" aria-hidden="true" focusable="false"
-  {%- if nome == "PIX" %} data-icone="pix"{% elif nome == "Entrega em mãos" %} data-icone="entrega-em-maos"{% endif %}>
+  {%- if nome == "PIX" %} data-icone="pix"{% elif nome == "Entrega em mãos" %} data-icone="entrega-em-maos"
+  {%- elif nome == "Pendente" %} data-icone="pendente"{% elif nome == "Pago" %} data-icone="pago"{% endif %}>
   {%- if nome == "PIX" %}
   <path d="M5.283 18.36a3.505 3.505 0 0 0 2.493-1.032l3.6-3.6a.684.684 0 0 1 .946 0l3.613 3.613a3.504 3.504 0 0 0 2.493 1.032h.71l-4.56 4.56a3.647 3.647 0 0 1-5.156 0L4.85 18.36ZM18.428 5.627a3.505 3.505 0 0 0-2.493 1.032l-3.613 3.614a.67.67 0 0 1-.946 0l-3.6-3.6A3.505 3.505 0 0 0 5.283 5.64h-.434l4.573-4.572a3.646 3.646 0 0 1 5.156 0l4.559 4.559ZM1.068 9.422 3.79 6.699h1.492a2.483 2.483 0 0 1 1.744.722l3.6 3.6a1.73 1.73 0 0 0 2.443 0l3.614-3.613a2.482 2.482 0 0 1 1.744-.723h1.767l2.737 2.737a3.646 3.646 0 0 1 0 5.156l-2.736 2.736h-1.768a2.482 2.482 0 0 1-1.744-.722l-3.613-3.613a1.77 1.77 0 0 0-2.444 0l-3.6 3.6a2.483 2.483 0 0 1-1.744.722H3.791l-2.723-2.723a3.646 3.646 0 0 1 0-5.156"/>
   {%- elif nome == "Dinheiro" %}
@@ -25,12 +27,17 @@
   <path d="M12 2.5l3.8 2.1v4.3L12 11 8.2 8.9V4.6Z"/><path d="M8.2 4.6 12 6.7l3.8-2.1M12 6.7V11"/><path d="M2.5 14v7.5"/><path d="m2.5 15.2 4-1.4 4.3-.2c.9 0 1.6.4 2.2 1.1l1.5 1.7a1.3 1.3 0 0 1-1.9 1.8l-1-1.1"/><path d="m6.5 19.5 3.3 1.6c.8.4 1.6.5 2.5.5h2.3c.8 0 1.5-.3 2.1-.8l4.1-3.6a1.4 1.4 0 0 0-1.9-2.1L16 16.4"/>
   {%- elif nome == "Retirada" %}
   <path d="M4 10v10h16V10"/><path d="M3 10 5 4h14l2 6Z"/><path d="M10 20v-5h4v5"/>
+  {%- elif nome == "Pendente" %}
+  <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>
+  {%- elif nome == "Pago" %}
+  <circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>
   {%- endif %}
 </svg>
 {%- endmacro %}
 
 {% macro escolhas(nome, titulo, opcoes, selecionada, mensagem, colunas) -%}
 <fieldset class="secao escolhas{% if mensagem %} tem-erro{% endif %}" id="grupo-{{ nome }}" data-regiao
+  data-obrigatorio="{{ escolha_obrigatoria[nome] }}"
   {%- if mensagem %} aria-describedby="{{ nome }}-erro"{% endif %}>
   <legend>{{ titulo }} <span class="obrigatorio">*</span></legend>
   <div class="escolhas-opcoes escolhas-{{ colunas }}">
@@ -150,7 +157,7 @@
 
   <div class="grade-escolhas">
     {{ escolhas("pagamento", "Forma de pagamento", formas_pagamento, pedido.pagamento, e.pagamento, 3) }}
-    {{ escolhas("entrega", "Entrega", formas_entrega, pedido.entrega, e.entrega, 2) }}
+    {{ escolhas("status_pagamento", "Status do pagamento", status_pagamento, pedido.status_pagamento, e.status_pagamento, 2) }}
   </div>
 
   <div class="grade-final">
@@ -159,6 +166,7 @@
     <textarea id="observacoes" name="observacoes" rows="2" class="campo-texto" data-regiao
       placeholder="Opcional">{{ pedido.observacoes }}</textarea>
   </section>
+  {{ escolhas("entrega", "Entrega", formas_entrega, pedido.entrega, e.entrega, 2) }}
 
   <section class="secao resumo" aria-labelledby="resumo-titulo">
     <h2 id="resumo-titulo">Resumo</h2>
