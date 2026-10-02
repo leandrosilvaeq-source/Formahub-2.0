@@ -138,6 +138,14 @@
           {{- invalido(e.contato, "contato") }}>
         {{ erro(e.contato, "contato") }}
       </div>
+      {# Prazo: o usuário digita só os seis números; a tela insere as barras (dd/mm/aa). #}
+      <div class="campo{% if e.prazo_entrega %} tem-erro{% endif %}" id="campo-prazo" data-regiao>
+        <label for="prazo_entrega">Prazo de entrega <span class="obrigatorio">*</span><span class="visualmente-oculto"> (dia, mês e ano: dd/mm/aa)</span></label>
+        <input id="prazo_entrega" name="prazo_entrega" type="text" inputmode="numeric" value="{{ pedido.prazo_entrega }}"
+          placeholder="dd/mm/aa" maxlength="8" autocomplete="off"
+          {{- invalido(e.prazo_entrega, "prazo_entrega") }}>
+        {{ erro(e.prazo_entrega, "prazo_entrega") }}
+      </div>
     </div>
   </section>
 

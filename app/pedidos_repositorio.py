@@ -1,7 +1,8 @@
 """Pedidos no Supabase (banco e Storage), com a chave secreta, só no servidor.
 
 Gravação e leitura passam por funções do banco (reservar_id_pedido, criar_pedido,
-listar_pedidos e consultar_pedido); as tabelas não têm acesso direto. As imagens ficam no
+listar_pedidos, consultar_pedido, listar_producao e mover_etapa_producao); as tabelas não
+têm acesso direto. As imagens ficam no
 bucket privado pedido-imagens, o banco guarda somente o caminho do arquivo e a tela de
 detalhes recebe URLs assinadas temporárias.
 
@@ -10,7 +11,7 @@ Os testes usam um repositório em memória no lugar deste; nenhum teste acessa o
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
 from typing import Protocol
@@ -25,6 +26,18 @@ logger = logging.getLogger("formahub.pedidos")
 
 class FalhaAoConsultar(Exception):
     """O banco ou o Storage não respondeu (ou recusou) uma leitura."""
+
+
+class ConflitoDeEtapa(Exception):
+    """A etapa atual do pedido não é a esperada: outro usuário já o moveu."""
+
+
+class MovimentoInvalido(Exception):
+    """Movimento de etapa recusado (não permitido a partir da etapa atual, pedido inexistente)."""
+
+
+class FalhaAoMover(Exception):
+    """O banco não respondeu (ou recusou por outro motivo) a mudança de etapa."""
 
 
 class FalhaAoGravar(Exception):
@@ -57,6 +70,7 @@ class PedidoParaGravar:
     forma_pagamento: str
     status_pagamento: str
     tipo_entrega: str
+    prazo_entrega: date
     observacoes: str | None
     valor_total: Decimal
     itens: tuple[ItemParaGravar, ...]
@@ -70,6 +84,7 @@ class PedidoResumo:
     cliente_nome: str
     forma_pagamento: str
     status_pagamento: str
+    prazo_entrega: date
     criado_por_nome: str
     produtos: tuple[str, ...]  # na ordem dos itens
     quantidade_total: int
@@ -97,11 +112,38 @@ class PedidoConsultado:
     forma_pagamento: str
     status_pagamento: str
     tipo_entrega: str
+    prazo_entrega: date
     observacoes: str | None
     valor_total: Decimal
     criado_em: datetime  # horário de Brasília
     criado_por_nome: str
     itens: tuple[ItemConsultado, ...]
+
+
+@dataclass(frozen=True)
+class CardProducao:
+    """Um card do quadro de produção."""
+
+    id: int
+    etapa: str
+    cliente_nome: str
+    forma_pagamento: str
+    status_pagamento: str
+    tipo_entrega: str
+    prazo_entrega: date
+    produtos: tuple[str, ...]  # na ordem dos itens
+    quantidade_total: int
+    observacoes: str | None
+    # Foto de destaque: mesma regra da listagem de pedidos.
+    imagem_caminho: str | None = None
+    imagem_produto: str | None = None
+
+
+@dataclass(frozen=True)
+class EtapaAtualizada:
+    id: int
+    etapa: str
+    atualizada_por_nome: str
 
 
 class RepositorioPedidos(Protocol):
@@ -121,6 +163,14 @@ class RepositorioPedidos(Protocol):
 
     def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
         """Caminho -> URL assinada temporária, só para os arquivos que existem."""
+
+    def listar_producao(self) -> list[CardProducao]:
+        """Cards do quadro: etapas na ordem; em cada etapa, do mais antigo ao mais recente."""
+
+    def mover_etapa(
+        self, pedido_id: int, etapa_esperada: str, nova_etapa: str, usuario_id: int
+    ) -> EtapaAtualizada:
+        """Move para uma etapa permitida (ConflitoDeEtapa, MovimentoInvalido ou FalhaAoMover)."""
 
 
 class RepositorioPedidosSupabase:
@@ -164,6 +214,7 @@ class RepositorioPedidosSupabase:
             "p_forma_pagamento": pedido.forma_pagamento,
             "p_status_pagamento": pedido.status_pagamento,
             "p_tipo_entrega": pedido.tipo_entrega,
+            "p_prazo_entrega": pedido.prazo_entrega.isoformat(),
             "p_observacoes": pedido.observacoes,
             "p_valor_total": str(pedido.valor_total),
             "p_itens": [
@@ -203,6 +254,7 @@ class RepositorioPedidosSupabase:
                     cliente_nome=linha["cliente_nome"],
                     forma_pagamento=linha["forma_pagamento"],
                     status_pagamento=linha["status_pagamento"],
+                    prazo_entrega=date.fromisoformat(linha["prazo_entrega"]),
                     criado_por_nome=linha["criado_por_nome"],
                     produtos=tuple(linha["produtos"]),
                     quantidade_total=int(linha["quantidade_total"]),
@@ -229,6 +281,7 @@ class RepositorioPedidosSupabase:
             forma_pagamento=dados["forma_pagamento"],
             status_pagamento=dados["status_pagamento"],
             tipo_entrega=dados["tipo_entrega"],
+            prazo_entrega=date.fromisoformat(dados["prazo_entrega"]),
             observacoes=dados["observacoes"],
             valor_total=Decimal(dados["valor_total"]),
             criado_em=datetime.fromisoformat(dados["criado_em_local"]),
@@ -259,6 +312,61 @@ class RepositorioPedidosSupabase:
             for item in assinadas
             if item.get("signedURL") and not item.get("error")
         }
+
+    # ---------- Produção ----------
+
+    def listar_producao(self) -> list[CardProducao]:
+        def ler():
+            linhas = self._c.rpc("listar_producao", {}).execute().data
+            return [
+                CardProducao(
+                    id=linha["id"],
+                    etapa=linha["etapa_producao"],
+                    cliente_nome=linha["cliente_nome"],
+                    forma_pagamento=linha["forma_pagamento"],
+                    status_pagamento=linha["status_pagamento"],
+                    tipo_entrega=linha["tipo_entrega"],
+                    prazo_entrega=date.fromisoformat(linha["prazo_entrega"]),
+                    produtos=tuple(linha["produtos"]),
+                    quantidade_total=int(linha["quantidade_total"]),
+                    observacoes=linha["observacoes"],
+                    imagem_caminho=linha["imagem_caminho"],
+                    imagem_produto=linha["imagem_produto"],
+                )
+                for linha in linhas or []
+            ]
+
+        return self._consultar(ler)
+
+    def mover_etapa(
+        self, pedido_id: int, etapa_esperada: str, nova_etapa: str, usuario_id: int
+    ) -> EtapaAtualizada:
+        from postgrest.exceptions import APIError
+
+        parametros = {
+            "p_pedido_id": pedido_id,
+            "p_etapa_esperada": etapa_esperada,
+            "p_nova_etapa": nova_etapa,
+            "p_usuario_id": usuario_id,
+        }
+        try:
+            dados = self._c.rpc("mover_etapa_producao", parametros).execute().data
+            return EtapaAtualizada(
+                id=dados["id"],
+                etapa=dados["etapa_producao"],
+                atualizada_por_nome=dados["etapa_atualizada_por_nome"],
+            )
+        except APIError as erro:
+            # Códigos definidos em mover_etapa_producao (migration 20261004120000_prazo_entrega).
+            if erro.code == "PT409":
+                raise ConflitoDeEtapa from None
+            if erro.code in ("PT422", "PT404"):
+                raise MovimentoInvalido from None
+            logger.error("Supabase recusou a mudança de etapa: %s", erro.code)
+            raise FalhaAoMover from None
+        except Exception as erro:
+            logger.error("Falha ao mudar a etapa no Supabase: %s", type(erro).__name__)
+            raise FalhaAoMover from None
 
 
 @lru_cache

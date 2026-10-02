@@ -1,4 +1,5 @@
-"""Testes da tela "Novo pedido" em um navegador real (Edge ou Chrome, sem interface).
+"""Testes das telas (Novo pedido, consulta e Produção) em um navegador real (Edge ou Chrome,
+sem interface).
 
 Controla o navegador pelo protocolo DevTools usando `websockets`, que já vem com o
 projeto. Se nenhum navegador for encontrado, os testes são pulados.
@@ -105,6 +106,8 @@ class Pagina:
         )
 
     def abrir(self, caminho="/pedidos/novo"):
+        # Aba visível: em aba oculta o navegador não carrega imagens com loading="lazy".
+        self.cmd("Page.bringToFront")
         self.cmd("Page.navigate", url=self.base_url + caminho)
         self._esperar_carregar()
 
@@ -296,6 +299,166 @@ def test_valor_unitario_nao_aceita_negativo(tela):
     assert tela.valor(campo) == "R$ 5,00"
 
 
+def test_prazo_mascara_enquanto_digita(tela):
+    for digito, esperado in [
+        ("0", "0"),
+        ("5", "05"),
+        ("1", "05/1"),
+        ("0", "05/10"),
+        ("2", "05/10/2"),
+        ("6", "05/10/26"),
+        ("9", "05/10/26"),  # sete números: o excedente é ignorado
+    ]:
+        tela.digitar("#prazo_entrega", digito)
+        assert tela.valor("#prazo_entrega") == esperado
+    assert tela.js("document.getElementById('prazo_entrega').maxLength") == 8
+    assert tela.js("document.getElementById('prazo_entrega').inputMode") == "numeric"
+
+
+def test_prazo_ignora_letras_e_outros_caracteres(tela):
+    tela.digitar("#prazo_entrega", "0a5/b1-0 x2.6")
+    assert tela.valor("#prazo_entrega") == "05/10/26"
+
+
+def test_prazo_apagar_e_corrigir(tela):
+    tela.digitar("#prazo_entrega", "051026")
+    for esperado in ["05/10/2", "05/10", "05/1", "05", "0", ""]:
+        tela.apagar()
+        assert tela.valor("#prazo_entrega") == esperado
+    tela.digitar("#prazo_entrega", "0610")
+    tela.apagar(2)
+    tela.digitar("#prazo_entrega", "1127")
+    assert tela.valor("#prazo_entrega") == "06/11/27"
+
+
+@pytest.mark.parametrize("colado", ["051026", "05/10/26", "05.10.26", " 05-10-26 "])
+def test_prazo_colado_recebe_as_barras(tela, colado):
+    tela.js(
+        "(() => { const c = document.getElementById('prazo_entrega'); c.focus();"
+        f" c.value = {json.dumps(colado)};"
+        " c.dispatchEvent(new InputEvent('input',"
+        " {bubbles: true, inputType: 'insertFromPaste'})) })()"
+    )
+    assert tela.valor("#prazo_entrega") == "05/10/26"
+
+
+def erro_do_prazo(tela):
+    return tela.js(
+        "(() => { const e = document.getElementById('prazo_entrega-erro');"
+        " return e ? e.textContent : null })()"
+    )
+
+
+@pytest.mark.parametrize(
+    ("digitado", "erro"),
+    [
+        ("310426", "Data inválida."),  # abril tem 30 dias
+        ("290226", "Data inválida."),  # 2026 não é bissexto
+        ("001026", "Data inválida."),
+        ("051326", "Data inválida."),
+        ("0510", "Use o formato dd/mm/aa."),
+        ("290228", None),  # 2028 é bissexto
+        ("290200", None),  # 2000 é bissexto
+        ("010120", None),  # data passada é aceita
+    ],
+)
+def test_prazo_validado_ao_sair_do_campo(tela, digitado, erro):
+    tela.digitar("#prazo_entrega", digitado)
+    tela.js("document.getElementById('prazo_entrega').blur()")
+
+    assert erro_do_prazo(tela) == erro
+    invalido = tela.js("document.getElementById('prazo_entrega').getAttribute('aria-invalid')")
+    assert invalido == ("true" if erro else None)
+    if erro:
+        assert (
+            tela.js("document.getElementById('prazo_entrega').getAttribute('aria-describedby')")
+            == "prazo_entrega-erro"
+        )
+        assert tela.js("document.getElementById('campo-prazo').classList.contains('tem-erro')")
+
+
+def test_erro_do_prazo_some_ao_corrigir(tela):
+    tela.digitar("#prazo_entrega", "310426")
+    tela.js("document.getElementById('prazo_entrega').blur()")
+    assert erro_do_prazo(tela) == "Data inválida."
+
+    tela.js("document.getElementById('prazo_entrega').focus()")
+    tela.apagar(4)
+    assert erro_do_prazo(tela) is None
+    tela.digitar("#prazo_entrega", "0526")
+    tela.js("document.getElementById('prazo_entrega').blur()")
+    assert tela.valor("#prazo_entrega") == "31/05/26" and erro_do_prazo(tela) is None
+
+
+def test_prazo_vazio_so_e_acusado_no_envio(tela):
+    tela.js("document.getElementById('prazo_entrega').focus()")
+    tela.js("document.getElementById('prazo_entrega').blur()")
+    assert erro_do_prazo(tela) is None
+
+    tela.enviar()
+    assert erro_do_prazo(tela) == "Informe o prazo de entrega."
+
+
+def test_prazo_preservado_no_erro_e_limpo_no_sucesso(tela, repo_pedidos):
+    from datetime import date
+
+    preencher_dois_itens(tela)
+    tela.js("document.getElementById('cliente').value = ''")
+    tela.enviar()
+
+    assert tela.js("!!document.getElementById('cliente-erro')")
+    assert tela.valor("#prazo_entrega") == "05/10/26"
+    assert erro_do_prazo(tela) is None
+
+    tela.digitar("#cliente", "Maria Souza")
+    tela.enviar()
+
+    assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
+    assert next(iter(repo_pedidos.pedidos.values())).prazo_entrega == date(2026, 10, 5)
+    assert tela.valor("#prazo_entrega") == ""
+    # O campo novo (vindo do servidor) continua com a máscara.
+    tela.digitar("#prazo_entrega", "311226")
+    assert tela.valor("#prazo_entrega") == "31/12/26"
+
+
+def test_prazo_invalido_recusado_pelo_servidor_fica_no_campo(tela, repo_pedidos):
+    preencher_dois_itens(tela)
+    tela.js("document.getElementById('prazo_entrega').value = '31/04/26'")
+    tela.enviar()
+
+    assert repo_pedidos.pedidos == {}
+    assert tela.valor("#prazo_entrega") == "31/04/26"
+    assert erro_do_prazo(tela) == "Data inválida."
+
+
+@pytest.mark.parametrize("largura", [768, 1024, 1280])
+def test_prazo_na_mesma_linha_do_cliente_e_contato(pagina, largura):
+    pagina.tela(largura, 800)
+    pagina.abrir()
+    caixas = pagina.js(
+        "['#cliente', '#contato', '#prazo_entrega'].map(s => {"
+        " const r = document.querySelector(s).getBoundingClientRect();"
+        " return [Math.round(r.left), Math.round(r.right), Math.round(r.top), r.height] })"
+    )
+    assert len({c[2] for c in caixas}) == 1  # mesma linha
+    assert caixas[0][1] < caixas[1][0] < caixas[1][1] < caixas[2][0]
+    assert caixas[2][1] - caixas[2][0] >= 110  # cabe "dd/mm/aa" com folga
+    assert min(c[3] for c in caixas) >= 44
+
+
+def test_celular_prazo_abaixo_do_contato(pagina):
+    pagina.tela(360, 800)
+    pagina.abrir()
+    caixas = pagina.js(
+        "['#cliente', '#contato', '#prazo_entrega'].map(s => {"
+        " const r = document.querySelector(s).getBoundingClientRect();"
+        " return [Math.round(r.left), Math.round(r.right), Math.round(r.top)] })"
+    )
+    assert len({(c[0], c[1]) for c in caixas}) == 1
+    assert caixas[0][2] < caixas[1][2] < caixas[2][2]
+    assert pagina.js("document.documentElement.scrollWidth") <= 360
+
+
 # ---------- Cálculos e itens ----------
 
 
@@ -393,7 +556,7 @@ def test_envio_invalido_bloqueado_com_erros(tela):
 
     assert tela.js("!!document.querySelector('.alerta-erro')")
     assert not tela.js("!!document.querySelector('.alerta-sucesso')")
-    for campo in ("cliente", "contato", "pagamento", "entrega"):
+    for campo in ("cliente", "contato", "prazo_entrega", "pagamento", "entrega"):
         assert tela.js(f"!!document.getElementById('{campo}-erro')"), campo
     assert "Informe o produto." in tela.texto("#itens")
 
@@ -409,6 +572,7 @@ def test_erro_some_ao_corrigir(tela):
 def test_envio_valido_mostra_sucesso(tela):
     tela.digitar("#cliente", "Maria Souza")
     tela.digitar("#contato", "11987654321")
+    tela.digitar("#prazo_entrega", "051026")
     tela.digitar(item(1, "item_produto"), "Caneca")
     tela.js(f"document.querySelector('{item(1, 'item_quantidade')}').value = ''")
     tela.digitar(item(1, "item_quantidade"), "2")
@@ -426,7 +590,7 @@ def test_envio_valido_mostra_sucesso(tela):
 # ---------- Responsivo ----------
 
 
-@pytest.mark.parametrize("largura", [360, 768, 1280])
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1280])
 def test_sem_rolagem_horizontal(pagina, largura):
     pagina.tela(largura, 800)
     pagina.abrir()
@@ -474,6 +638,7 @@ def test_desktop_item_em_uma_linha(pagina):
 def preencher_dois_itens(tela):
     tela.digitar("#cliente", "Maria Souza")
     tela.digitar("#contato", "11987654321")
+    tela.digitar("#prazo_entrega", "051026")
     tela.digitar(item(1, "item_produto"), "Caneca")
     tela.digitar(item(1, "item_valor"), "3550")
     tela.clicar("#adicionar-item")
@@ -1591,3 +1756,443 @@ def test_foto_do_card_compacta_quadrada_e_sem_deformar(pagina, servidor, repo_pe
         " - c.getBoundingClientRect().left < 20)"
     )
     assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+# ---------- Produção (quadro Kanban; repositório falso) ----------
+
+
+def pedidos_producao(repo, servidor, quantidade=1):
+    from tests.test_pedidos_consulta import item, novo_pedido
+
+    pedidos = [
+        novo_pedido(
+            repo,
+            cliente=f"Cliente {n}",
+            itens=[item(1, "Porta doce com nome comprido para testar", 11, "12.00")],
+            observacoes="7 Azuis\n4 Rosa Choque" if n == 1 else None,
+        )
+        for n in range(1, quantidade + 1)
+    ]
+    repo.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    return pedidos
+
+
+def card_js(pedido_id):
+    return f"document.querySelector('.producao-card[data-pedido=\"{pedido_id}\"]')"
+
+
+def etapa_na_tela(p, pedido_id):
+    return p.js(f"{card_js(pedido_id)}.closest('.coluna').dataset.etapa")
+
+
+def contadores(p):
+    return p.js("[...document.querySelectorAll('[data-contador]')].map(c => Number(c.textContent))")
+
+
+def clicar_avancar(p, pedido_id):
+    p.js(f"{card_js(pedido_id)}.querySelector('.producao-avancar').click()")
+
+
+def clicar_voltar(p, pedido_id):
+    p.js(f"{card_js(pedido_id)}.querySelector('.producao-voltar').click()")
+
+
+def esperar_mensagem(p):
+    esperar(
+        lambda: p.js("!!document.querySelector('#producao-mensagem .alerta')"),
+        mensagem="mensagem da movimentação não apareceu",
+    )
+    return p.texto("#producao-mensagem .alerta")
+
+
+def arrastar_card(p, pedido_id, etapa_destino):
+    """Simula o arraste (dragstart, dragover e drop); devolve [destacada, aceita]."""
+    return p.js(
+        "(() => { const card = " + card_js(pedido_id) + ";"
+        " const destino = document.querySelector('.coluna[data-etapa=\"" + etapa_destino + "\"]');"
+        " const dt = new DataTransfer();"
+        " card.dispatchEvent(new DragEvent('dragstart', {dataTransfer: dt, bubbles: true}));"
+        " const valido = destino.classList.contains('destino-valido');"
+        " const over = new DragEvent('dragover',"
+        " {dataTransfer: dt, bubbles: true, cancelable: true});"
+        " destino.dispatchEvent(over);"
+        " const aceito = over.defaultPrevented;"
+        " destino.dispatchEvent(new DragEvent('drop',"
+        " {dataTransfer: dt, bubbles: true, cancelable: true}));"
+        " card.dispatchEvent(new DragEvent('dragend', {dataTransfer: dt, bubbles: true}));"
+        " return [valido, aceito] })()"
+    )
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1280])
+def test_producao_responsiva_sem_rolagem_horizontal(pagina, servidor, repo_pedidos, largura):
+    pedidos = pedidos_producao(repo_pedidos, servidor, 3)
+    repo_pedidos.etapas[pedidos[1].id] = "em_producao"  # card com os três botões
+    pagina.tela(largura, 800)
+    pagina.abrir("/producao")
+
+    colunas = pagina.js(
+        "[...document.querySelectorAll('.coluna')].map(c => { const r = c.getBoundingClientRect();"
+        " return [Math.round(r.left), Math.round(r.top),"
+        " Math.round(r.width), Math.round(r.height)] })"
+    )
+    assert len(colunas) == 4
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    if largura >= 1024:
+        assert len({c[1] for c in colunas}) == 1  # lado a lado
+        assert len({c[3] for c in colunas}) == 1  # mesma altura
+        assert [c[0] for c in colunas] == sorted(c[0] for c in colunas)
+    if largura == 360:
+        assert len({c[0] for c in colunas}) == 1  # empilhadas
+        assert [c[1] for c in colunas] == sorted(c[1] for c in colunas)
+        card = pagina.js(
+            "(() => { const c = document.querySelector('.producao-card').getBoundingClientRect(),"
+            " col = document.querySelector('.coluna').getBoundingClientRect();"
+            " return [c.width, col.width] })()"
+        )
+        assert card[1] - card[0] < 30  # card com a largura da coluna
+    alturas = pagina.js(
+        "[...document.querySelectorAll('main .botao')].filter(b => b.offsetParent)"
+        ".map(b => b.getBoundingClientRect().height)"
+    )
+    assert alturas and min(alturas) >= 44
+    # A lista de cards de cada coluna rola por dentro no desktop (de propósito); nada mais corta.
+    cortes = pagina.js(CORTES.replace("LIMITE_VERTICAL", "false"))
+    assert [c for c in cortes if not c.startswith("OL.coluna-cards")] == []
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_card_da_producao_com_prazo_e_foto_sem_deformar(pagina, servidor, repo_pedidos, largura):
+    from tests.test_pedidos_consulta import item, novo_pedido
+
+    caminho = "pedidos/1/itens/2/00000000-0000-4000-8000-000000000002.png"
+    novo_pedido(
+        repo_pedidos,
+        cliente="Cliente com foto",
+        itens=[item(1, "Pequeno", 1, "1.00"), item(2, "Maior", 9, "1.00", caminho)],
+    )
+    repo_pedidos.arquivos[caminho] = (b"\x89PNG", "image/png")
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    pagina.tela(largura, 800)
+    pagina.abrir("/producao")
+    pagina.js("document.querySelector('.producao-card-foto').scrollIntoView({block: 'center'})")
+    esperar(lambda: pagina.js("document.querySelector('.producao-card-foto').naturalWidth > 0"))
+
+    largura_foto, altura_foto, ajuste, alternativo = pagina.js(
+        "(() => { const i = document.querySelector('.producao-card-foto');"
+        " const r = i.getBoundingClientRect();"
+        " return [r.width, r.height, getComputedStyle(i).objectFit, i.alt] })()"
+    )
+    assert ajuste == "cover" and abs(largura_foto - altura_foto) < 1
+    assert alternativo == "Foto de referência: Maior"
+    card = pagina.js("document.querySelector('.producao-card').innerText")
+    assert "Prazo\n05/10/26" in card and "Cadastrado por" not in card
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+def test_foto_que_falha_ao_carregar_some_sem_deixar_espaco(pagina, servidor, repo_pedidos):
+    from tests.test_pedidos_consulta import item, novo_pedido
+
+    caminho = "pedidos/1/itens/1/00000000-0000-4000-8000-000000000001.png"
+    novo_pedido(repo_pedidos, itens=[item(1, "Caneca", 2, "1.00", caminho)])
+    repo_pedidos.arquivos[caminho] = (b"\x89PNG", "image/png")
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/nao-existe.png" for c in caminhos
+    }
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    # A foto é "lazy": rolar até ela faz o navegador carregá-la (e receber o erro).
+    pagina.js("document.querySelector('.producao-card-foto')?.scrollIntoView({block: 'center'})")
+    esperar(lambda: not pagina.js("!!document.querySelector('.producao-card-foto')"))
+    assert pagina.js("document.querySelector('.producao-card h3').textContent") == "Cliente Teste"
+    assert (
+        pagina.js(
+            "document.querySelector('.producao-card-topo h3').getBoundingClientRect().left"
+            " - document.querySelector('.producao-card').getBoundingClientRect().left"
+        )
+        < 20
+    )
+
+
+def test_producao_muitos_cards_rolam_dentro_da_coluna(pagina, servidor, repo_pedidos):
+    pedidos_producao(repo_pedidos, servidor, 12)
+    pagina.tela(1280, 720)
+    pagina.abrir("/producao")
+
+    lista = pagina.js(
+        "(() => { const l = document.querySelector("
+        "'.coluna[data-etapa=fila_producao] .coluna-cards');"
+        " return [getComputedStyle(l).overflowY, l.scrollHeight > l.clientHeight] })()"
+    )
+    assert lista == ["auto", True]
+    assert pagina.js("document.documentElement.scrollWidth") <= 1280
+    alturas = pagina.js(
+        "[...document.querySelectorAll('.coluna')]"
+        ".map(c => Math.round(c.getBoundingClientRect().height))"
+    )
+    assert len(set(alturas)) == 1
+
+
+def test_avancar_pelo_botao_move_o_card_e_mantem_o_foco(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    assert contadores(pagina) == [1, 0, 0, 0]
+
+    assert pagina.texto("#coluna-fila_producao") == "Na Fila de Produção"
+    clicar_avancar(pagina, pedido.id)
+    texto = esperar_mensagem(pagina)
+
+    assert texto == "Pedido de Cliente 1 movido para Em Produção."
+    assert (
+        pagina.js("document.querySelector('#producao-mensagem .alerta').getAttribute('role')")
+        == "status"
+    )
+    assert etapa_na_tela(pagina, pedido.id) == "em_producao"
+    assert contadores(pagina) == [0, 1, 0, 0]
+    assert repo_pedidos.etapas[pedido.id] == "em_producao"
+    assert repo_pedidos.movimentos[-1][3] == 1  # usuário da sessão
+    foco = pagina.js("document.activeElement.textContent.trim()")
+    assert foco == "Finalizar produção"
+    assert pagina.js(f"{card_js(pedido.id)}.contains(document.activeElement)")
+    assert not pagina.js(
+        "document.querySelector('.coluna[data-etapa=fila_producao] .coluna-vazia').hidden"
+    )
+    # Em Produção, o card ganha "Voltar para fila" (secundário) antes de "Finalizar produção".
+    botoes = pagina.js(
+        f"[...{card_js(pedido.id)}.querySelectorAll('.producao-mover')]"
+        ".map(b => [b.textContent, b.dataset.destino, b.className])"
+    )
+    assert [b[:2] for b in botoes] == [
+        ["Voltar para fila", "fila_producao"],
+        ["Finalizar produção", "aguardando_entrega"],
+    ]
+    assert "botao-secundario" in botoes[0][2] and "botao-primario" in botoes[1][2]
+
+
+def test_voltar_para_fila_pelo_botao(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.etapas[pedido.id] = "em_producao"
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    assert contadores(pagina) == [0, 1, 0, 0]
+    voltar = f"{card_js(pedido.id)}.querySelector('.producao-voltar')"
+    estilo = pagina.js(f"getComputedStyle({voltar}).backgroundColor")
+    assert estilo == pagina.js(
+        "getComputedStyle(document.querySelector('.botao-secundario')).backgroundColor"
+    )
+
+    clicar_voltar(pagina, pedido.id)
+    texto = esperar_mensagem(pagina)
+
+    assert texto == "Pedido de Cliente 1 movido para Na Fila de Produção."
+    assert etapa_na_tela(pagina, pedido.id) == "fila_producao"
+    assert contadores(pagina) == [1, 0, 0, 0]
+    assert repo_pedidos.etapas[pedido.id] == "fila_producao"
+    assert repo_pedidos.movimentos == [(pedido.id, "em_producao", "fila_producao", 1)]
+    assert not pagina.js(f"!!{voltar}")  # na fila não há retorno
+    assert pagina.js("document.activeElement.textContent.trim()") == "Iniciar produção"
+    assert pagina.js(f"{card_js(pedido.id)}.contains(document.activeElement)")
+    assert not pagina.js("!!document.getElementById('confirmar-entrega').open")
+
+
+def test_ida_e_volta_e_avanco_ate_entregue(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    for acao, etapa in [
+        (clicar_avancar, "em_producao"),
+        (clicar_voltar, "fila_producao"),
+        (clicar_avancar, "em_producao"),
+        (clicar_avancar, "aguardando_entrega"),
+    ]:
+        pagina.js("document.getElementById('producao-mensagem').replaceChildren()")
+        acao(pagina, pedido.id)
+        esperar_mensagem(pagina)
+        assert etapa_na_tela(pagina, pedido.id) == etapa
+    assert not pagina.js(f"!!{card_js(pedido.id)}.querySelector('.producao-voltar')")
+    assert [m[1:3] for m in repo_pedidos.movimentos] == [
+        ("fila_producao", "em_producao"),
+        ("em_producao", "fila_producao"),
+        ("fila_producao", "em_producao"),
+        ("em_producao", "aguardando_entrega"),
+    ]
+
+
+def test_avancar_pelo_teclado(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    pagina.js(f"{card_js(pedido.id)}.querySelector('.producao-avancar').focus()")
+    tecla = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}
+    pagina.cmd("Input.dispatchKeyEvent", type="rawKeyDown", **tecla)
+    pagina.cmd("Input.dispatchKeyEvent", type="char", text="\r")
+    pagina.cmd("Input.dispatchKeyEvent", type="keyUp", **tecla)
+
+    esperar_mensagem(pagina)
+    assert etapa_na_tela(pagina, pedido.id) == "em_producao"
+
+
+def test_arrastar_para_a_proxima_coluna(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    valido, aceito = arrastar_card(pagina, pedido.id, "em_producao")
+
+    assert valido and aceito
+    esperar_mensagem(pagina)
+    assert etapa_na_tela(pagina, pedido.id) == "em_producao"
+    assert contadores(pagina) == [0, 1, 0, 0]
+    assert not pagina.js("!!document.querySelector('.destino-valido, .destino-ativo, .arrastando')")
+
+
+@pytest.mark.parametrize(
+    ("origem", "destino"),
+    [
+        ("fila_producao", "aguardando_entrega"),
+        ("fila_producao", "entregue"),
+        ("fila_producao", "fila_producao"),
+        ("em_producao", "entregue"),
+        ("em_producao", "em_producao"),
+        ("aguardando_entrega", "em_producao"),
+        ("aguardando_entrega", "fila_producao"),
+    ],
+)
+def test_arrastar_para_coluna_invalida_nao_move(pagina, servidor, repo_pedidos, origem, destino):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.etapas[pedido.id] = origem
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    valido, aceito = arrastar_card(pagina, pedido.id, destino)
+
+    assert not valido and not aceito
+    assert etapa_na_tela(pagina, pedido.id) == origem
+    assert repo_pedidos.movimentos == []
+    assert not pagina.js("!!document.querySelector('#producao-mensagem .alerta')")
+
+
+@pytest.mark.parametrize("destino", ["fila_producao", "aguardando_entrega"])
+def test_arrastar_de_em_producao_para_a_fila_ou_para_frente(
+    pagina, servidor, repo_pedidos, destino
+):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.etapas[pedido.id] = "em_producao"
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    destacadas = pagina.js(
+        "(() => { const card = " + card_js(pedido.id) + "; const dt = new DataTransfer();"
+        " card.dispatchEvent(new DragEvent('dragstart', {dataTransfer: dt, bubbles: true}));"
+        " const r = [...document.querySelectorAll('.coluna.destino-valido')]"
+        ".map(c => c.dataset.etapa);"
+        " card.dispatchEvent(new DragEvent('dragend', {dataTransfer: dt, bubbles: true}));"
+        " return r })()"
+    )
+    assert destacadas == ["fila_producao", "aguardando_entrega"]
+
+    valido, aceito = arrastar_card(pagina, pedido.id, destino)
+
+    assert valido and aceito
+    esperar_mensagem(pagina)
+    assert etapa_na_tela(pagina, pedido.id) == destino
+    assert repo_pedidos.movimentos == [(pedido.id, "em_producao", destino, 1)]
+    assert not pagina.js("!!document.getElementById('confirmar-entrega').open")
+
+
+def test_entregue_pede_confirmacao(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.etapas[pedido.id] = "aguardando_entrega"
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    clicar_avancar(pagina, pedido.id)
+    assert pagina.js("document.getElementById('confirmar-entrega').open") is True
+    assert "Cliente 1" in pagina.texto("#confirmar-entrega-texto")
+    assert pagina.js("document.activeElement.value") == "cancelar"  # foco na opção segura
+
+    pagina.clicar("#confirmar-entrega button[value=cancelar]")
+    esperar(lambda: not pagina.js("document.getElementById('confirmar-entrega').open"))
+    assert repo_pedidos.movimentos == []
+    assert etapa_na_tela(pagina, pedido.id) == "aguardando_entrega"
+
+    clicar_avancar(pagina, pedido.id)
+    pagina.clicar("#confirmar-entrega button[value=confirmar]")
+    esperar_mensagem(pagina)
+
+    assert etapa_na_tela(pagina, pedido.id) == "entregue"
+    assert pagina.js(f"!!{card_js(pedido.id)}.querySelector('.producao-avancar')") is False
+    assert pagina.js(f"{card_js(pedido.id)}.hasAttribute('draggable')") is False
+    assert pagina.js("document.activeElement.textContent.trim()") == "Ver pedido"
+    assert repo_pedidos.etapas[pedido.id] == "entregue"
+
+
+def test_conflito_recarrega_o_quadro_com_aviso(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    repo_pedidos.etapas[pedido.id] = (
+        "em_producao"  # outro usuário moveu enquanto a tela estava aberta
+    )
+
+    clicar_avancar(pagina, pedido.id)
+    esperar(
+        lambda: (
+            pagina.texto("#producao-mensagem") == "Este pedido foi atualizado por outro usuário."
+        )
+    )
+
+    assert (
+        pagina.js("document.querySelector('#producao-mensagem .alerta').getAttribute('role')")
+        == "alert"
+    )
+    assert etapa_na_tela(pagina, pedido.id) == "em_producao"  # quadro recarregado
+    assert contadores(pagina) == [0, 1, 0, 0]
+    assert repo_pedidos.movimentos == []
+    assert pagina.js("document.activeElement.textContent.trim()") == "Finalizar produção"
+
+
+def test_falha_ao_mover_mantem_o_card_e_avisa(pagina, servidor, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoMover
+
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.falhar_em["mover_etapa"] = FalhaAoMover()
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    arrastar_card(pagina, pedido.id, "em_producao")
+    texto = esperar_mensagem(pagina)
+
+    assert texto == "Não foi possível mover o pedido agora. Tente novamente."
+    assert etapa_na_tela(pagina, pedido.id) == "fila_producao"
+    assert contadores(pagina) == [1, 0, 0, 0]
+    botao = f"{card_js(pedido.id)}.querySelector('.producao-avancar')"
+    assert pagina.js(f"{botao}.disabled") is False
+    assert pagina.js(f"{botao}.textContent.trim()") == "Iniciar produção"
+    assert pagina.js(f"document.activeElement === {botao}")
+
+
+def test_falha_ao_recarregar_mostra_tentar_novamente(pagina, servidor, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoConsultar
+
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    repo_pedidos.etapas[pedido.id] = "em_producao"
+    repo_pedidos.falhar_em["listar_producao"] = FalhaAoConsultar()
+
+    clicar_avancar(pagina, pedido.id)
+    esperar(lambda: pagina.js("!!document.querySelector('.producao-tentar')"))
+
+    assert "Não foi possível carregar a produção agora." in pagina.texto("#producao-mensagem")
+    del repo_pedidos.falhar_em["listar_producao"]
+    pagina.clicar(".producao-tentar")
+    esperar(lambda: etapa_na_tela(pagina, pedido.id) == "em_producao")
+    assert not pagina.js("!!document.querySelector('.producao-tentar')")

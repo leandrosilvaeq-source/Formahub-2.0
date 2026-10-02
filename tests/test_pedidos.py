@@ -19,6 +19,7 @@ def form_valido(**extra):
         "pagamento": "PIX",
         "status_pagamento": "Pendente",
         "entrega": "Retirada",
+        "prazo_entrega": "05/10/26",
         "observacoes": "",
         "csrf": "csrf-de-teste",
     }
@@ -69,7 +70,6 @@ def test_tela_exibe_somente_os_campos_da_especificacao():
     [
         'name="email"',
         'name="data"',
-        'name="prazo"',
         'name="status"',
         'name="desconto"',
         'name="frete"',

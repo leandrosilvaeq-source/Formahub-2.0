@@ -10,7 +10,7 @@
   const modelo = document.getElementById("item-modelo");
   const vazio = document.getElementById("itens-vazio");
 
-  const MAX_DIGITOS = { contato: 11, item_quantidade: 5, item_valor: 11 };
+  const MAX_DIGITOS = { contato: 11, item_quantidade: 5, item_valor: 11, prazo_entrega: 6 };
 
   function digitos(texto) {
     return String(texto).replace(/\D/g, "");
@@ -22,6 +22,25 @@
     if (d.length <= 2) return "(" + d;
     if (d.length <= 7) return "(" + d.slice(0, 2) + ") " + d.slice(2);
     return "(" + d.slice(0, 2) + ") " + d.slice(2, 7) + "-" + d.slice(7);
+  }
+
+  // Prazo: "051026" -> "05/10/26", inserindo as barras enquanto digita (ou ao colar).
+  function mascaraPrazo(d) {
+    if (d.length <= 2) return d;
+    if (d.length <= 4) return d.slice(0, 2) + "/" + d.slice(2);
+    return d.slice(0, 2) + "/" + d.slice(2, 4) + "/" + d.slice(4);
+  }
+
+  // Mesmas regras do servidor: seis números formando uma data real (ano 20aa).
+  function problemaDoPrazo(d) {
+    if (d.length === 0) return "";
+    if (d.length !== 6) return "Use o formato dd/mm/aa.";
+    const dia = Number(d.slice(0, 2));
+    const mes = Number(d.slice(2, 4));
+    const ano = 2000 + Number(d.slice(4));
+    const data = new Date(ano, mes - 1, dia);
+    const real = data.getFullYear() === ano && data.getMonth() === mes - 1 && data.getDate() === dia;
+    return real ? "" : "Data inválida.";
   }
 
   // Centavos (inteiro) -> "R$ 1.234,56".
@@ -40,6 +59,7 @@
     contato: mascaraContato,
     item_quantidade: function (d) { return d; },
     item_valor: mascaraMoeda,
+    prazo_entrega: mascaraPrazo,
   };
 
   function normalizar(nome, d) {
@@ -63,7 +83,7 @@
   }
 
   function prepararCampos(raiz) {
-    raiz.querySelectorAll('[name="contato"], [name="item_quantidade"], [name="item_valor"]').forEach(function (input) {
+    raiz.querySelectorAll('[name="contato"], [name="prazo_entrega"], [name="item_quantidade"], [name="item_valor"]').forEach(function (input) {
       if (input.value) aplicarMascara(input);
     });
   }
@@ -123,13 +143,35 @@
     if (evento.target.type === "radio") limparErro(evento.target);
   });
 
-  // Quantidade mínima 1: vazio ou zero volta para 1 ao sair do campo.
+  // Mensagem de erro no próprio campo, ligada a ele para leitores de tela.
+  function marcarErro(input, texto) {
+    const campo = input.closest(".campo");
+    const id = input.id + "-erro";
+    let aviso = document.getElementById(id);
+    if (!aviso) {
+      aviso = document.createElement("p");
+      aviso.className = "campo-erro";
+      aviso.id = id;
+      campo.appendChild(aviso);
+    }
+    aviso.textContent = texto;
+    campo.classList.add("tem-erro");
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", id);
+  }
+
   form.addEventListener("focusout", function (evento) {
     const alvo = evento.target;
+    // Quantidade mínima 1: vazio ou zero volta para 1 ao sair do campo.
     if (alvo.name === "item_quantidade" && Number(digitos(alvo.value)) < 1) {
       alvo.value = "1";
       alvo.dataset.digitos = "1";
       recalcular();
+    }
+    // Prazo incompleto ou data inexistente: avisa ao sair do campo (vazio só no envio).
+    if (alvo.name === "prazo_entrega") {
+      const problema = problemaDoPrazo(digitos(alvo.value));
+      if (problema) marcarErro(alvo, problema);
     }
   });
 

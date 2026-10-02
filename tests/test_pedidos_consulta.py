@@ -3,6 +3,7 @@
 Nenhum teste acessa o Supabase; os pedidos são criados só no repositório em memória.
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -29,6 +30,7 @@ def novo_pedido(repo, cliente="Cliente Teste", itens=None, **extra):
         "forma_pagamento": "pix",
         "status_pagamento": "pendente",
         "tipo_entrega": "entrega",
+        "prazo_entrega": date(2026, 10, 5),
         "observacoes": None,
         "valor_total": sum(i.subtotal for i in itens),
         "itens": tuple(itens),

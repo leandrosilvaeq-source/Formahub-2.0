@@ -33,6 +33,7 @@
       <div><dt>Pagamento</dt><dd>{{ pedido.forma_pagamento | pagamento }}</dd></div>
       <div><dt>Status do pagamento</dt><dd>{{ selo_status(pedido.status_pagamento) }}</dd></div>
       <div><dt>Entrega</dt><dd>{{ pedido.tipo_entrega | entrega }}</dd></div>
+      <div><dt>Prazo de entrega</dt><dd><time datetime="{{ pedido.prazo_entrega.isoformat() }}">{{ pedido.prazo_entrega | data_curta }}</time></dd></div>
     </dl>
   </section>
 

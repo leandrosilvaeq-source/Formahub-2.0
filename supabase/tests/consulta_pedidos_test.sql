@@ -1,5 +1,5 @@
 -- Teste transacional das funções de consulta (20261001120000_consultar_pedidos.sql),
--- no formato vigente depois de 20261002120000_status_pagamento.sql (status e card da
+-- no formato vigente depois de 20261004120000_prazo_entrega.sql (status, prazo e card da
 -- listagem; as regras da foto de destaque estão em status_pagamento_test.sql).
 --
 -- Seguro com dados reais: tudo roda dentro de BEGIN/ROLLBACK, os pedidos de teste usam ids
@@ -58,15 +58,16 @@ begin
   select id into v_usuario from public.usuarios where nome = 'Kassia';
 
   insert into public.pedidos (id, cliente_nome, contato, forma_pagamento, status_pagamento,
-                              tipo_entrega, observacoes, valor_total, criado_por, criado_em)
+                              tipo_entrega, prazo_entrega, observacoes, valor_total, criado_por,
+                              criado_em)
   overriding system value
   values
-    (-1, 'Cliente teste antigo', null, 'pix', 'pendente', 'retirada', null, 5, v_usuario,
-     '2999-01-01 12:00:00+00'),
-    (-2, 'Cliente teste novo', '(00) 00000-0000', 'cartao', 'pago', 'entrega', 'Obs. de teste',
-     137, v_usuario, '2999-01-02 12:00:00+00'),
-    (-3, 'Cliente teste empate', null, 'dinheiro', 'pendente', 'retirada', null, 0, v_usuario,
-     '2999-01-02 12:00:00+00');
+    (-1, 'Cliente teste antigo', null, 'pix', 'pendente', 'retirada', '2999-02-01', null, 5,
+     v_usuario, '2999-01-01 12:00:00+00'),
+    (-2, 'Cliente teste novo', '(00) 00000-0000', 'cartao', 'pago', 'entrega', '2999-02-10',
+     'Obs. de teste', 137, v_usuario, '2999-01-02 12:00:00+00'),
+    (-3, 'Cliente teste empate', null, 'dinheiro', 'pendente', 'retirada', '2999-02-01', null, 0,
+     v_usuario, '2999-01-02 12:00:00+00');
 
   -- itens do pedido -2 inseridos fora de ordem, um deles com imagem
   insert into public.pedido_itens (id, pedido_id, ordem, produto, quantidade, valor_unitario,
@@ -89,8 +90,8 @@ begin
   select to_jsonb(l) into v_linha from public.listar_pedidos() as l where l.id = -2;
   if (select array_agg(k order by k) from jsonb_object_keys(v_linha) as k)
      is distinct from array['cliente_nome', 'criado_por_nome', 'forma_pagamento', 'id',
-                            'imagem_caminho', 'imagem_produto', 'observacoes', 'produtos',
-                            'quantidade_total', 'status_pagamento'] then
+                            'imagem_caminho', 'imagem_produto', 'observacoes', 'prazo_entrega',
+                            'produtos', 'quantidade_total', 'status_pagamento'] then
     raise exception 'listagem deveria devolver só os campos do card: %', v_linha;
   end if;
 
@@ -114,8 +115,8 @@ begin
 
   if (select array_agg(k order by k) from jsonb_object_keys(v_pedido) as k)
      is distinct from array['cliente_nome', 'contato', 'criado_em_local', 'criado_por_nome',
-                            'forma_pagamento', 'id', 'itens', 'observacoes', 'status_pagamento',
-                            'tipo_entrega', 'valor_total'] then
+                            'forma_pagamento', 'id', 'itens', 'observacoes', 'prazo_entrega',
+                            'status_pagamento', 'tipo_entrega', 'valor_total'] then
     raise exception 'detalhe deveria devolver só os campos da tela: %', v_pedido;
   end if;
 

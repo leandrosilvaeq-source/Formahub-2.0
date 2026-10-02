@@ -5,7 +5,10 @@ para que um parâmetro faltando apareça aqui e não só no primeiro pedido de v
 """
 
 import inspect
+import json
+from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from postgrest._sync.client import SyncPostgrestClient
@@ -92,6 +95,7 @@ def pedido_exemplo():
         forma_pagamento="pix",
         status_pagamento="pago",
         tipo_entrega="retirada",
+        prazo_entrega=date(2026, 12, 15),
         observacoes=None,
         valor_total=Decimal("26.00"),
         itens=(
@@ -118,7 +122,9 @@ def test_criar_pedido_envia_valores_como_texto_e_criador():
     assert parametros["p_id"] == 7
     assert parametros["p_criado_por"] == 2
     assert parametros["p_status_pagamento"] == "pago"
+    assert parametros["p_prazo_entrega"] == "2026-12-15"  # DATE do banco, em ISO
     assert parametros["p_valor_total"] == "26.00"
+    json.dumps(parametros)  # o supabase-py envia como JSON: nada de date/Decimal cru
     assert parametros["p_itens"] == [
         {
             "ordem": 1,
@@ -193,6 +199,7 @@ LINHA_LISTAGEM = {
     "cliente_nome": "Cliente",
     "forma_pagamento": "pix",
     "status_pagamento": "pendente",
+    "prazo_entrega": "2026-10-05",
     "criado_por_nome": "Leandro",
     "produtos": ["Porta doce", "Caneca"],
     "quantidade_total": 11,
@@ -214,6 +221,7 @@ def test_listar_pedidos_converte_o_card():
     assert resumo.observacoes == "Obs"
     assert (resumo.imagem_caminho, resumo.imagem_produto) == ("pedidos/1/itens/2/x.png", "Caneca")
     assert resumo.criado_por_nome == "Leandro"
+    assert resumo.prazo_entrega == date(2026, 10, 5)
 
 
 def test_listagem_no_formato_antigo_vira_falha_amigavel():
@@ -273,6 +281,7 @@ def test_consultar_pedido_converte_itens():
         "forma_pagamento": "cartao",
         "status_pagamento": "pendente",
         "tipo_entrega": "retirada",
+        "prazo_entrega": "2026-10-05",
         "observacoes": "Obs",
         "valor_total": "26.00",
         "criado_em_local": "2026-09-30T20:04:00",
@@ -302,6 +311,7 @@ def test_consultar_pedido_converte_itens():
 
     assert cliente.chamadas == [("rpc", ("consultar_pedido", {"p_id": 1}))]
     assert pedido.valor_total == Decimal("26.00")
+    assert pedido.prazo_entrega == date(2026, 10, 5)
     assert [i.subtotal for i in pedido.itens] == [Decimal("21.00"), Decimal("5")]
     assert pedido.itens[1].imagem_caminho == "pedidos/1/itens/2/x.png"
 
@@ -349,3 +359,118 @@ def test_falhas_de_leitura_viram_falha_ao_consultar(metodo):
 
     with pytest.raises(FalhaAoConsultar):
         getattr(repo, metodo)(*argumentos[metodo])
+
+
+# ---------- Produção ----------
+
+
+def test_listar_producao_converte_os_cards():
+    linha = {
+        "id": 1,
+        "etapa_producao": "em_producao",
+        "cliente_nome": "Cliente",
+        "forma_pagamento": "pix",
+        "status_pagamento": "pago",
+        "tipo_entrega": "retirada",
+        "prazo_entrega": "2026-02-28",
+        "produtos": ["A", "B"],
+        "quantidade_total": 3,
+        "observacoes": None,
+        "imagem_caminho": "pedidos/1/itens/1/x.png",
+        "imagem_produto": "A",
+    }
+    cliente = ClienteSimulado(rpc={"listar_producao": [linha]})
+
+    (c,) = RepositorioPedidosSupabase(cliente).listar_producao()
+
+    assert cliente.chamadas == [("rpc", ("listar_producao", {}))]
+    assert (c.etapa, c.status_pagamento, c.tipo_entrega) == ("em_producao", "pago", "retirada")
+    assert c.produtos == ("A", "B") and c.quantidade_total == 3
+    assert (c.imagem_caminho, c.imagem_produto) == ("pedidos/1/itens/1/x.png", "A")
+    assert c.prazo_entrega == date(2026, 2, 28)
+    assert not hasattr(c, "criado_por_nome")  # saiu do card
+
+
+@pytest.mark.parametrize("funcao", ["listar_pedidos", "listar_producao", "consultar_pedido"])
+def test_banco_sem_a_migration_do_prazo_vira_falha_amigavel(funcao):
+    # A função antiga não devolve prazo_entrega: a tela mostra a mensagem de indisponível.
+    from app.pedidos_repositorio import FalhaAoConsultar
+
+    linha = {**LINHA_LISTAGEM, "etapa_producao": "fila_producao", "tipo_entrega": "entrega"}
+    del linha["prazo_entrega"]
+    resposta = linha if funcao == "consultar_pedido" else [linha]
+    repo = RepositorioPedidosSupabase(ClienteSimulado(rpc={funcao: resposta}))
+
+    with pytest.raises(FalhaAoConsultar):
+        getattr(repo, funcao)(*((1,) if funcao == "consultar_pedido" else ()))
+
+
+def test_listar_producao_com_falha_vira_falha_ao_consultar():
+    from app.pedidos_repositorio import FalhaAoConsultar
+
+    cliente = ClienteSimulado(rpc={"listar_producao": ConnectionError()})
+
+    with pytest.raises(FalhaAoConsultar):
+        RepositorioPedidosSupabase(cliente).listar_producao()
+
+
+def test_mover_etapa_envia_os_parametros_e_le_a_resposta():
+    resposta = {
+        "id": 7,
+        "etapa_producao": "em_producao",
+        "etapa_atualizada_em": "2026-10-01T10:00:00",
+        "etapa_atualizada_por_nome": "Leandro",
+    }
+    cliente = ClienteSimulado(rpc={"mover_etapa_producao": resposta})
+
+    atualizada = RepositorioPedidosSupabase(cliente).mover_etapa(
+        7, "em_producao", "fila_producao", 1
+    )
+
+    assert cliente.chamadas == [
+        (
+            "rpc",
+            (
+                "mover_etapa_producao",
+                {
+                    "p_pedido_id": 7,
+                    "p_etapa_esperada": "em_producao",
+                    "p_nova_etapa": "fila_producao",
+                    "p_usuario_id": 1,
+                },
+            ),
+        )
+    ]
+    assert (atualizada.id, atualizada.etapa, atualizada.atualizada_por_nome) == (
+        7,
+        "em_producao",
+        "Leandro",
+    )
+
+
+@pytest.mark.parametrize(
+    ("erro", "esperada"),
+    [
+        (APIError({"message": "x", "code": "PT409"}), "ConflitoDeEtapa"),
+        (APIError({"message": "x", "code": "PT422"}), "MovimentoInvalido"),
+        (APIError({"message": "x", "code": "PT404"}), "MovimentoInvalido"),
+        (APIError({"message": "x", "code": "PT403"}), "FalhaAoMover"),
+        (APIError({"message": "x", "code": "PGRST202"}), "FalhaAoMover"),  # função ausente
+        (ConnectionError("sem rede"), "FalhaAoMover"),
+    ],
+)
+def test_mover_etapa_traduz_os_erros_do_banco(erro, esperada):
+    import app.pedidos_repositorio as modulo
+
+    cliente = ClienteSimulado(rpc={"mover_etapa_producao": erro})
+
+    with pytest.raises(getattr(modulo, esperada)):
+        RepositorioPedidosSupabase(cliente).mover_etapa(1, "fila_producao", "em_producao", 1)
+
+
+def test_funcao_antiga_de_avanco_nao_e_mais_usada():
+    import app.pedidos_repositorio as modulo
+
+    codigo = Path(modulo.__file__).read_text(encoding="utf-8")
+    assert "avancar_etapa_producao" not in codigo
+    assert not hasattr(modulo.RepositorioPedidosSupabase, "avancar_etapa")

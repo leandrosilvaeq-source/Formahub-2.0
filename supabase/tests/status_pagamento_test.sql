@@ -39,7 +39,7 @@ $f$;
 do $teste$
 declare
   v_criar constant text :=
-    'public.criar_pedido(bigint, bigint, text, text, text, text, text, text, numeric, jsonb)';
+    'public.criar_pedido(bigint, bigint, text, text, text, text, text, date, text, numeric, jsonb)';
   v_listar constant text := 'public.listar_pedidos()';
   v_consultar constant text := 'public.consultar_pedido(bigint)';
   v_usuario bigint;
@@ -116,27 +116,30 @@ begin
 
   perform pg_temp.deve_falhar('status fora da lista',
     format('insert into public.pedidos (id, cliente_nome, forma_pagamento, status_pagamento,'
-           ' tipo_entrega, valor_total, criado_por) overriding system value'
-           ' values (-9, %L, %L, %L, %L, 0, %s)', 'Teste', 'pix', 'quitado', 'retirada', v_usuario),
+           ' tipo_entrega, prazo_entrega, valor_total, criado_por) overriding system value'
+           ' values (-9, %L, %L, %L, %L, %L, 0, %s)', 'Teste', 'pix', 'quitado', 'retirada',
+           '2026-10-05', v_usuario),
     '23514', 'pedidos_status_pagamento_check');
 
   perform pg_temp.deve_falhar('status vazio',
     format('insert into public.pedidos (id, cliente_nome, forma_pagamento, status_pagamento,'
-           ' tipo_entrega, valor_total, criado_por) overriding system value'
-           ' values (-9, %L, %L, null, %L, 0, %s)', 'Teste', 'pix', 'retirada', v_usuario),
+           ' tipo_entrega, prazo_entrega, valor_total, criado_por) overriding system value'
+           ' values (-9, %L, %L, null, %L, %L, 0, %s)', 'Teste', 'pix', 'retirada', '2026-10-05',
+           v_usuario),
     '23502');
 
   insert into public.pedidos (id, cliente_nome, contato, forma_pagamento, status_pagamento,
-                              tipo_entrega, observacoes, valor_total, criado_por, criado_em)
+                              tipo_entrega, prazo_entrega, observacoes, valor_total, criado_por,
+                              criado_em)
   overriding system value
   values
-    (-1, 'Teste maior quantidade', null, 'pix', 'pago', 'retirada', 'Obs. de teste', 16,
-     v_usuario, '2999-01-04 12:00:00+00'),
-    (-2, 'Teste empate', null, 'dinheiro', 'pendente', 'entrega', null, 6, v_usuario,
+    (-1, 'Teste maior quantidade', null, 'pix', 'pago', 'retirada', '2999-02-01', 'Obs. de teste',
+     16, v_usuario, '2999-01-04 12:00:00+00'),
+    (-2, 'Teste empate', null, 'dinheiro', 'pendente', 'entrega', '2999-02-01', null, 6, v_usuario,
      '2999-01-03 12:00:00+00'),
-    (-3, 'Teste segundo com imagem', null, 'cartao', 'pendente', 'retirada', null, 11, v_usuario,
-     '2999-01-02 12:00:00+00'),
-    (-4, 'Teste sem imagem', null, 'pix', 'pago', 'entrega', null, 5, v_usuario,
+    (-3, 'Teste segundo com imagem', null, 'cartao', 'pendente', 'retirada', '2999-02-01', null,
+     11, v_usuario, '2999-01-02 12:00:00+00'),
+    (-4, 'Teste sem imagem', null, 'pix', 'pago', 'entrega', '2999-02-01', null, 5, v_usuario,
      '2999-01-01 12:00:00+00');
 
   insert into public.pedido_itens (id, pedido_id, ordem, produto, quantidade, valor_unitario,
@@ -161,8 +164,8 @@ begin
   select to_jsonb(l) into v_linha from public.listar_pedidos() as l where l.id = -1;
   if (select array_agg(k order by k) from jsonb_object_keys(v_linha) as k)
      is distinct from array['cliente_nome', 'criado_por_nome', 'forma_pagamento', 'id',
-                            'imagem_caminho', 'imagem_produto', 'observacoes', 'produtos',
-                            'quantidade_total', 'status_pagamento'] then
+                            'imagem_caminho', 'imagem_produto', 'observacoes', 'prazo_entrega',
+                            'produtos', 'quantidade_total', 'status_pagamento'] then
     raise exception 'listagem deveria devolver só os campos do card: %', v_linha;
   end if;
 

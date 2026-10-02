@@ -39,6 +39,7 @@ def formulario(**extra):
         "pagamento": "PIX",
         "status_pagamento": "Pendente",
         "entrega": "Retirada",
+        "prazo_entrega": "05/10/26",
         "observacoes": "",
         "csrf": "csrf-de-teste",
     }
@@ -422,6 +423,7 @@ def test_gravar_pedido_unitario_ordem_dos_passos(repo_pedidos):
                 "pagamento": ["Dinheiro"],
                 "status_pagamento": ["Pago"],
                 "entrega": ["Entrega em mãos"],
+                "prazo_entrega": ["15/12/26"],
             },
             {1: PNG},
         )
@@ -448,6 +450,7 @@ def test_gravar_pedido_falha_vira_pedido_nao_salvo(repo_pedidos):
                 "pagamento": ["PIX"],
                 "status_pagamento": ["Pendente"],
                 "entrega": ["Retirada"],
+                "prazo_entrega": ["15/12/26"],
             },
             {0: WEBP},
         )

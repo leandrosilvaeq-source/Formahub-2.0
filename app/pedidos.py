@@ -8,6 +8,7 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from app.pedidos_repositorio import (
@@ -40,16 +41,73 @@ ROTULOS_PAGAMENTO = {codigo: rotulo for rotulo, codigo in CODIGOS_PAGAMENTO.item
 ROTULOS_STATUS = {codigo: rotulo for rotulo, codigo in CODIGOS_STATUS.items()}
 ROTULOS_ENTREGA = {codigo: rotulo for rotulo, codigo in CODIGOS_ENTREGA.items()}
 
+# Produção: etapas na ordem do processo (código do banco, título da coluna).
+ETAPAS_PRODUCAO = [
+    ("fila_producao", "Na Fila de Produção"),
+    ("em_producao", "Em Produção"),
+    ("aguardando_entrega", "Ag. Entrega"),
+    ("entregue", "Entregue"),
+]
+ROTULOS_ETAPA = dict(ETAPAS_PRODUCAO)
+
+
+@dataclass(frozen=True)
+class Movimento:
+    """Um botão do card: leva o pedido para `destino`."""
+
+    destino: str
+    texto: str
+    retorno: bool = False  # volta uma etapa (botão secundário)
+
+
+# Movimentos permitidos a partir de cada etapa, na ordem dos botões do card (os mesmos da
+# função mover_etapa_producao do banco). Nada sai de "entregue".
+MOVIMENTOS_ETAPA = {
+    "fila_producao": [Movimento("em_producao", "Iniciar produção")],
+    "em_producao": [
+        Movimento("fila_producao", "Voltar para fila", retorno=True),
+        Movimento("aguardando_entrega", "Finalizar produção"),
+    ],
+    "aguardando_entrega": [Movimento("entregue", "Marcar como entregue")],
+}
+
+
+def movimento_permitido(atual: str, nova: str) -> bool:
+    return any(m.destino == nova for m in MOVIMENTOS_ETAPA.get(atual, []))
+
+
 # Imagem de referência do item: opcional, uma por item, PNG/JPEG/WebP até 10 MB.
 LIMITE_IMAGEM_MB = 10
 LIMITE_IMAGEM_BYTES = LIMITE_IMAGEM_MB * 1024 * 1024
 
 DIGITOS_CONTATO = 11
 SO_MASCARA_CONTATO = re.compile(r"^[\d()\s-]*$")
+# Prazo de entrega: dd/mm/aa (as barras são inseridas pela tela; sem JavaScript, só os seis
+# números também valem). O ano é 20aa.
+FORMATO_PRAZO = re.compile(r"(\d{2})/?(\d{2})/?(\d{2})")
 
 
 def somente_digitos(texto: str) -> str:
     return re.sub(r"\D", "", texto)
+
+
+def ler_prazo(texto: str) -> tuple[date | None, str | None]:
+    """'05/10/26' -> (date(2026, 10, 5), None); com problema -> (None, mensagem de erro)."""
+    if not texto:
+        return None, "Informe o prazo de entrega."
+    encontrado = FORMATO_PRAZO.fullmatch(texto)
+    if not encontrado:
+        return None, "Use o formato dd/mm/aa."
+    dia, mes, ano = (int(parte) for parte in encontrado.groups())
+    try:
+        return date(2000 + ano, mes, dia), None
+    except ValueError:
+        return None, "Data inválida."
+
+
+def formatar_data_curta(dia: date) -> str:
+    """date(2026, 10, 5) -> '05/10/26'."""
+    return dia.strftime("%d/%m/%y")
 
 
 def formatar_contato(texto: str) -> str:
@@ -118,6 +176,8 @@ class Pedido:
     pagamento: str = ""
     status_pagamento: str = ""
     entrega: str = ""
+    prazo_entrega: str = ""  # como digitado (dd/mm/aa)
+    prazo: date | None = None  # preenchido pela validação
     observacoes: str = ""
     itens: list[Item] = field(default_factory=list)
     quantidade_total: int = 0
@@ -173,6 +233,7 @@ def ler_formulario(dados: dict[str, list[str]], imagens: dict[int, bytes] | None
         pagamento=campo("pagamento"),
         status_pagamento=campo("status_pagamento"),
         entrega=campo("entrega"),
+        prazo_entrega=campo("prazo_entrega"),
         observacoes=campo("observacoes"),
         itens=itens,
     )
@@ -201,6 +262,12 @@ def validar(pedido: Pedido) -> Pedido:
         erros["status_pagamento"] = ESCOLHA_OBRIGATORIA["status_pagamento"]
     if pedido.entrega not in FORMAS_ENTREGA:
         erros["entrega"] = ESCOLHA_OBRIGATORIA["entrega"]
+
+    pedido.prazo, problema = ler_prazo(pedido.prazo_entrega)
+    if problema:
+        erros["prazo_entrega"] = problema
+    else:
+        pedido.prazo_entrega = formatar_data_curta(pedido.prazo)
 
     if not pedido.itens:
         erros["itens"] = "Adicione pelo menos um item."
@@ -310,6 +377,7 @@ def gravar_pedido(
                 forma_pagamento=CODIGOS_PAGAMENTO[pedido.pagamento],
                 status_pagamento=CODIGOS_STATUS[pedido.status_pagamento],
                 tipo_entrega=CODIGOS_ENTREGA[pedido.entrega],
+                prazo_entrega=pedido.prazo,
                 observacoes=pedido.observacoes or None,
                 valor_total=pedido.total,
                 itens=tuple(itens),

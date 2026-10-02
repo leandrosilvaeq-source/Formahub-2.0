@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import UploadFile
@@ -19,10 +19,13 @@ from app.auth.rotas import (
 from app.auth.rotas import router as rotas_auth
 from app.pedidos import (
     ESCOLHA_OBRIGATORIA,
+    ETAPAS_PRODUCAO,
     FORMAS_ENTREGA,
     FORMAS_PAGAMENTO,
     LIMITE_IMAGEM_BYTES,
+    MOVIMENTOS_ETAPA,
     ROTULOS_ENTREGA,
+    ROTULOS_ETAPA,
     ROTULOS_PAGAMENTO,
     ROTULOS_STATUS,
     STATUS_PAGAMENTO,
@@ -30,12 +33,21 @@ from app.pedidos import (
     PedidoNaoSalvo,
     formatar_brl,
     formatar_contato,
+    formatar_data_curta,
     gravar_pedido,
     ler_formulario,
+    movimento_permitido,
     pedido_vazio,
     validar,
 )
-from app.pedidos_repositorio import FalhaAoConsultar, RepositorioPedidos, get_repositorio_pedidos
+from app.pedidos_repositorio import (
+    ConflitoDeEtapa,
+    FalhaAoConsultar,
+    FalhaAoMover,
+    MovimentoInvalido,
+    RepositorioPedidos,
+    get_repositorio_pedidos,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -56,6 +68,7 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.filters["brl"] = formatar_brl
 templates.env.filters["contato"] = lambda texto: formatar_contato(texto) if texto else "—"
 templates.env.filters["data_hora"] = lambda momento: momento.strftime("%d/%m/%Y às %H:%M")
+templates.env.filters["data_curta"] = formatar_data_curta
 templates.env.filters["pagamento"] = lambda codigo: ROTULOS_PAGAMENTO.get(codigo, codigo)
 templates.env.filters["entrega"] = lambda codigo: ROTULOS_ENTREGA.get(codigo, codigo)
 templates.env.filters["status_pagamento"] = lambda codigo: ROTULOS_STATUS.get(codigo, codigo)
@@ -70,6 +83,11 @@ MODULOS = [
             {"url": "/pedidos", "texto": "Ver pedidos", "principal": True},
             {"url": "/pedidos/novo", "texto": "Novo pedido"},
         ],
+    },
+    {
+        "titulo": "Produção",
+        "descricao": "Quadro com as etapas de produção dos pedidos.",
+        "links": [{"url": "/producao", "texto": "Ver produção", "principal": True}],
     },
 ]
 
@@ -232,3 +250,103 @@ def ver_pedido(
         "quantidade_total": sum(item.quantidade for item in pedido.itens),
     }
     return _pagina_sem_cache(request, "pedidos/detalhe.html", contexto)
+
+
+# ---------- Produção ----------
+
+MENSAGEM_PRODUCAO_INDISPONIVEL = (
+    "Não foi possível carregar a produção agora. Tente novamente em instantes."
+)
+MOVIMENTO = {
+    "conflito": (409, "Este pedido foi atualizado por outro usuário."),
+    "invalido": (422, "Este movimento não é permitido para a etapa atual do pedido."),
+    "indisponivel": (503, "Não foi possível mover o pedido agora. Tente novamente."),
+    "expirada": (403, "A página expirou. Recarregue a página e tente de novo."),
+}
+
+
+@app.get("/producao", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
+def producao(request: Request, repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos)):
+    contexto = {
+        "colunas": [],
+        "imagens": {},
+        "total": 0,
+        "movimentos": MOVIMENTOS_ETAPA,
+        "erro": "",
+    }
+    try:
+        if repo is None:
+            raise FalhaAoConsultar
+        cards = repo.listar_producao()
+    except FalhaAoConsultar:
+        contexto["erro"] = MENSAGEM_PRODUCAO_INDISPONIVEL
+        return _pagina_sem_cache(request, "producao.html", contexto, status_code=503)
+
+    # No máximo uma foto por card, assinadas num só pedido ao Storage; se falhar, o quadro
+    # aparece sem fotos (com aviso discreto nos cards que teriam foto).
+    caminhos = [c.imagem_caminho for c in cards if c.imagem_caminho]
+    try:
+        contexto["imagens"] = repo.assinar_imagens(caminhos) if caminhos else {}
+    except FalhaAoConsultar:
+        contexto["imagens"] = {}
+    contexto["colunas"] = [
+        {"etapa": codigo, "titulo": titulo, "cards": [c for c in cards if c.etapa == codigo]}
+        for codigo, titulo in ETAPAS_PRODUCAO
+    ]
+    contexto["total"] = len(cards)
+    return _pagina_sem_cache(request, "producao.html", contexto)
+
+
+def _resposta_movimento(motivo: str) -> JSONResponse:
+    status, mensagem = MOVIMENTO[motivo]
+    return JSONResponse(
+        {"ok": False, "erro": motivo, "mensagem": mensagem},
+        status_code=status,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/producao/{pedido_id}/mover")
+async def mover_producao(
+    request: Request,
+    pedido_id: str,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    async with request.form() as formulario:
+        # Só estes campos; qualquer usuário enviado pelo navegador é ignorado: quem move é
+        # sempre o usuário da sessão.
+        csrf = str(formulario.get("csrf", ""))
+        esperada = str(formulario.get("etapa_esperada", ""))
+        nova = str(formulario.get("nova_etapa", ""))
+
+    if not origem_confiavel(request) or not sessoes.csrf_valido(request.state.csrf, csrf):
+        return _resposta_movimento("expirada")
+    if not ID_PEDIDO.fullmatch(pedido_id) or not movimento_permitido(esperada, nova):
+        return _resposta_movimento("invalido")
+
+    try:
+        if repo is None:
+            raise FalhaAoMover
+        atualizada = repo.mover_etapa(int(pedido_id), esperada, nova, usuario.id)
+    except ConflitoDeEtapa:
+        return _resposta_movimento("conflito")
+    except MovimentoInvalido:
+        return _resposta_movimento("invalido")
+    except FalhaAoMover:
+        return _resposta_movimento("indisponivel")
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "pedido_id": atualizada.id,
+            "etapa": atualizada.etapa,
+            "titulo": ROTULOS_ETAPA[atualizada.etapa],
+            # Botões do card na nova etapa (vazio em Entregue).
+            "movimentos": [
+                {"destino": m.destino, "texto": m.texto, "retorno": m.retorno}
+                for m in MOVIMENTOS_ETAPA.get(atualizada.etapa, [])
+            ],
+        },
+        headers={"Cache-Control": "no-store"},
+    )

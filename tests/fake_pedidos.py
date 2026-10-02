@@ -7,9 +7,14 @@ As URLs assinadas são falsas (domínio de exemplo) e só existem para arquivos 
 
 from datetime import datetime, timedelta
 
+from app.pedidos import movimento_permitido
 from app.pedidos_repositorio import (
+    CardProducao,
+    ConflitoDeEtapa,
+    EtapaAtualizada,
     FalhaAoGravar,
     ItemConsultado,
+    MovimentoInvalido,
     PedidoConsultado,
     PedidoParaGravar,
     PedidoResumo,
@@ -30,6 +35,9 @@ class RepositorioPedidosMemoria:
         self.escritas = 0  # chamadas que gravariam algo (reserva, envio, remoção, criação)
         self.falhar_em: dict[str, Exception] = {}  # etapa -> erro a levantar
         self.falhar_upload_numero: int | None = None  # falha só no n-ésimo envio (1, 2, ...)
+        # Produção: etapa de cada pedido e cada movimento feito (pedido, de, para, usuário).
+        self.etapas: dict[int, str] = {}
+        self.movimentos: list[tuple[int, str, str, int]] = []
         self._envios = 0
 
     def _talvez_falhar(self, etapa: str) -> None:
@@ -70,7 +78,10 @@ class RepositorioPedidosMemoria:
             raise FalhaAoGravar()
         if pedido.status_pagamento not in ("pendente", "pago"):
             raise FalhaAoGravar()  # CHECK do banco
+        if pedido.prazo_entrega is None:
+            raise FalhaAoGravar()  # NOT NULL do banco
         self.pedidos[pedido.id] = pedido
+        self.etapas[pedido.id] = "fila_producao"  # padrão da coluna no banco
         self.criado_em[pedido.id] = self.relogio
         self.relogio += timedelta(minutes=1)
 
@@ -93,6 +104,7 @@ class RepositorioPedidosMemoria:
                     cliente_nome=p.cliente_nome,
                     forma_pagamento=p.forma_pagamento,
                     status_pagamento=p.status_pagamento,
+                    prazo_entrega=p.prazo_entrega,
                     criado_por_nome=USUARIOS[p.criado_por],
                     produtos=tuple(i.produto for i in itens),
                     quantidade_total=sum(i.quantidade for i in itens),
@@ -115,6 +127,7 @@ class RepositorioPedidosMemoria:
             forma_pagamento=p.forma_pagamento,
             status_pagamento=p.status_pagamento,
             tipo_entrega=p.tipo_entrega,
+            prazo_entrega=p.prazo_entrega,
             observacoes=p.observacoes,
             valor_total=p.valor_total,
             criado_em=self.criado_em[p.id],
@@ -140,3 +153,54 @@ class RepositorioPedidosMemoria:
             for n, c in enumerate(caminhos)
             if c in self.arquivos
         }
+
+    # ---------- Produção ----------
+
+    def _destaque(self, itens):
+        com_imagem = [i for i in itens if i.imagem_caminho]
+        return min(com_imagem, key=lambda i: (-i.quantidade, i.ordem), default=None)
+
+    def listar_producao(self) -> list[CardProducao]:
+        self._talvez_falhar("listar_producao")
+        ordem_etapa = ["fila_producao", "em_producao", "aguardando_entrega", "entregue"]
+        pedidos = sorted(
+            self.pedidos.values(),
+            key=lambda p: (ordem_etapa.index(self.etapas[p.id]), self.criado_em[p.id], p.id),
+        )
+        cards = []
+        for p in pedidos:
+            itens = sorted(p.itens, key=lambda i: i.ordem)
+            destaque = self._destaque(itens)
+            cards.append(
+                CardProducao(
+                    id=p.id,
+                    etapa=self.etapas[p.id],
+                    cliente_nome=p.cliente_nome,
+                    forma_pagamento=p.forma_pagamento,
+                    status_pagamento=p.status_pagamento,
+                    tipo_entrega=p.tipo_entrega,
+                    prazo_entrega=p.prazo_entrega,
+                    produtos=tuple(i.produto for i in itens),
+                    quantidade_total=sum(i.quantidade for i in itens),
+                    observacoes=p.observacoes,
+                    imagem_caminho=destaque.imagem_caminho if destaque else None,
+                    imagem_produto=destaque.produto if destaque else None,
+                )
+            )
+        return cards
+
+    def mover_etapa(
+        self, pedido_id: int, etapa_esperada: str, nova_etapa: str, usuario_id: int
+    ) -> EtapaAtualizada:
+        """Mesmas regras da função mover_etapa_producao do banco."""
+        self._talvez_falhar("mover_etapa")
+        if pedido_id not in self.pedidos:
+            raise MovimentoInvalido
+        atual = self.etapas[pedido_id]
+        if atual != etapa_esperada:
+            raise ConflitoDeEtapa
+        if not movimento_permitido(atual, nova_etapa):
+            raise MovimentoInvalido
+        self.etapas[pedido_id] = nova_etapa
+        self.movimentos.append((pedido_id, atual, nova_etapa, usuario_id))
+        return EtapaAtualizada(pedido_id, nova_etapa, USUARIOS[usuario_id])

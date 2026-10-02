@@ -55,6 +55,9 @@ ruff format --check .
 O banco só é alterado por migrations em `supabase/migrations/`, criadas com o Supabase CLI
 (`npx supabase migration new <nome>`). Não existe banco local.
 
+`supabase/operacoes/` guarda correções de dados de execução única: são rodadas manualmente, uma
+vez, por decisão explícita, e nunca pelo `db push`. Cada arquivo explica o que confere e o que altera.
+
 ## Estrutura
 
 ```

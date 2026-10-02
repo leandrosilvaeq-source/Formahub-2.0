@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% from "pedidos/_status.html" import selo_status %}
+
+{% block title %}Produção · FormaHub 2.0{% endblock %}
+
+{# Ícones das colunas: SVG inline, sem biblioteca externa. #}
+{% macro icone_etapa(etapa) -%}
+<svg class="coluna-icone" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  {%- if etapa == "fila_producao" %}<path d="M4 6h16M4 12h16M4 18h10"/>
+  {%- elif etapa == "em_producao" %}<path d="M3 4h18M5 4v16M19 4v16M3 20h18"/><path d="M10 7h4v3l-2 2-2-2Z"/><path d="M8 17h8"/>
+  {%- elif etapa == "aguardando_entrega" %}<path d="M12 2.5l8 4.5v10l-8 4.5-8-4.5V7Z"/><path d="M4 7l8 4.5L20 7M12 11.5v10"/>
+  {%- else %}<circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>{% endif -%}
+</svg>
+{%- endmacro %}
+
+{% macro card(c) -%}
+{% set foto = imagens.get(c.imagem_caminho) if c.imagem_caminho else None %}
+<li class="producao-card" data-pedido="{{ c.id }}" data-etapa="{{ c.etapa }}"
+  data-cliente="{{ c.cliente_nome }}"{% if c.etapa in movimentos %} draggable="true"{% endif %}>
+  <div class="producao-card-topo">
+    {% if foto %}
+    <img class="producao-card-foto" src="{{ foto }}" alt="Foto de referência: {{ c.imagem_produto }}"
+      width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
+    {% endif %}
+    <h3>{{ c.cliente_nome }}</h3>
+  </div>
+  <p class="producao-card-produtos">
+    {{ c.produtos | join(", ") }}
+    <span class="pedido-card-unidades">{{ c.quantidade_total }} {{ "unidade" if c.quantidade_total == 1 else "unidades" }}</span>
+  </p>
+  <dl class="producao-card-dados">
+    <div><dt>Pagamento</dt><dd class="pedido-card-pagamento">{{ c.forma_pagamento | pagamento }} {{ selo_status(c.status_pagamento) }}</dd></div>
+    <div><dt>Entrega</dt><dd>{{ c.tipo_entrega | entrega }}</dd></div>
+    <div class="producao-card-prazo"><dt>Prazo</dt><dd><time datetime="{{ c.prazo_entrega.isoformat() }}">{{ c.prazo_entrega | data_curta }}</time></dd></div>
+    {% if c.observacoes %}
+    <div class="producao-card-obs"><dt>Observações</dt><dd>{{ c.observacoes }}</dd></div>
+    {% endif %}
+  </dl>
+  {% if c.imagem_caminho and not foto %}
+  <p class="pedido-card-aviso">Foto indisponível no momento.</p>
+  {% endif %}
+  <div class="producao-card-acoes">
+    <a class="botao botao-secundario" href="/pedidos/{{ c.id }}"
+      aria-label="Ver pedido de {{ c.cliente_nome }}">Ver pedido</a>
+    {% for m in movimentos.get(c.etapa, []) %}
+    <button type="button" class="botao {{ 'botao-secundario producao-voltar' if m.retorno else 'botao-primario producao-avancar' }} producao-mover"
+      data-destino="{{ m.destino }}"
+      aria-label="{{ m.texto }}: pedido de {{ c.cliente_nome }}">{{ m.texto }}</button>
+    {% endfor %}
+  </div>
+</li>
+{%- endmacro %}
+
+{% block content %}
+<div class="producao">
+
+<div class="pagina-topo">
+  <h1>Produção</h1>
+  <div class="pagina-topo-acoes">
+    <a class="botao botao-secundario" href="/pedidos">Pedidos</a>
+    <a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>
+  </div>
+</div>
+
+{# Mensagens da movimentação: visíveis e anunciadas por leitor de tela. #}
+<div id="producao-mensagem" class="producao-mensagem" aria-live="polite"></div>
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+<a class="botao botao-primario" href="/producao">Tentar novamente</a>
+{% else %}
+{% if total == 0 %}
+<section class="secao lista-vazia producao-vazia">
+  <h2>Nenhum pedido na produção</h2>
+  <p>Todo pedido salvo entra automaticamente na fila de produção.</p>
+  <a class="botao botao-primario" href="/pedidos/novo">Cadastrar pedido</a>
+</section>
+{% endif %}
+<div id="quadro" class="quadro" data-csrf="{{ request.state.csrf }}">
+  {% for coluna in colunas %}
+  <section class="coluna" data-etapa="{{ coluna.etapa }}" aria-labelledby="coluna-{{ coluna.etapa }}">
+    <header class="coluna-topo">
+      {{ icone_etapa(coluna.etapa) }}
+      <h2 id="coluna-{{ coluna.etapa }}">{{ coluna.titulo }}</h2>
+      <span class="coluna-contador"><span data-contador>{{ coluna.cards | length }}</span><span class="visualmente-oculto"> {{ "pedido" if coluna.cards | length == 1 else "pedidos" }}</span></span>
+    </header>
+    <ol class="coluna-cards">
+      {% for c in coluna.cards %}{{ card(c) }}{% endfor %}
+    </ol>
+    <p class="coluna-vazia"{% if coluna.cards %} hidden{% endif %}>Nenhum pedido nesta etapa.</p>
+  </section>
+  {% endfor %}
+</div>
+{% endif %}
+
+</div>
+
+<dialog id="confirmar-entrega" class="confirmar-entrega" aria-labelledby="confirmar-entrega-titulo"
+  aria-describedby="confirmar-entrega-texto">
+  <form method="dialog">
+    <h2 id="confirmar-entrega-titulo">Marcar como entregue?</h2>
+    <p id="confirmar-entrega-texto"></p>
+    <div class="pagina-topo-acoes">
+      <button type="submit" value="cancelar" class="botao botao-secundario">Cancelar</button>
+      <button type="submit" value="confirmar" class="botao botao-primario">Confirmar entrega</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/producao.js') }}"></script>
+{% endblock %}

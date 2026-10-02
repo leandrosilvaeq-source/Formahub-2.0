@@ -1,5 +1,5 @@
 -- Teste transacional da migration de pedidos (20260930120000_criar_pedidos.sql), com a
--- assinatura de criar_pedido vigente depois de 20261002120000_status_pagamento.sql.
+-- assinatura de criar_pedido vigente depois de 20261004120000_prazo_entrega.sql.
 --
 -- ATENÇÃO: este teste reserva ids reais e depois RESTAURA as sequências (setval). Com o
 -- sistema em uso, um pedido salvo durante o teste poderia colidir com ids futuros. Só rode
@@ -51,14 +51,15 @@ create function pg_temp.chamada(
   p_cliente text default 'Cliente teste',
   p_pagamento text default 'pix',
   p_entrega text default 'retirada',
-  p_status text default 'pendente'
+  p_status text default 'pendente',
+  p_prazo date default '2026-10-05'
 )
 returns text
 language sql
 as $f$
   select format(
-    'select public.criar_pedido(%s, %s, %L, null, %L, %L, %L, null, %s, %L::jsonb)',
-    p_id, p_usuario, p_cliente, p_pagamento, p_status, p_entrega, p_total, p_itens
+    'select public.criar_pedido(%s, %s, %L, null, %L, %L, %L, %L::date, null, %s, %L::jsonb)',
+    p_id, p_usuario, p_cliente, p_pagamento, p_status, p_entrega, p_prazo, p_total, p_itens
   );
 $f$;
 
@@ -98,7 +99,7 @@ declare
   v_pedidos_antes constant bigint := (select count(*) from public.pedidos);
   v_itens_antes   constant bigint := (select count(*) from public.pedido_itens);
   v_criar constant text :=
-    'public.criar_pedido(bigint, bigint, text, text, text, text, text, text, numeric, jsonb)';
+    'public.criar_pedido(bigint, bigint, text, text, text, text, text, date, text, numeric, jsonb)';
   v_usuario bigint;
   v_papel text;
   v_caminho text;
@@ -181,13 +182,15 @@ begin
     end if;
 
     if public.criar_pedido(v_id, v_usuario, 'Cliente teste', '(00) 00000-0000', 'pix', 'pendente',
-                           'retirada', null, 26.00, pg_temp.itens_teste(v_id)) <> v_id then
+                           'retirada', date '2026-10-05', null, 26.00,
+                           pg_temp.itens_teste(v_id)) <> v_id then
       raise exception 'criar_pedido deveria devolver o id';
     end if;
 
     if not exists (select 1 from public.pedidos
                     where id = v_id and criado_por = v_usuario and valor_total = 26
-                      and forma_pagamento = 'pix' and tipo_entrega = 'retirada') then
+                      and forma_pagamento = 'pix' and tipo_entrega = 'retirada'
+                      and prazo_entrega = date '2026-10-05') then
       raise exception 'pedido de teste não foi gravado como esperado';
     end if;
 
@@ -265,6 +268,10 @@ begin
       pg_temp.chamada(v_outro, v_usuario, 26.00, pg_temp.itens_teste(v_outro),
                       p_entrega => 'correio'),
       '23514', 'pedidos_tipo_entrega_check');
+
+    perform pg_temp.deve_falhar('prazo de entrega ausente',
+      pg_temp.chamada(v_outro, v_usuario, 26.00, pg_temp.itens_teste(v_outro), p_prazo => null),
+      '23502');
 
     perform pg_temp.deve_falhar('cliente em branco',
       pg_temp.chamada(v_outro, v_usuario, 26.00, pg_temp.itens_teste(v_outro), p_cliente => '   '),
