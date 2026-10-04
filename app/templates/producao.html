@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% from "pedidos/_status.html" import selo_status %}
 
 {% block title %}Produção · FormaHub 2.0{% endblock %}
+{% block main_classe %} container-producao{% endblock %}
 
 {# Ícones das colunas: SVG inline, sem biblioteca externa. #}
 {% macro icone_etapa(etapa) -%}
@@ -13,8 +13,27 @@
 </svg>
 {%- endmacro %}
 
+{# Botão do status do pagamento: mostra o status e alterna entre Pendente e Pago. #}
+{% macro botao_pagamento(c) -%}
+{% set acao = alternancia_pagamento[c.status_pagamento][1] -%}
+<button type="button" class="selo-status selo-status-{{ c.status_pagamento }} producao-pagamento"
+  data-status="{{ c.status_pagamento }}" title="{{ acao }}"
+  aria-label="{{ c.status_pagamento | status_pagamento }}. {{ acao }}">
+  {{- icone_pagamento(c.status_pagamento) -}}
+  <span class="producao-pagamento-texto">{{ c.status_pagamento | status_pagamento }}</span>
+</button>
+{%- endmacro %}
+
+{% macro icone_pagamento(codigo) -%}
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  {%- if codigo == "pago" %}<circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>
+  {%- else %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>{% endif -%}
+</svg>
+{%- endmacro %}
+
 {% macro card(c) -%}
 {% set foto = imagens.get(c.imagem_caminho) if c.imagem_caminho else None %}
+{% set auditoria = texto_auditoria(c.comentario_atualizado_por_nome, c.comentario_atualizado_em) %}
 <li class="producao-card" data-pedido="{{ c.id }}" data-etapa="{{ c.etapa }}"
   data-cliente="{{ c.cliente_nome }}"{% if c.etapa in movimentos %} draggable="true"{% endif %}>
   <div class="producao-card-topo">
@@ -23,22 +42,39 @@
       width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
     {% endif %}
     <h3>{{ c.cliente_nome }}</h3>
+    <button type="button" class="producao-recolher" aria-expanded="true"
+      aria-controls="card-corpo-{{ c.id }}" title="Recolher pedido">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 15 6-6 6 6"/></svg>
+      <span class="visualmente-oculto">Recolher pedido</span>
+    </button>
   </div>
   <p class="producao-card-produtos">
     {{ c.produtos | join(", ") }}
     <span class="pedido-card-unidades">{{ c.quantidade_total }} {{ "unidade" if c.quantidade_total == 1 else "unidades" }}</span>
   </p>
+  <div class="producao-card-corpo" id="card-corpo-{{ c.id }}">
   <dl class="producao-card-dados">
-    <div><dt>Pagamento</dt><dd class="pedido-card-pagamento">{{ c.forma_pagamento | pagamento }} {{ selo_status(c.status_pagamento) }}</dd></div>
+    <div><dt>Pagamento</dt><dd class="pedido-card-pagamento">{{ c.forma_pagamento | pagamento }} {{ botao_pagamento(c) }}</dd></div>
     <div><dt>Entrega</dt><dd>{{ c.tipo_entrega | entrega }}</dd></div>
     <div class="producao-card-prazo"><dt>Prazo</dt><dd><time datetime="{{ c.prazo_entrega.isoformat() }}">{{ c.prazo_entrega | data_curta }}</time></dd></div>
     {% if c.observacoes %}
-    <div class="producao-card-obs"><dt>Observações</dt><dd>{{ c.observacoes }}</dd></div>
+    <div class="producao-card-obs"><dt>Observações do pedido</dt><dd>{{ c.observacoes }}</dd></div>
     {% endif %}
   </dl>
   {% if c.imagem_caminho and not foto %}
   <p class="pedido-card-aviso">Foto indisponível no momento.</p>
   {% endif %}
+  <div class="producao-comentario">
+    <label for="comentario-{{ c.id }}">Comentários da produção</label>
+    <textarea id="comentario-{{ c.id }}" class="campo-texto producao-comentario-campo" rows="2"
+      maxlength="{{ limite_comentario }}" data-salvo="{{ c.comentario_producao or '' }}"
+      aria-describedby="comentario-{{ c.id }}-info">{{ c.comentario_producao or '' }}</textarea>
+    <div class="producao-comentario-rodape">
+      <p id="comentario-{{ c.id }}-info" class="producao-comentario-info">{{ auditoria }}</p>
+      <button type="button" class="botao botao-secundario producao-salvar-comentario">Salvar comentário</button>
+    </div>
+    <div class="producao-comentario-mensagem" aria-live="polite"></div>
+  </div>
   <div class="producao-card-acoes">
     <a class="botao botao-secundario" href="/pedidos/{{ c.id }}"
       aria-label="Ver pedido de {{ c.cliente_nome }}">Ver pedido</a>
@@ -47,6 +83,7 @@
       data-destino="{{ m.destino }}"
       aria-label="{{ m.texto }}: pedido de {{ c.cliente_nome }}">{{ m.texto }}</button>
     {% endfor %}
+  </div>
   </div>
 </li>
 {%- endmacro %}

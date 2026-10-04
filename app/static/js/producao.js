@@ -5,6 +5,11 @@
 // A etapa atual vai junto (etapa_esperada): se outro usuário já moveu o pedido, o servidor
 // responde "conflito" e o quadro é recarregado. Quem move é sempre o usuário da sessão.
 // "Entregue" pede confirmação. Nenhum dado é guardado no navegador.
+//
+// Cada card pode ser recolhido (só na tela: ao recarregar a página, volta aberto), tem o
+// comentário da produção (salvo à parte das observações do pedido) e o botão do status do
+// pagamento, que alterna entre Pendente e Pago. Comentário e pagamento seguem a mesma regra
+// do movimento: o valor atual vai junto e a tela só muda depois da confirmação do servidor.
 (function () {
   "use strict";
 
@@ -15,8 +20,19 @@
   const dialogo = document.getElementById("confirmar-entrega");
   const FALHA = "Não foi possível mover o pedido agora. Tente novamente.";
   const SESSAO = "Sua sessão expirou. Entre novamente para mover o pedido.";
+  const SESSAO_ALTERAR = "Sua sessão expirou. Entre novamente para salvar a alteração.";
+  const FALHA_COMENTARIO = "Não foi possível salvar o comentário agora. Tente novamente.";
+  const FALHA_PAGAMENTO = "Não foi possível alterar o pagamento agora. Tente novamente.";
+  // Ícones do selo do pagamento (os mesmos do servidor).
+  const ICONES_PAGAMENTO = {
+    pago: '<circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>',
+    pendente: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>',
+  };
   let arrastado = null;
   let ocupado = false;
+  // Cards recolhidos nesta visita (ids). Só em memória: o quadro atualizado mantém o estado,
+  // a página recarregada volta com tudo aberto.
+  const recolhidos = new Set();
 
   function quadro() {
     return document.getElementById("quadro");
@@ -34,8 +50,17 @@
     return card.querySelector('.producao-mover[data-destino="' + destino + '"]');
   }
 
-  // Foco previsível: avançar o mesmo card (ou "Ver pedido", se ele terminou).
+  function cardDoPedido(id) {
+    return quadro().querySelector('.producao-card[data-pedido="' + id + '"]');
+  }
+
+  // Foco previsível: avançar o mesmo card (ou "Ver pedido", se ele terminou); recolhido, o
+  // botão de expandir.
   function focoDoCard(card) {
+    if (card.classList.contains("recolhido")) {
+      card.querySelector(".producao-recolher").focus();
+      return;
+    }
     (botaoAvancar(card) || card.querySelector("a")).focus();
   }
 
@@ -116,6 +141,11 @@
       const novo = documento.getElementById("quadro");
       if (!resposta.ok || !novo) throw new Error("quadro indisponível");
       atual.replaceWith(document.importNode(novo, true));
+      recolhidos.forEach(function (id) {
+        const card = cardDoPedido(id);
+        if (card) definirRecolhido(card, true);
+        else recolhidos.delete(id);
+      });
       mensagem.replaceChildren();
       return true;
     } catch (erro) {
@@ -221,7 +251,7 @@
     if (corpo && corpo.erro === "conflito") {
       if (await recarregarQuadro()) {
         avisar(corpo.mensagem, "erro");
-        const recarregado = quadro().querySelector('.producao-card[data-pedido="' + card.dataset.pedido + '"]');
+        const recarregado = cardDoPedido(card.dataset.pedido);
         if (recarregado) focoDoCard(recarregado);
       }
       return;
@@ -230,9 +260,176 @@
     botao.focus();
   }
 
+  // ---------- Recolher e expandir ----------
+  function definirRecolhido(card, recolher) {
+    const botao = card.querySelector(".producao-recolher");
+    const texto = recolher ? "Expandir pedido" : "Recolher pedido";
+    card.classList.toggle("recolhido", recolher);
+    card.querySelector(".producao-card-corpo").hidden = recolher;
+    botao.setAttribute("aria-expanded", recolher ? "false" : "true");
+    botao.title = texto;
+    botao.querySelector(".visualmente-oculto").textContent = texto;
+    if (recolher) recolhidos.add(card.dataset.pedido);
+    else recolhidos.delete(card.dataset.pedido);
+  }
+
+  // ---------- Comentário da produção e status do pagamento ----------
+  // Envia o formulário com o token da página; devolve {corpo}, {sessao: true} (sessão
+  // expirada) ou {} (sem resposta).
+  async function enviar(caminho, dados) {
+    dados.csrf = quadro().dataset.csrf;
+    try {
+      const resposta = await fetch(caminho, {
+        method: "POST",
+        body: new URLSearchParams(dados),
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+        redirect: "manual",
+      });
+      if (resposta.type === "opaqueredirect") return { sessao: true };
+      return { corpo: await resposta.json() };
+    } catch (erro) {
+      return {};
+    }
+  }
+
+  // Mensagem do comentário, dentro do próprio card (status para sucesso, alert para erro).
+  function avisarNoCard(card, texto, tipo) {
+    const alerta = document.createElement("div");
+    alerta.className = "alerta " + (tipo === "erro" ? "alerta-erro" : "alerta-sucesso");
+    alerta.setAttribute("role", tipo === "erro" ? "alert" : "status");
+    alerta.textContent = texto;
+    card.querySelector(".producao-comentario-mensagem").replaceChildren(alerta);
+  }
+
+  async function salvarComentario(card) {
+    const campo = card.querySelector(".producao-comentario-campo");
+    const botao = card.querySelector(".producao-salvar-comentario");
+    if (botao.disabled) return;
+    const digitado = campo.value;
+    botao.disabled = true;
+    botao.textContent = "Salvando…";
+    card.querySelector(".producao-comentario-mensagem").replaceChildren();
+
+    const r = await enviar("/producao/" + card.dataset.pedido + "/comentario", {
+      comentario_esperado: campo.dataset.salvo,
+      comentario: digitado,
+    });
+
+    botao.disabled = false;
+    botao.textContent = "Salvar comentário";
+    const corpo = r.corpo;
+    if (corpo && corpo.ok) {
+      campo.dataset.salvo = corpo.comentario;
+      if (campo.value === digitado) campo.value = corpo.comentario; // sem espaços nas pontas
+      card.querySelector(".producao-comentario-info").textContent = corpo.auditoria;
+      avisarNoCard(card, corpo.mensagem, "sucesso");
+      return;
+    }
+    if (r.sessao) {
+      avisarNoCard(card, SESSAO_ALTERAR, "erro");
+      botao.focus();
+      return;
+    }
+    if (corpo && corpo.erro === "conflito") {
+      // O quadro volta com o comentário mais recente; o texto digitado continua no campo.
+      if (await recarregarQuadro()) {
+        const recarregado = cardDoPedido(card.dataset.pedido);
+        if (recarregado) {
+          if (recarregado.classList.contains("recolhido")) definirRecolhido(recarregado, false);
+          const novoCampo = recarregado.querySelector(".producao-comentario-campo");
+          novoCampo.value = digitado;
+          avisarNoCard(recarregado, corpo.mensagem, "erro");
+          novoCampo.focus();
+        } else {
+          avisar("Este pedido não está mais no quadro.", "erro");
+        }
+      }
+      return;
+    }
+    avisarNoCard(card, (corpo && corpo.mensagem) || FALHA_COMENTARIO, "erro");
+    botao.focus();
+  }
+
+  function mostrarPagamento(botao, dados) {
+    botao.dataset.status = dados.status;
+    botao.className = "selo-status selo-status-" + dados.status + " producao-pagamento";
+    botao.title = dados.acao;
+    botao.setAttribute("aria-label", dados.rotulo + ". " + dados.acao);
+    botao.querySelector("svg").innerHTML = ICONES_PAGAMENTO[dados.status];
+    botao.querySelector(".producao-pagamento-texto").textContent = dados.rotulo;
+  }
+
+  async function alternarPagamento(botao) {
+    if (botao.disabled) return;
+    const card = botao.closest(".producao-card");
+    const atual = botao.dataset.status;
+    botao.disabled = true;
+    botao.setAttribute("aria-busy", "true");
+
+    const r = await enviar("/producao/" + card.dataset.pedido + "/pagamento", {
+      status_esperado: atual,
+      novo_status: atual === "pago" ? "pendente" : "pago",
+    });
+
+    botao.disabled = false;
+    botao.removeAttribute("aria-busy");
+    const corpo = r.corpo;
+    if (corpo && corpo.ok) {
+      mostrarPagamento(botao, corpo);
+      avisar("Pedido de " + card.dataset.cliente + ": " + corpo.mensagem, "sucesso");
+      botao.focus();
+      return;
+    }
+    if (r.sessao) {
+      avisar(SESSAO_ALTERAR, "erro");
+      botao.focus();
+      return;
+    }
+    if (corpo && corpo.erro === "conflito") {
+      if (await recarregarQuadro()) {
+        avisar(corpo.mensagem, "erro");
+        const recarregado = cardDoPedido(card.dataset.pedido);
+        const novoBotao = recarregado && recarregado.querySelector(".producao-pagamento");
+        if (novoBotao && !recarregado.classList.contains("recolhido")) novoBotao.focus();
+      }
+      return;
+    }
+    avisar((corpo && corpo.mensagem) || FALHA_PAGAMENTO, "erro");
+    botao.focus();
+  }
+
   pagina.addEventListener("click", function (evento) {
     const botao = evento.target.closest(".producao-mover");
-    if (botao) mover(botao.closest(".producao-card"), botao.dataset.destino);
+    if (botao) {
+      mover(botao.closest(".producao-card"), botao.dataset.destino);
+      return;
+    }
+    const alternar = evento.target.closest(".producao-recolher");
+    if (alternar) {
+      const card = alternar.closest(".producao-card");
+      definirRecolhido(card, !card.classList.contains("recolhido"));
+      return;
+    }
+    const pagamento = evento.target.closest(".producao-pagamento");
+    if (pagamento) {
+      alternarPagamento(pagamento);
+      return;
+    }
+    const salvar = evento.target.closest(".producao-salvar-comentario");
+    if (salvar) salvarComentario(salvar.closest(".producao-card"));
+  });
+
+  // Enquanto o comentário está em edição, o card não é arrastável: selecionar texto com o
+  // mouse não pode virar arraste do card.
+  pagina.addEventListener("focusin", function (evento) {
+    if (!evento.target.classList.contains("producao-comentario-campo")) return;
+    evento.target.closest(".producao-card").removeAttribute("draggable");
+  });
+  pagina.addEventListener("focusout", function (evento) {
+    if (!evento.target.classList.contains("producao-comentario-campo")) return;
+    const card = evento.target.closest(".producao-card");
+    if (card.querySelector(".producao-mover")) card.setAttribute("draggable", "true");
   });
 
   // Foto que não carregou (URL expirada, arquivo removido): some, sem deixar espaço vazio.
@@ -270,6 +467,7 @@
   pagina.addEventListener("dragstart", function (evento) {
     const card = evento.target.closest && evento.target.closest(".producao-card[draggable]");
     if (!card || ocupado || !destinosDe(card).length) return;
+    if (evento.target.closest(".producao-comentario")) return; // texto do comentário, não o card
     arrastado = card;
     evento.dataTransfer.effectAllowed = "move";
     evento.dataTransfer.setData("text/plain", card.dataset.pedido);

@@ -232,7 +232,7 @@ def test_migration_confere_antes_de_alterar_e_nao_inventa_prazo():
 def test_migration_nao_altera_migrations_anteriores():
     migrations = sorted(p.name for p in (RAIZ / "supabase" / "migrations").glob("*.sql"))
 
-    assert migrations[-1] == MIGRATION.name
+    assert MIGRATION.name in migrations
     assert MIGRATION.name > "20261003120000_producao.sql"
 
 

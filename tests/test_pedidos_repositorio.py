@@ -474,3 +474,162 @@ def test_funcao_antiga_de_avanco_nao_e_mais_usada():
     codigo = Path(modulo.__file__).read_text(encoding="utf-8")
     assert "avancar_etapa_producao" not in codigo
     assert not hasattr(modulo.RepositorioPedidosSupabase, "avancar_etapa")
+
+
+# ---------- Comentário da produção e status do pagamento ----------
+
+
+def test_listar_producao_converte_o_comentario_e_a_auditoria():
+    from datetime import datetime
+
+    linha = {
+        **LINHA_LISTAGEM,
+        "etapa_producao": "fila_producao",
+        "tipo_entrega": "entrega",
+        "comentario_producao": "Pintar de azul",
+        "comentario_producao_atualizado_em": "2026-10-01T14:32:10.123456",
+        "comentario_producao_atualizado_por_nome": "Kassia",
+    }
+    cliente = ClienteSimulado(rpc={"listar_producao": [linha]})
+
+    (c,) = RepositorioPedidosSupabase(cliente).listar_producao()
+
+    assert c.comentario_producao == "Pintar de azul"
+    assert c.comentario_atualizado_em == datetime(2026, 10, 1, 14, 32, 10, 123456)
+    assert c.comentario_atualizado_por_nome == "Kassia"
+    assert c.observacoes == LINHA_LISTAGEM["observacoes"]  # campos separados
+
+
+def test_listar_producao_sem_a_migration_dos_comentarios_abre_sem_comentario():
+    linha = {**LINHA_LISTAGEM, "etapa_producao": "fila_producao", "tipo_entrega": "entrega"}
+    cliente = ClienteSimulado(rpc={"listar_producao": [linha]})
+
+    (c,) = RepositorioPedidosSupabase(cliente).listar_producao()
+
+    assert c.comentario_producao is None and c.comentario_atualizado_em is None
+    assert c.comentario_atualizado_por_nome is None
+
+
+def test_salvar_comentario_envia_os_parametros_e_le_a_resposta():
+    from datetime import datetime
+
+    resposta = {
+        "id": 7,
+        "comentario_producao": "Novo",
+        "comentario_producao_atualizado_em": "2026-10-01T10:00:00",
+        "comentario_producao_atualizado_por_nome": "Leandro",
+    }
+    cliente = ClienteSimulado(rpc={"atualizar_comentario_producao": resposta})
+
+    salvo = RepositorioPedidosSupabase(cliente).salvar_comentario_producao(7, None, "Novo", 1)
+
+    assert cliente.chamadas == [
+        (
+            "rpc",
+            (
+                "atualizar_comentario_producao",
+                {
+                    "p_pedido_id": 7,
+                    "p_comentario_esperado": None,
+                    "p_novo_comentario": "Novo",
+                    "p_usuario_id": 1,
+                },
+            ),
+        )
+    ]
+    assert (salvo.id, salvo.comentario, salvo.atualizado_por_nome) == (7, "Novo", "Leandro")
+    assert salvo.atualizado_em == datetime(2026, 10, 1, 10, 0)
+
+
+def test_comentario_removido_volta_como_none():
+    resposta = {
+        "id": 7,
+        "comentario_producao": None,
+        "comentario_producao_atualizado_em": "2026-10-01T10:00:00",
+        "comentario_producao_atualizado_por_nome": "Leandro",
+    }
+    cliente = ClienteSimulado(rpc={"atualizar_comentario_producao": resposta})
+
+    salvo = RepositorioPedidosSupabase(cliente).salvar_comentario_producao(7, "Velho", None, 1)
+
+    assert salvo.comentario is None
+
+
+def test_alterar_pagamento_envia_os_parametros_e_le_a_resposta():
+    resposta = {
+        "id": 7,
+        "status_pagamento": "pago",
+        "pagamento_atualizado_em": "2026-10-01T10:00:00",
+        "pagamento_atualizado_por_nome": "Kassia",
+    }
+    cliente = ClienteSimulado(rpc={"alterar_status_pagamento": resposta})
+
+    alterado = RepositorioPedidosSupabase(cliente).alterar_status_pagamento(
+        7, "pendente", "pago", 2
+    )
+
+    assert cliente.chamadas == [
+        (
+            "rpc",
+            (
+                "alterar_status_pagamento",
+                {
+                    "p_pedido_id": 7,
+                    "p_status_esperado": "pendente",
+                    "p_novo_status": "pago",
+                    "p_usuario_id": 2,
+                },
+            ),
+        )
+    ]
+    assert (alterado.id, alterado.status_pagamento, alterado.atualizado_por_nome) == (
+        7,
+        "pago",
+        "Kassia",
+    )
+
+
+ALTERACOES = [
+    ("atualizar_comentario_producao", "salvar_comentario_producao", (1, None, "x", 1)),
+    ("alterar_status_pagamento", "alterar_status_pagamento", (1, "pendente", "pago", 1)),
+]
+
+
+@pytest.mark.parametrize(("funcao", "metodo", "argumentos"), ALTERACOES)
+@pytest.mark.parametrize(
+    ("codigo", "motivo"),
+    [
+        ("PT409", "conflito"),
+        ("PT422", "invalido"),
+        ("PT404", "nao_encontrado"),
+        ("PT403", "usuario"),
+    ],
+)
+def test_alteracoes_traduzem_os_codigos_do_banco(funcao, metodo, argumentos, codigo, motivo):
+    from app.pedidos_repositorio import AlteracaoRecusada
+
+    cliente = ClienteSimulado(rpc={funcao: APIError({"message": "x", "code": codigo})})
+
+    with pytest.raises(AlteracaoRecusada) as recusa:
+        getattr(RepositorioPedidosSupabase(cliente), metodo)(*argumentos)
+
+    assert recusa.value.motivo == motivo
+
+
+@pytest.mark.parametrize(("funcao", "metodo", "argumentos"), ALTERACOES)
+@pytest.mark.parametrize(
+    "erro",
+    [
+        APIError({"message": "x", "code": "PGRST202"}),  # função ausente (migration pendente)
+        APIError({"message": "x", "code": "23514"}),
+        ConnectionError("sem rede"),
+        {"formato": "inesperado"},  # resposta sem os campos esperados
+    ],
+)
+def test_alteracoes_com_outras_falhas_viram_falha_ao_alterar(funcao, metodo, argumentos, erro):
+    from app.pedidos_repositorio import FalhaAoAlterar
+
+    cliente = ClienteSimulado(rpc={funcao: erro})
+
+    with pytest.raises(FalhaAoAlterar):
+        getattr(RepositorioPedidosSupabase(cliente), metodo)(*argumentos)

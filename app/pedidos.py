@@ -76,6 +76,22 @@ def movimento_permitido(atual: str, nova: str) -> bool:
     return any(m.destino == nova for m in MOVIMENTOS_ETAPA.get(atual, []))
 
 
+# Status do pagamento na Produção: alterna entre os dois valores (os mesmos da função
+# alterar_status_pagamento do banco). Status atual -> (novo status, ação do botão).
+ALTERNANCIA_PAGAMENTO = {
+    "pendente": ("pago", "Marcar pagamento como pago"),
+    "pago": ("pendente", "Marcar pagamento como pendente"),
+}
+
+# Comentários da produção: o mesmo limite na tela, no servidor e no banco.
+LIMITE_COMENTARIO = 2000
+
+
+def normalizar_comentario(texto: str) -> str | None:
+    """Quebras de linha como \\n, sem espaços nas pontas; vazio vira None."""
+    return texto.replace("\r\n", "\n").replace("\r", "\n").strip() or None
+
+
 # Imagem de referência do item: opcional, uma por item, PNG/JPEG/WebP até 10 MB.
 LIMITE_IMAGEM_MB = 10
 LIMITE_IMAGEM_BYTES = LIMITE_IMAGEM_MB * 1024 * 1024

@@ -1803,6 +1803,13 @@ main {
 }
 
 /* ---------- Produção (quadro Kanban) ---------- */
+/* Largura própria da Produção, maior que a das outras telas (o .container delas não muda):
+   quase toda a janela, com margens laterais seguras. */
+.container-producao {
+  max-width: 1920px;
+  padding: 0 clamp(var(--espaco), 2vw, 2rem);
+}
+
 .producao { padding-bottom: calc(var(--espaco) * 2); }
 
 .producao-mensagem { margin-bottom: var(--espaco); }
@@ -1927,6 +1934,7 @@ main {
 }
 
 .producao-card-topo h3 {
+  flex: 1;
   min-width: 0;
   margin: 0;
   font-size: 1rem;
@@ -1978,6 +1986,115 @@ main {
 
 .producao-card .pedido-card-aviso { margin: 0; }
 
+/* Recolher/expandir: só o estado na tela (nada é gravado). Recolhido mostra cliente,
+   produtos e unidades; o restante (corpo e foto) fica oculto. */
+.producao-card-corpo {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.producao-recolher {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--alvo-toque);
+  height: var(--alvo-toque);
+  margin: -0.45rem -0.45rem -0.45rem 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--raio-campo);
+  background: transparent;
+  color: var(--cor-texto);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.producao-recolher:hover {
+  border-color: var(--cor-borda-campo);
+  background: var(--cor-selecao-fundo);
+}
+
+.producao-recolher svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s;
+}
+
+.producao-recolher[aria-expanded="false"] svg { transform: rotate(180deg); }
+
+.producao-card.recolhido .producao-card-foto { display: none; }
+
+.producao-recolher:focus-visible,
+.producao-pagamento:focus-visible {
+  outline: 3px solid var(--cor-foco);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 7px var(--cor-foco-halo);
+}
+
+/* Status do pagamento como botão: o mesmo selo, clicável */
+.producao-pagamento {
+  min-width: var(--alvo-toque);
+  min-height: var(--alvo-toque);
+  justify-content: center;
+  margin-left: 0.15rem;
+  font-family: inherit;
+  cursor: pointer;
+  vertical-align: middle;
+  transition: filter 0.15s;
+}
+
+.producao-pagamento:hover { filter: brightness(0.94); }
+
+.producao-pagamento:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* Comentários da produção (separados das observações do pedido) */
+.producao-comentario {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.producao-comentario label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--cor-texto-suave);
+}
+
+.producao-comentario-campo {
+  min-height: 4.2rem;
+  font-size: 0.9rem;
+}
+
+.producao-comentario-rodape {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem 0.6rem;
+}
+
+.producao-comentario-info {
+  flex: 1 1 10rem;
+  margin: 0;
+  color: var(--cor-texto-suave);
+  font-size: 0.75rem;
+}
+
+.producao-comentario-info:empty { display: none; }
+
+.producao-comentario-mensagem { font-size: 0.85rem; }
+.producao-comentario-mensagem:empty { display: none; }
+.producao-comentario-mensagem .alerta { margin: 0; padding: 0.45rem 0.65rem; }
+
 .producao-card-acoes {
   display: flex;
   flex-wrap: wrap;
@@ -2006,7 +2123,8 @@ main {
 .confirmar-entrega p { margin: 0 0 var(--espaco); }
 .confirmar-entrega .pagina-topo-acoes { justify-content: flex-end; }
 
-@media (min-width: 700px) {
+/* Tablet (768 a 1023 px): duas colunas; abaixo disso, as etapas ficam empilhadas */
+@media (min-width: 768px) {
   .quadro { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -2028,6 +2146,18 @@ main {
 
   /* Coluna sem cards: o aviso fica logo abaixo do cabeçalho */
   .coluna:has(.coluna-vazia:not([hidden])) .coluna-cards { flex: none; }
+}
+
+/* Telas largas: mais espaço entre as colunas e dentro delas */
+@media (min-width: 1600px) {
+  .quadro { gap: 1rem; }
+
+  .coluna { padding: 0.75rem; }
+}
+
+/* Toque: o selo do pagamento ganha a altura mínima de alvo */
+@media (pointer: coarse) {
+  .producao-pagamento { min-height: var(--alvo-toque); }
 }
 
 /* Sem movimento para quem prefere assim */

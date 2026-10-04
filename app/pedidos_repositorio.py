@@ -1,7 +1,8 @@
 """Pedidos no Supabase (banco e Storage), com a chave secreta, só no servidor.
 
 Gravação e leitura passam por funções do banco (reservar_id_pedido, criar_pedido,
-listar_pedidos, consultar_pedido, listar_producao e mover_etapa_producao); as tabelas não
+listar_pedidos, consultar_pedido, listar_producao, mover_etapa_producao,
+atualizar_comentario_producao e alterar_status_pagamento); as tabelas não
 têm acesso direto. As imagens ficam no
 bucket privado pedido-imagens, o banco guarda somente o caminho do arquivo e a tela de
 detalhes recebe URLs assinadas temporárias.
@@ -38,6 +39,22 @@ class MovimentoInvalido(Exception):
 
 class FalhaAoMover(Exception):
     """O banco não respondeu (ou recusou por outro motivo) a mudança de etapa."""
+
+
+class AlteracaoRecusada(Exception):
+    """O banco recusou o comentário ou o pagamento por um motivo conhecido.
+
+    motivo: "conflito" (PT409, outro usuário alterou antes), "invalido" (PT422),
+    "nao_encontrado" (PT404) ou "usuario" (PT403).
+    """
+
+    def __init__(self, motivo: str):
+        super().__init__(motivo)
+        self.motivo = motivo
+
+
+class FalhaAoAlterar(Exception):
+    """O banco não respondeu (ou recusou por outro motivo) o comentário ou o pagamento."""
 
 
 class FalhaAoGravar(Exception):
@@ -137,6 +154,10 @@ class CardProducao:
     # Foto de destaque: mesma regra da listagem de pedidos.
     imagem_caminho: str | None = None
     imagem_produto: str | None = None
+    # Comentário da produção (separado das observações) e sua última atualização.
+    comentario_producao: str | None = None
+    comentario_atualizado_em: datetime | None = None  # horário de Brasília
+    comentario_atualizado_por_nome: str | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +165,31 @@ class EtapaAtualizada:
     id: int
     etapa: str
     atualizada_por_nome: str
+
+
+@dataclass(frozen=True)
+class ComentarioAtualizado:
+    id: int
+    comentario: str | None
+    atualizado_em: datetime  # horário de Brasília
+    atualizado_por_nome: str
+
+
+@dataclass(frozen=True)
+class PagamentoAtualizado:
+    id: int
+    status_pagamento: str
+    atualizado_em: datetime  # horário de Brasília
+    atualizado_por_nome: str
+
+
+# Códigos de erro das funções atualizar_comentario_producao e alterar_status_pagamento.
+MOTIVOS_RECUSA = {
+    "PT409": "conflito",
+    "PT422": "invalido",
+    "PT404": "nao_encontrado",
+    "PT403": "usuario",
+}
 
 
 class RepositorioPedidos(Protocol):
@@ -171,6 +217,21 @@ class RepositorioPedidos(Protocol):
         self, pedido_id: int, etapa_esperada: str, nova_etapa: str, usuario_id: int
     ) -> EtapaAtualizada:
         """Move para uma etapa permitida (ConflitoDeEtapa, MovimentoInvalido ou FalhaAoMover)."""
+
+    def salvar_comentario_producao(
+        self,
+        pedido_id: int,
+        comentario_esperado: str | None,
+        novo_comentario: str | None,
+        usuario_id: int,
+    ) -> ComentarioAtualizado:
+        """Grava o comentário se o atual for o esperado (AlteracaoRecusada ou FalhaAoAlterar)."""
+
+    def alterar_status_pagamento(
+        self, pedido_id: int, status_esperado: str, novo_status: str, usuario_id: int
+    ) -> PagamentoAtualizado:
+        """Alterna pendente <-> pago se o atual for o esperado (AlteracaoRecusada ou
+        FalhaAoAlterar)."""
 
 
 class RepositorioPedidosSupabase:
@@ -332,6 +393,15 @@ class RepositorioPedidosSupabase:
                     observacoes=linha["observacoes"],
                     imagem_caminho=linha["imagem_caminho"],
                     imagem_produto=linha["imagem_produto"],
+                    # .get: com o banco ainda sem a migration dos comentários, o quadro abre
+                    # (sem comentários) em vez de ficar indisponível.
+                    comentario_producao=linha.get("comentario_producao"),
+                    comentario_atualizado_em=_data_hora(
+                        linha.get("comentario_producao_atualizado_em")
+                    ),
+                    comentario_atualizado_por_nome=linha.get(
+                        "comentario_producao_atualizado_por_nome"
+                    ),
                 )
                 for linha in linhas or []
             ]
@@ -367,6 +437,69 @@ class RepositorioPedidosSupabase:
         except Exception as erro:
             logger.error("Falha ao mudar a etapa no Supabase: %s", type(erro).__name__)
             raise FalhaAoMover from None
+
+    def _alterar(self, funcao: str, parametros: dict, converter):
+        """Chama a função do banco e traduz os códigos PT4xx; o resto vira FalhaAoAlterar."""
+        from postgrest.exceptions import APIError
+
+        try:
+            return converter(self._c.rpc(funcao, parametros).execute().data)
+        except APIError as erro:
+            if erro.code in MOTIVOS_RECUSA:
+                raise AlteracaoRecusada(MOTIVOS_RECUSA[erro.code]) from None
+            logger.error("Supabase recusou %s: %s", funcao, erro.code)
+            raise FalhaAoAlterar from None
+        except Exception as erro:
+            logger.error("Falha ao executar %s no Supabase: %s", funcao, type(erro).__name__)
+            raise FalhaAoAlterar from None
+
+    def salvar_comentario_producao(
+        self,
+        pedido_id: int,
+        comentario_esperado: str | None,
+        novo_comentario: str | None,
+        usuario_id: int,
+    ) -> ComentarioAtualizado:
+        parametros = {
+            "p_pedido_id": pedido_id,
+            "p_comentario_esperado": comentario_esperado,
+            "p_novo_comentario": novo_comentario,
+            "p_usuario_id": usuario_id,
+        }
+        return self._alterar(
+            "atualizar_comentario_producao",
+            parametros,
+            lambda dados: ComentarioAtualizado(
+                id=dados["id"],
+                comentario=dados["comentario_producao"],
+                atualizado_em=datetime.fromisoformat(dados["comentario_producao_atualizado_em"]),
+                atualizado_por_nome=dados["comentario_producao_atualizado_por_nome"],
+            ),
+        )
+
+    def alterar_status_pagamento(
+        self, pedido_id: int, status_esperado: str, novo_status: str, usuario_id: int
+    ) -> PagamentoAtualizado:
+        parametros = {
+            "p_pedido_id": pedido_id,
+            "p_status_esperado": status_esperado,
+            "p_novo_status": novo_status,
+            "p_usuario_id": usuario_id,
+        }
+        return self._alterar(
+            "alterar_status_pagamento",
+            parametros,
+            lambda dados: PagamentoAtualizado(
+                id=dados["id"],
+                status_pagamento=dados["status_pagamento"],
+                atualizado_em=datetime.fromisoformat(dados["pagamento_atualizado_em"]),
+                atualizado_por_nome=dados["pagamento_atualizado_por_nome"],
+            ),
+        )
+
+
+def _data_hora(texto: str | None) -> datetime | None:
+    return datetime.fromisoformat(texto) if texto else None
 
 
 @lru_cache

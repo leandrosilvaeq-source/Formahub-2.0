@@ -5,16 +5,20 @@ Falhas podem ser simuladas por etapa com `falhar_em`.
 As URLs assinadas são falsas (domínio de exemplo) e só existem para arquivos guardados.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
-from app.pedidos import movimento_permitido
+from app.pedidos import ALTERNANCIA_PAGAMENTO, LIMITE_COMENTARIO, movimento_permitido
 from app.pedidos_repositorio import (
+    AlteracaoRecusada,
     CardProducao,
+    ComentarioAtualizado,
     ConflitoDeEtapa,
     EtapaAtualizada,
     FalhaAoGravar,
     ItemConsultado,
     MovimentoInvalido,
+    PagamentoAtualizado,
     PedidoConsultado,
     PedidoParaGravar,
     PedidoResumo,
@@ -38,6 +42,11 @@ class RepositorioPedidosMemoria:
         # Produção: etapa de cada pedido e cada movimento feito (pedido, de, para, usuário).
         self.etapas: dict[int, str] = {}
         self.movimentos: list[tuple[int, str, str, int]] = []
+        # Comentário da produção de cada pedido: (texto, quando, usuário que atualizou).
+        self.comentarios: dict[int, tuple[str | None, datetime, int]] = {}
+        # Cada alteração feita: (pedido, de, para, usuário).
+        self.alteracoes_comentario: list[tuple[int, str | None, str | None, int]] = []
+        self.alteracoes_pagamento: list[tuple[int, str, str, int]] = []
         self._envios = 0
 
     def _talvez_falhar(self, etapa: str) -> None:
@@ -185,9 +194,20 @@ class RepositorioPedidosMemoria:
                     observacoes=p.observacoes,
                     imagem_caminho=destaque.imagem_caminho if destaque else None,
                     imagem_produto=destaque.produto if destaque else None,
+                    **self._comentario_do_card(p.id),
                 )
             )
         return cards
+
+    def _comentario_do_card(self, pedido_id: int) -> dict:
+        if pedido_id not in self.comentarios:
+            return {}
+        texto, quando, usuario = self.comentarios[pedido_id]
+        return {
+            "comentario_producao": texto,
+            "comentario_atualizado_em": quando,
+            "comentario_atualizado_por_nome": USUARIOS[usuario],
+        }
 
     def mover_etapa(
         self, pedido_id: int, etapa_esperada: str, nova_etapa: str, usuario_id: int
@@ -204,3 +224,45 @@ class RepositorioPedidosMemoria:
         self.etapas[pedido_id] = nova_etapa
         self.movimentos.append((pedido_id, atual, nova_etapa, usuario_id))
         return EtapaAtualizada(pedido_id, nova_etapa, USUARIOS[usuario_id])
+
+    # ---------- Comentário e pagamento (mesmas regras das funções do banco) ----------
+
+    def _conferir(self, pedido_id: int, usuario_id: int) -> None:
+        if usuario_id not in USUARIOS:
+            raise AlteracaoRecusada("usuario")
+        if pedido_id not in self.pedidos:
+            raise AlteracaoRecusada("nao_encontrado")
+
+    def salvar_comentario_producao(
+        self,
+        pedido_id: int,
+        comentario_esperado: str | None,
+        novo_comentario: str | None,
+        usuario_id: int,
+    ) -> ComentarioAtualizado:
+        self._talvez_falhar("salvar_comentario")
+        self._conferir(pedido_id, usuario_id)
+        novo = (novo_comentario or "").strip() or None
+        if novo is not None and len(novo) > LIMITE_COMENTARIO:
+            raise AlteracaoRecusada("invalido")
+        atual = self.comentarios.get(pedido_id, (None,))[0]
+        if atual != comentario_esperado:
+            raise AlteracaoRecusada("conflito")
+        quando = self.relogio
+        self.comentarios[pedido_id] = (novo, quando, usuario_id)
+        self.alteracoes_comentario.append((pedido_id, atual, novo, usuario_id))
+        return ComentarioAtualizado(pedido_id, novo, quando, USUARIOS[usuario_id])
+
+    def alterar_status_pagamento(
+        self, pedido_id: int, status_esperado: str, novo_status: str, usuario_id: int
+    ) -> PagamentoAtualizado:
+        self._talvez_falhar("alterar_pagamento")
+        self._conferir(pedido_id, usuario_id)
+        if ALTERNANCIA_PAGAMENTO.get(status_esperado, ("",))[0] != novo_status:
+            raise AlteracaoRecusada("invalido")
+        pedido = self.pedidos[pedido_id]
+        if pedido.status_pagamento != status_esperado:
+            raise AlteracaoRecusada("conflito")
+        self.pedidos[pedido_id] = replace(pedido, status_pagamento=novo_status)
+        self.alteracoes_pagamento.append((pedido_id, status_esperado, novo_status, usuario_id))
+        return PagamentoAtualizado(pedido_id, novo_status, self.relogio, USUARIOS[usuario_id])

@@ -18,10 +18,12 @@ from app.auth.rotas import (
 )
 from app.auth.rotas import router as rotas_auth
 from app.pedidos import (
+    ALTERNANCIA_PAGAMENTO,
     ESCOLHA_OBRIGATORIA,
     ETAPAS_PRODUCAO,
     FORMAS_ENTREGA,
     FORMAS_PAGAMENTO,
+    LIMITE_COMENTARIO,
     LIMITE_IMAGEM_BYTES,
     MOVIMENTOS_ETAPA,
     ROTULOS_ENTREGA,
@@ -37,11 +39,14 @@ from app.pedidos import (
     gravar_pedido,
     ler_formulario,
     movimento_permitido,
+    normalizar_comentario,
     pedido_vazio,
     validar,
 )
 from app.pedidos_repositorio import (
+    AlteracaoRecusada,
     ConflitoDeEtapa,
+    FalhaAoAlterar,
     FalhaAoConsultar,
     FalhaAoMover,
     MovimentoInvalido,
@@ -272,6 +277,8 @@ def producao(request: Request, repo: RepositorioPedidos | None = Depends(get_rep
         "imagens": {},
         "total": 0,
         "movimentos": MOVIMENTOS_ETAPA,
+        "alternancia_pagamento": ALTERNANCIA_PAGAMENTO,
+        "limite_comentario": LIMITE_COMENTARIO,
         "erro": "",
     }
     try:
@@ -298,7 +305,11 @@ def producao(request: Request, repo: RepositorioPedidos | None = Depends(get_rep
 
 
 def _resposta_movimento(motivo: str) -> JSONResponse:
-    status, mensagem = MOVIMENTO[motivo]
+    return _resposta_erro(MOVIMENTO, motivo)
+
+
+def _resposta_erro(mensagens: dict, motivo: str) -> JSONResponse:
+    status, mensagem = mensagens[motivo]
     return JSONResponse(
         {"ok": False, "erro": motivo, "mensagem": mensagem},
         status_code=status,
@@ -347,6 +358,136 @@ async def mover_producao(
                 {"destino": m.destino, "texto": m.texto, "retorno": m.retorno}
                 for m in MOVIMENTOS_ETAPA.get(atualizada.etapa, [])
             ],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# ---------- Produção: comentário e pagamento ----------
+
+ALTERACAO = {
+    "nao_encontrado": (404, "Este pedido não foi encontrado. Recarregue a página."),
+    "usuario": (403, "Seu usuário não pode fazer esta alteração."),
+    "expirada": MOVIMENTO["expirada"],
+}
+COMENTARIO = {
+    **ALTERACAO,
+    "conflito": (
+        409,
+        "O comentário deste pedido foi alterado por outro usuário. "
+        "O quadro foi atualizado; seu texto continua no campo para você conferir.",
+    ),
+    "invalido": (
+        422,
+        f"O comentário pode ter no máximo {LIMITE_COMENTARIO:,} caracteres.".replace(",", "."),
+    ),
+    "indisponivel": (503, "Não foi possível salvar o comentário agora. Tente novamente."),
+}
+PAGAMENTO = {
+    **ALTERACAO,
+    "conflito": (409, "O pagamento deste pedido foi alterado por outro usuário."),
+    "invalido": (422, "Esta alteração de pagamento não é permitida."),
+    "indisponivel": (503, "Não foi possível alterar o pagamento agora. Tente novamente."),
+}
+
+
+def texto_auditoria(nome: str | None, momento) -> str:
+    """'Atualizado por Kassia em 01/10/2026 às 14:32' (vazio se nunca foi atualizado)."""
+    if not nome or momento is None:
+        return ""
+    return f"Atualizado por {nome} em {momento.strftime('%d/%m/%Y às %H:%M')}"
+
+
+templates.env.globals["texto_auditoria"] = texto_auditoria
+
+
+def _pedido_da_url(request: Request, pedido_id: str, csrf: str) -> str | None:
+    """Motivo da recusa antes de chegar ao banco (página expirada ou id inválido), ou None."""
+    if not origem_confiavel(request) or not sessoes.csrf_valido(request.state.csrf, csrf):
+        return "expirada"
+    if not ID_PEDIDO.fullmatch(pedido_id):
+        return "nao_encontrado"
+    return None
+
+
+@app.post("/producao/{pedido_id}/comentario")
+async def salvar_comentario_producao(
+    request: Request,
+    pedido_id: str,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    async with request.form() as formulario:
+        # Só estes campos; qualquer usuário enviado pelo navegador é ignorado: quem comenta é
+        # sempre o usuário da sessão.
+        csrf = str(formulario.get("csrf", ""))
+        esperado = normalizar_comentario(str(formulario.get("comentario_esperado", "")))
+        novo = normalizar_comentario(str(formulario.get("comentario", "")))
+
+    motivo = _pedido_da_url(request, pedido_id, csrf)
+    if motivo is None and novo is not None and len(novo) > LIMITE_COMENTARIO:
+        motivo = "invalido"
+    if motivo:
+        return _resposta_erro(COMENTARIO, motivo)
+
+    try:
+        if repo is None:
+            raise FalhaAoAlterar
+        salvo = repo.salvar_comentario_producao(int(pedido_id), esperado, novo, usuario.id)
+    except AlteracaoRecusada as recusa:
+        return _resposta_erro(COMENTARIO, recusa.motivo)
+    except FalhaAoAlterar:
+        return _resposta_erro(COMENTARIO, "indisponivel")
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "pedido_id": salvo.id,
+            "comentario": salvo.comentario or "",
+            "auditoria": texto_auditoria(salvo.atualizado_por_nome, salvo.atualizado_em),
+            "mensagem": "Comentário salvo." if salvo.comentario else "Comentário removido.",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/producao/{pedido_id}/pagamento")
+async def alterar_pagamento_producao(
+    request: Request,
+    pedido_id: str,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    async with request.form() as formulario:
+        # Quem altera é sempre o usuário da sessão (nenhum usuário do navegador é lido).
+        csrf = str(formulario.get("csrf", ""))
+        esperado = str(formulario.get("status_esperado", ""))
+        novo = str(formulario.get("novo_status", ""))
+
+    motivo = _pedido_da_url(request, pedido_id, csrf)
+    if motivo is None and ALTERNANCIA_PAGAMENTO.get(esperado, ("",))[0] != novo:
+        motivo = "invalido"
+    if motivo:
+        return _resposta_erro(PAGAMENTO, motivo)
+
+    try:
+        if repo is None:
+            raise FalhaAoAlterar
+        alterado = repo.alterar_status_pagamento(int(pedido_id), esperado, novo, usuario.id)
+    except AlteracaoRecusada as recusa:
+        return _resposta_erro(PAGAMENTO, recusa.motivo)
+    except FalhaAoAlterar:
+        return _resposta_erro(PAGAMENTO, "indisponivel")
+
+    status = alterado.status_pagamento
+    return JSONResponse(
+        {
+            "ok": True,
+            "pedido_id": alterado.id,
+            "status": status,
+            "rotulo": ROTULOS_STATUS[status],
+            "acao": ALTERNANCIA_PAGAMENTO[status][1],
+            "mensagem": f"Pagamento marcado como {ROTULOS_STATUS[status].lower()}.",
         },
         headers={"Cache-Control": "no-store"},
     )

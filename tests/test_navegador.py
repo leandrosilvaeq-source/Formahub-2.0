@@ -667,7 +667,8 @@ CORTES = """
     const rola = /(auto|scroll|hidden|clip)/.test(o.overflowX + o.overflowY);
     // O nome do arquivo termina em reticências de propósito (o texto completo está no title).
     const cortado = el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1;
-    if (rola && cortado && !el.classList.contains('upload-nome'))
+    // Textarea rola por dentro por natureza (e o usuário pode redimensioná-lo).
+    if (rola && cortado && el.tagName !== 'TEXTAREA' && !el.classList.contains('upload-nome'))
       ruins.push(nome + ' com conteúdo cortado');
   });
   return ruins;
@@ -2196,3 +2197,474 @@ def test_falha_ao_recarregar_mostra_tentar_novamente(pagina, servidor, repo_pedi
     pagina.clicar(".producao-tentar")
     esperar(lambda: etapa_na_tela(pagina, pedido.id) == "em_producao")
     assert not pagina.js("!!document.querySelector('.producao-tentar')")
+
+
+# ---------- Produção: largura, recolher, comentário e pagamento (repositório falso) ----------
+
+
+def tecla(p, nome, codigo, vk, texto=None):
+    dados = {"key": nome, "code": codigo, "windowsVirtualKeyCode": vk}
+    p.cmd("Input.dispatchKeyEvent", type="rawKeyDown", **dados)
+    if texto:
+        p.cmd("Input.dispatchKeyEvent", type="char", text=texto)
+    p.cmd("Input.dispatchKeyEvent", type="keyUp", **dados)
+
+
+def linhas_e_colunas(p):
+    """Quantas colunas do quadro ficam em cada linha da tela (pelo topo de cada uma)."""
+    topos = p.js(
+        "[...document.querySelectorAll('.coluna')]"
+        ".map(c => Math.round(c.getBoundingClientRect().top))"
+    )
+    return [topos.count(t) for t in sorted(set(topos))]
+
+
+def lento(repo, metodo, segundos=0.6):
+    """Atrasa a resposta do repositório falso para observar a tela durante a operação."""
+    original = getattr(repo, metodo)
+
+    def atrasado(*args):
+        time.sleep(segundos)
+        return original(*args)
+
+    setattr(repo, metodo, atrasado)
+
+
+def momento_exemplo():
+    from datetime import datetime
+
+    return datetime(2026, 10, 1, 14, 32)
+
+
+@pytest.mark.parametrize(
+    ("largura", "esperado"),
+    [(360, [1, 1, 1, 1]), (768, [2, 2]), (1000, [2, 2]), (1024, [4]), (1280, [4]), (1920, [4])],
+)
+def test_producao_colunas_por_largura(pagina, servidor, repo_pedidos, largura, esperado):
+    pedidos_producao(repo_pedidos, servidor, 2)
+    pagina.tela(largura, 800)
+    pagina.abrir("/producao")
+
+    assert linhas_e_colunas(pagina) == esperado
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1280, 1920, 2560])
+def test_producao_larga_sem_rolagem_horizontal(pagina, servidor, repo_pedidos, largura):
+    pedidos = pedidos_producao(repo_pedidos, servidor, 3)
+    repo_pedidos.etapas[pedidos[1].id] = "em_producao"
+    repo_pedidos.comentarios[pedidos[0].id] = ("Comentário comprido " * 3, momento_exemplo(), 2)
+    pagina.tela(largura, 900)
+    pagina.abrir("/producao")
+
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    esquerda, direita = pagina.js(
+        "(() => { const r = document.getElementById('quadro').getBoundingClientRect();"
+        " return [r.left, window.innerWidth - r.right] })()"
+    )
+    assert esquerda >= 15.5 and direita >= 15.5  # margens laterais seguras
+    cortes = pagina.js(CORTES.replace("LIMITE_VERTICAL", "false"))
+    assert [c for c in cortes if not c.startswith("OL.coluna-cards")] == []
+
+
+def test_producao_usa_quase_toda_a_largura_e_as_outras_telas_nao(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    largura_main = "document.querySelector('main').getBoundingClientRect().width"
+
+    pagina.tela(1920, 900)
+    pagina.abrir("/producao")
+    quadro_1920 = pagina.js("document.getElementById('quadro').getBoundingClientRect().width")
+    pagina.tela(2560, 900)
+    pagina.abrir("/producao")
+    main_2560 = pagina.js(largura_main)
+    larguras = {}
+    for caminho in ("/pedidos", "/pedidos/novo", f"/pedidos/{pedido.id}"):
+        pagina.abrir(caminho)
+        larguras[caminho] = pagina.js(largura_main)
+
+    assert quadro_1920 >= 1920 - 2 * 40  # quase toda a janela
+    assert main_2560 == 1920  # largura máxima da Produção
+    assert all(valor <= 1080 for valor in larguras.values()), larguras
+
+
+def test_recolher_e_expandir_cada_card(pagina, servidor, repo_pedidos):
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    foto = com_imagem(repo_pedidos, 1, 1)
+    primeiro = novo_pedido(
+        repo_pedidos,
+        cliente="Ana",
+        itens=[item(1, "Caneca", 2, "1.00", foto), item(2, "Copo", 3, "1.00")],
+        observacoes="Observação original",
+    )
+    segundo = novo_pedido(repo_pedidos, cliente="Bia")
+    repo_pedidos.comentarios[primeiro.id] = ("Pintar de azul", momento_exemplo(), 2)
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    escritas = repo_pedidos.escritas
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    card = card_js(primeiro.id)
+    botao = f"{card}.querySelector('.producao-recolher')"
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+    assert pagina.js(f"{botao}.getAttribute('aria-controls')") == f"card-corpo-{primeiro.id}"
+    assert pagina.js(f"{botao}.textContent.trim()") == "Recolher pedido"
+
+    pagina.js(f"{botao}.click()")
+
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    assert pagina.js(f"{botao}.textContent.trim()") == "Expandir pedido"
+    assert pagina.js(f"{botao}.title") == "Expandir pedido"
+    assert pagina.js(f"document.getElementById('card-corpo-{primeiro.id}').hidden") is True
+    assert pagina.js(f"{card}.querySelector('.producao-card-foto').offsetParent") is None
+    visivel = [linha.strip() for linha in pagina.js(f"{card}.innerText").split("\n")]
+    assert [linha for linha in visivel if linha] == [
+        "Ana",
+        "Expandir pedido",
+        "Caneca, Copo 5 unidades",
+    ]
+    # O outro card continua aberto.
+    outro = f"{card_js(segundo.id)}.querySelector('.producao-recolher')"
+    assert pagina.js(f"{outro}.getAttribute('aria-expanded')") == "true"
+    assert "Ver pedido" in pagina.js(f"{card_js(segundo.id)}.innerText")
+    # Nada mudou: mesma etapa, nenhum dado gravado.
+    assert etapa_na_tela(pagina, primeiro.id) == "fila_producao"
+    assert repo_pedidos.escritas == escritas and repo_pedidos.movimentos == []
+    assert repo_pedidos.alteracoes_comentario == [] and repo_pedidos.alteracoes_pagamento == []
+
+    pagina.js(f"{botao}.click()")
+
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+    assert pagina.js(f"{botao}.textContent.trim()") == "Recolher pedido"
+    texto = pagina.js(f"{card}.innerText")
+    for parte in ("Prazo", "Pagamento", "Entrega", "Observação original", "Ver pedido"):
+        assert parte in texto, parte
+    assert pagina.js(f"{card}.querySelector('textarea').value") == "Pintar de azul"
+    assert pagina.js(f"{card}.querySelector('.producao-card-foto').offsetParent") is not None
+
+
+def test_recolher_pelo_teclado_com_foco_visivel(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    botao = f"{card_js(pedido.id)}.querySelector('.producao-recolher')"
+    pagina.js(f"{botao}.focus()")
+
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    tecla(pagina, " ", "Space", 32, " ")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+
+    assert pagina.js(f"document.activeElement === {botao}")
+    assert pagina.js(f"{botao}.matches(':focus-visible')")
+    assert pagina.js(f"getComputedStyle({botao}).outlineStyle") == "solid"
+    altura, largura = pagina.js(
+        f"(() => {{ const r = {botao}.getBoundingClientRect(); return [r.height, r.width] }})()"
+    )
+    assert altura >= 44 and largura >= 44
+
+
+def test_recolhido_continua_recolhido_ao_mover_e_ao_atualizar_o_quadro(
+    pagina, servidor, repo_pedidos
+):
+    pedidos = pedidos_producao(repo_pedidos, servidor, 2)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    pagina.js(f"{card_js(pedidos[0].id)}.querySelector('.producao-recolher').click()")
+
+    arrastar_card(pagina, pedidos[0].id, "em_producao")
+    esperar_mensagem(pagina)
+    assert etapa_na_tela(pagina, pedidos[0].id) == "em_producao"
+    assert pagina.js(f"{card_js(pedidos[0].id)}.classList.contains('recolhido')")
+    assert pagina.js("document.activeElement.classList.contains('producao-recolher')")
+
+    # Conflito em outro card: o quadro é recarregado e o recolhido continua recolhido.
+    repo_pedidos.etapas[pedidos[1].id] = "em_producao"
+    clicar_avancar(pagina, pedidos[1].id)
+    esperar(lambda: "outro usuário" in pagina.texto("#producao-mensagem"))
+    assert pagina.js(f"{card_js(pedidos[0].id)}.classList.contains('recolhido')")
+    assert pagina.js(f"document.getElementById('card-corpo-{pedidos[0].id}').hidden") is True
+    assert not pagina.js(f"{card_js(pedidos[1].id)}.classList.contains('recolhido')")
+
+
+# ---------- Comentários da produção ----------
+
+
+def comentario_js(pedido_id):
+    return f"{card_js(pedido_id)}.querySelector('.producao-comentario-campo')"
+
+
+def escrever_comentario(p, pedido_id, texto):
+    p.js(f"{comentario_js(pedido_id)}.value = ''; {comentario_js(pedido_id)}.focus()")
+    p.cmd("Input.insertText", text=texto)
+
+
+def salvar_comentario(p, pedido_id):
+    p.js(f"{card_js(pedido_id)}.querySelector('.producao-salvar-comentario').click()")
+
+
+def mensagem_do_card(p, pedido_id):
+    seletor = f"{card_js(pedido_id)}.querySelector('.producao-comentario-mensagem .alerta')"
+    esperar(lambda: p.js(f"!!{seletor}"), mensagem="mensagem do comentário não apareceu")
+    return p.js(f"[{seletor}.textContent, {seletor}.getAttribute('role')]")
+
+
+def limpar_mensagem_do_card(p, pedido_id):
+    p.js(f"{card_js(pedido_id)}.querySelector('.producao-comentario-mensagem').replaceChildren()")
+
+
+def test_salvar_editar_e_apagar_comentario(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    obs = pagina.js(f"{card_js(pedido.id)}.querySelector('.producao-card-obs dd').textContent")
+    rotulo = pagina.js(f"{comentario_js(pedido.id)}.labels[0].textContent")
+    assert rotulo == "Comentários da produção"
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == ""
+
+    escrever_comentario(pagina, pedido.id, "  Pintar de azul\nCom cuidado  ")
+    salvar_comentario(pagina, pedido.id)
+
+    assert mensagem_do_card(pagina, pedido.id) == ["Comentário salvo.", "status"]
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Pintar de azul\nCom cuidado"
+    info = pagina.texto(f".producao-card[data-pedido='{pedido.id}'] .producao-comentario-info")
+    assert info.startswith("Atualizado por Leandro em ")
+    assert repo_pedidos.comentarios[pedido.id][0] == "Pintar de azul\nCom cuidado"
+
+    limpar_mensagem_do_card(pagina, pedido.id)
+    escrever_comentario(pagina, pedido.id, "Editado")
+    salvar_comentario(pagina, pedido.id)
+    assert mensagem_do_card(pagina, pedido.id)[0] == "Comentário salvo."
+    limpar_mensagem_do_card(pagina, pedido.id)
+
+    escrever_comentario(pagina, pedido.id, "   ")
+    salvar_comentario(pagina, pedido.id)
+
+    assert mensagem_do_card(pagina, pedido.id)[0] == "Comentário removido."
+    assert repo_pedidos.comentarios[pedido.id][0] is None
+    assert [a[1:3] for a in repo_pedidos.alteracoes_comentario] == [
+        (None, "Pintar de azul\nCom cuidado"),
+        ("Pintar de azul\nCom cuidado", "Editado"),
+        ("Editado", None),
+    ]
+    # As observações do pedido não mudam e a etapa também não.
+    assert obs == "7 Azuis\n4 Rosa Choque"
+    assert repo_pedidos.pedidos[pedido.id].observacoes == "7 Azuis\n4 Rosa Choque"
+    assert etapa_na_tela(pagina, pedido.id) == "fila_producao"
+
+    pagina.abrir("/producao")
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == ""
+    assert "Atualizado por Leandro" in pagina.js(f"{card_js(pedido.id)}.innerText")
+
+
+def test_comentario_limitado_a_2000_caracteres(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    escrever_comentario(pagina, pedido.id, "x" * 2005)
+
+    assert pagina.js(f"{comentario_js(pedido.id)}.maxLength") == 2000
+    assert pagina.js(f"{comentario_js(pedido.id)}.value.length") == 2000
+    salvar_comentario(pagina, pedido.id)
+    assert mensagem_do_card(pagina, pedido.id)[0] == "Comentário salvo."
+    assert len(repo_pedidos.comentarios[pedido.id][0]) == 2000
+
+
+def test_salvar_comentario_desabilita_o_botao_durante_o_envio(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    lento(repo_pedidos, "salvar_comentario_producao")
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    botao = f"{card_js(pedido.id)}.querySelector('.producao-salvar-comentario')"
+
+    escrever_comentario(pagina, pedido.id, "Texto")
+    salvar_comentario(pagina, pedido.id)
+    salvar_comentario(pagina, pedido.id)  # segundo clique é ignorado
+
+    assert pagina.js(f"{botao}.disabled") is True
+    assert pagina.js(f"{botao}.textContent") == "Salvando…"
+    mensagem_do_card(pagina, pedido.id)
+    assert pagina.js(f"{botao}.disabled") is False
+    assert pagina.js(f"{botao}.textContent") == "Salvar comentário"
+    assert len(repo_pedidos.alteracoes_comentario) == 1
+
+
+def test_erro_ao_salvar_comentario_preserva_o_texto(pagina, servidor, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoAlterar
+
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.falhar_em["salvar_comentario"] = FalhaAoAlterar()
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    escrever_comentario(pagina, pedido.id, "Meu texto importante")
+    salvar_comentario(pagina, pedido.id)
+
+    assert mensagem_do_card(pagina, pedido.id) == [
+        "Não foi possível salvar o comentário agora. Tente novamente.",
+        "alert",
+    ]
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Meu texto importante"
+    assert pagina.js(f"{comentario_js(pedido.id)}.dataset.salvo") == ""
+    assert pagina.js("document.activeElement.textContent") == "Salvar comentário"
+
+
+def test_conflito_de_comentario_recarrega_e_mantem_o_texto(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    repo_pedidos.comentarios[pedido.id] = ("Da Kassia", momento_exemplo(), 2)  # enquanto editava
+
+    escrever_comentario(pagina, pedido.id, "Meu texto")
+    salvar_comentario(pagina, pedido.id)
+
+    texto, papel = mensagem_do_card(pagina, pedido.id)
+    assert "alterado por outro usuário" in texto and papel == "alert"
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Meu texto"
+    assert pagina.js(f"{comentario_js(pedido.id)}.dataset.salvo") == "Da Kassia"  # recarregado
+    assert "Atualizado por Kassia" in pagina.js(f"{card_js(pedido.id)}.innerText")
+    assert pagina.js(f"document.activeElement === {comentario_js(pedido.id)}")
+    assert repo_pedidos.comentarios[pedido.id][0] == "Da Kassia"
+
+
+def test_editar_o_comentario_nao_arrasta_o_card(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    pagina.js(f"{comentario_js(pedido.id)}.focus()")
+    assert pagina.js(f"{card_js(pedido.id)}.hasAttribute('draggable')") is False
+    pagina.js(f"{comentario_js(pedido.id)}.blur()")
+    assert pagina.js(f"{card_js(pedido.id)}.getAttribute('draggable')") == "true"
+
+
+# ---------- Status do pagamento ----------
+
+
+def pagamento_js(pedido_id):
+    return f"{card_js(pedido_id)}.querySelector('.producao-pagamento')"
+
+
+def estado_pagamento(p, pedido_id):
+    b = pagamento_js(pedido_id)
+    return p.js(
+        f"[{b}.dataset.status, {b}.textContent.trim(), {b}.getAttribute('aria-label'),"
+        f" {b}.title, {b}.classList.contains('selo-status-' + {b}.dataset.status)]"
+    )
+
+
+def test_alterna_pagamento_nos_dois_sentidos(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    assert estado_pagamento(pagina, pedido.id) == [
+        "pendente",
+        "Pendente",
+        "Pendente. Marcar pagamento como pago",
+        "Marcar pagamento como pago",
+        True,
+    ]
+
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+    assert esperar_mensagem(pagina) == "Pedido de Cliente 1: Pagamento marcado como pago."
+
+    assert estado_pagamento(pagina, pedido.id) == [
+        "pago",
+        "Pago",
+        "Pago. Marcar pagamento como pendente",
+        "Marcar pagamento como pendente",
+        True,
+    ]
+    assert pagina.js(f"document.activeElement === {pagamento_js(pedido.id)}")
+    pagina.js("document.getElementById('producao-mensagem').replaceChildren()")
+
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+    esperar_mensagem(pagina)
+
+    assert estado_pagamento(pagina, pedido.id)[:2] == ["pendente", "Pendente"]
+    assert repo_pedidos.alteracoes_pagamento == [
+        (pedido.id, "pendente", "pago", 1),
+        (pedido.id, "pago", "pendente", 1),
+    ]
+    assert etapa_na_tela(pagina, pedido.id) == "fila_producao"
+    assert repo_pedidos.etapas[pedido.id] == "fila_producao" and repo_pedidos.movimentos == []
+
+
+def test_pagamento_pelo_teclado(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    pagina.js(f"{pagamento_js(pedido.id)}.focus()")
+
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar_mensagem(pagina)
+
+    assert estado_pagamento(pagina, pedido.id)[0] == "pago"
+    assert pagina.js(f"document.activeElement === {pagamento_js(pedido.id)}")
+    assert pagina.js(f"getComputedStyle({pagamento_js(pedido.id)}).outlineStyle") == "solid"
+
+
+def test_pagamento_so_muda_na_tela_depois_do_servidor(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    lento(repo_pedidos, "alterar_status_pagamento")
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")  # ignorado enquanto espera
+
+    assert pagina.js(f"{pagamento_js(pedido.id)}.disabled") is True
+    assert estado_pagamento(pagina, pedido.id)[0] == "pendente"
+    esperar_mensagem(pagina)
+    assert estado_pagamento(pagina, pedido.id)[0] == "pago"
+    assert pagina.js(f"{pagamento_js(pedido.id)}.disabled") is False
+    assert len(repo_pedidos.alteracoes_pagamento) == 1
+
+
+def test_falha_no_pagamento_mantem_o_estado(pagina, servidor, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoAlterar
+
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.falhar_em["alterar_pagamento"] = FalhaAoAlterar()
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+
+    texto = esperar_mensagem(pagina)
+    assert texto == "Não foi possível alterar o pagamento agora. Tente novamente."
+    assert estado_pagamento(pagina, pedido.id)[0] == "pendente"
+    papel = pagina.js("document.querySelector('#producao-mensagem .alerta').getAttribute('role')")
+    assert papel == "alert"
+    assert repo_pedidos.pedidos[pedido.id].status_pagamento == "pendente"
+
+
+def test_conflito_no_pagamento_recarrega_o_quadro(pagina, servidor, repo_pedidos):
+    from dataclasses import replace
+
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    repo_pedidos.pedidos[pedido.id] = replace(pedido, status_pagamento="pago")  # outro usuário
+
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+    esperar(lambda: "outro usuário" in pagina.texto("#producao-mensagem"))
+
+    assert estado_pagamento(pagina, pedido.id)[0] == "pago"  # quadro recarregado
+    assert repo_pedidos.alteracoes_pagamento == []
+    assert pagina.js(f"document.activeElement === {pagamento_js(pedido.id)}")
+
+
+def test_pagamento_alterado_aparece_em_pedidos_e_detalhes(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+    esperar_mensagem(pagina)
+
+    pagina.abrir("/pedidos")
+    assert pagina.js("!!document.querySelector('.selo-status-pago')")
+    pagina.abrir(f"/pedidos/{pedido.id}")
+    assert pagina.js("!!document.querySelector('.selo-status-pago')")

@@ -113,11 +113,14 @@ def test_conteudo_do_card(repo_pedidos):
 
     assert "<h3>Cliente Teste</h3>" in c
     assert "Caneca, Chaveiro" in c and '<span class="pedido-card-unidades">13 unidades</span>' in c
-    assert '<dd class="pedido-card-pagamento">PIX <span class="selo-status selo-status-pago">' in c
+    assert (
+        '<dd class="pedido-card-pagamento">PIX <button type="button"'
+        ' class="selo-status selo-status-pago producao-pagamento"'
+    ) in c
     assert "<dt>Entrega</dt><dd>Retirada</dd>" in c
     assert '<dt>Prazo</dt><dd><time datetime="2026-10-05">05/10/26</time></dd>' in c
     assert "Cadastrado por" not in c and "Kassia" not in c
-    assert "<dt>Observações</dt><dd>Embalar para presente</dd>" in c
+    assert "<dt>Observações do pedido</dt><dd>Embalar para presente</dd>" in c
     assert f'href="/pedidos/{pedido.id}"' in c and ">Ver pedido</a>" in c
     assert 'draggable="true"' in c
     assert 'data-destino="em_producao"' in c and ">Iniciar produção</button>" in c
