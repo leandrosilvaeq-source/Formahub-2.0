@@ -211,7 +211,10 @@ class RepositorioPedidos(Protocol):
         """Caminho -> URL assinada temporária, só para os arquivos que existem."""
 
     def listar_producao(self) -> list[CardProducao]:
-        """Cards do quadro: etapas na ordem; em cada etapa, do mais antigo ao mais recente."""
+        """Cards do quadro: etapas na ordem; em cada etapa, do mais antigo ao mais recente.
+
+        Pedido concluído (entregue e pago) fica de fora; a regra é aplicada pelo banco.
+        """
 
     def mover_etapa(
         self, pedido_id: int, etapa_esperada: str, nova_etapa: str, usuario_id: int

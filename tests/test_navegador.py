@@ -1784,6 +1784,14 @@ def card_js(pedido_id):
     return f"document.querySelector('.producao-card[data-pedido=\"{pedido_id}\"]')"
 
 
+def expandir_todos(p):
+    """Os cards começam recolhidos; expande todos (pelo próprio botão de cada card)."""
+    p.js(
+        "document.querySelectorAll('.producao-recolher[aria-expanded=\"false\"]')"
+        ".forEach(b => b.click())"
+    )
+
+
 def etapa_na_tela(p, pedido_id):
     return p.js(f"{card_js(pedido_id)}.closest('.coluna').dataset.etapa")
 
@@ -1880,6 +1888,7 @@ def test_card_da_producao_com_prazo_e_foto_sem_deformar(pagina, servidor, repo_p
     }
     pagina.tela(largura, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     pagina.js("document.querySelector('.producao-card-foto').scrollIntoView({block: 'center'})")
     esperar(lambda: pagina.js("document.querySelector('.producao-card-foto').naturalWidth > 0"))
 
@@ -1943,6 +1952,7 @@ def test_avancar_pelo_botao_move_o_card_e_mantem_o_foco(pagina, servidor, repo_p
     (pedido,) = pedidos_producao(repo_pedidos, servidor)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     assert contadores(pagina) == [1, 0, 0, 0]
 
     assert pagina.texto("#coluna-fila_producao") == "Na Fila de Produção"
@@ -1981,6 +1991,7 @@ def test_voltar_para_fila_pelo_botao(pagina, servidor, repo_pedidos):
     repo_pedidos.etapas[pedido.id] = "em_producao"
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     assert contadores(pagina) == [0, 1, 0, 0]
     voltar = f"{card_js(pedido.id)}.querySelector('.producao-voltar')"
     estilo = pagina.js(f"getComputedStyle({voltar}).backgroundColor")
@@ -2030,6 +2041,7 @@ def test_avancar_pelo_teclado(pagina, servidor, repo_pedidos):
     (pedido,) = pedidos_producao(repo_pedidos, servidor)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     pagina.js(f"{card_js(pedido.id)}.querySelector('.producao-avancar').focus()")
     tecla = {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}
     pagina.cmd("Input.dispatchKeyEvent", type="rawKeyDown", **tecla)
@@ -2113,6 +2125,7 @@ def test_entregue_pede_confirmacao(pagina, servidor, repo_pedidos):
     repo_pedidos.etapas[pedido.id] = "aguardando_entrega"
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
 
     clicar_avancar(pagina, pedido.id)
     assert pagina.js("document.getElementById('confirmar-entrega').open") is True
@@ -2139,6 +2152,7 @@ def test_conflito_recarrega_o_quadro_com_aviso(pagina, servidor, repo_pedidos):
     (pedido,) = pedidos_producao(repo_pedidos, servidor)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     repo_pedidos.etapas[pedido.id] = (
         "em_producao"  # outro usuário moveu enquanto a tela estava aberta
     )
@@ -2167,6 +2181,7 @@ def test_falha_ao_mover_mantem_o_card_e_avisa(pagina, servidor, repo_pedidos):
     repo_pedidos.falhar_em["mover_etapa"] = FalhaAoMover()
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
 
     arrastar_card(pagina, pedido.id, "em_producao")
     texto = esperar_mensagem(pagina)
@@ -2287,6 +2302,36 @@ def test_producao_usa_quase_toda_a_largura_e_as_outras_telas_nao(pagina, servido
     assert all(valor <= 1080 for valor in larguras.values()), larguras
 
 
+# Card recolhido: o que continua à vista e o que só aparece expandido.
+SEMPRE_VISIVEIS = [
+    "h3",
+    ".producao-card-foto",
+    ".producao-card-produtos",
+    ".pedido-card-unidades",
+    ".producao-comentario label",
+    ".producao-comentario-campo",
+    ".producao-salvar-comentario",
+    ".producao-comentario-info",
+    ".producao-recolher",
+]
+SO_NO_EXPANDIDO = [
+    ".producao-card-dados",
+    ".producao-pagamento",
+    ".producao-card-prazo",
+    ".producao-card-obs",
+    ".producao-card-acoes",
+    "a.botao",
+    ".producao-mover",
+]
+
+
+def visivel_no_card(p, pedido_id, seletor):
+    return p.js(
+        f"(() => {{ const e = {card_js(pedido_id)}.querySelector({json.dumps(seletor)});"
+        " return !!e && e.getClientRects().length > 0 })()"
+    )
+
+
 def test_recolher_e_expandir_cada_card(pagina, servidor, repo_pedidos):
     from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
 
@@ -2307,41 +2352,63 @@ def test_recolher_e_expandir_cada_card(pagina, servidor, repo_pedidos):
     pagina.abrir("/producao")
     card = card_js(primeiro.id)
     botao = f"{card}.querySelector('.producao-recolher')"
-    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
-    assert pagina.js(f"{botao}.getAttribute('aria-controls')") == f"card-corpo-{primeiro.id}"
-    assert pagina.js(f"{botao}.textContent.trim()") == "Recolher pedido"
-
-    pagina.js(f"{botao}.click()")
-
-    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
-    assert pagina.js(f"{botao}.textContent.trim()") == "Expandir pedido"
-    assert pagina.js(f"{botao}.title") == "Expandir pedido"
-    assert pagina.js(f"document.getElementById('card-corpo-{primeiro.id}').hidden") is True
-    assert pagina.js(f"{card}.querySelector('.producao-card-foto').offsetParent") is None
-    visivel = [linha.strip() for linha in pagina.js(f"{card}.innerText").split("\n")]
-    assert [linha for linha in visivel if linha] == [
-        "Ana",
-        "Expandir pedido",
-        "Caneca, Copo 5 unidades",
-    ]
-    # O outro card continua aberto.
     outro = f"{card_js(segundo.id)}.querySelector('.producao-recolher')"
-    assert pagina.js(f"{outro}.getAttribute('aria-expanded')") == "true"
-    assert "Ver pedido" in pagina.js(f"{card_js(segundo.id)}.innerText")
-    # Nada mudou: mesma etapa, nenhum dado gravado.
-    assert etapa_na_tela(pagina, primeiro.id) == "fila_producao"
-    assert repo_pedidos.escritas == escritas and repo_pedidos.movimentos == []
-    assert repo_pedidos.alteracoes_comentario == [] and repo_pedidos.alteracoes_pagamento == []
+
+    def conferir_recolhido():
+        assert pagina.js(f"{card}.classList.contains('recolhido')")
+        assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+        assert pagina.js(f"{botao}.textContent.trim()") == "Expandir pedido"
+        assert pagina.js(f"{botao}.title") == "Expandir pedido"
+        assert pagina.js(f"document.getElementById('card-corpo-{primeiro.id}').hidden") is True
+        assert pagina.js(f"document.getElementById('card-acoes-{primeiro.id}').hidden") is True
+        for seletor in SEMPRE_VISIVEIS:
+            assert visivel_no_card(pagina, primeiro.id, seletor), seletor
+        for seletor in SO_NO_EXPANDIDO:
+            assert not visivel_no_card(pagina, primeiro.id, seletor), seletor
+        visivel = [linha.strip() for linha in pagina.js(f"{card}.innerText").split("\n")]
+        assert [linha for linha in visivel if linha] == [
+            "Ana",
+            "Expandir pedido",
+            "Caneca, Copo 5 unidades",
+            "Comentários da produção",
+            "Atualizado por Kassia em 01/10/2026 às 14:32",
+            "Salvar comentário",
+        ]
+        assert pagina.js(f"{card}.querySelector('textarea').value") == "Pintar de azul"
+
+    # Ao abrir a página, todos os cards estão recolhidos.
+    assert (
+        pagina.js(f"{botao}.getAttribute('aria-controls')")
+        == f"card-corpo-{primeiro.id} card-acoes-{primeiro.id}"
+    )
+    conferir_recolhido()
+    assert pagina.js(f"{outro}.getAttribute('aria-expanded')") == "false"
 
     pagina.js(f"{botao}.click()")
 
     assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
     assert pagina.js(f"{botao}.textContent.trim()") == "Recolher pedido"
+    assert pagina.js(f"{botao}.title") == "Recolher pedido"
     texto = pagina.js(f"{card}.innerText")
     for parte in ("Prazo", "Pagamento", "Entrega", "Observação original", "Ver pedido"):
         assert parte in texto, parte
     assert pagina.js(f"{card}.querySelector('textarea').value") == "Pintar de azul"
     assert pagina.js(f"{card}.querySelector('.producao-card-foto').offsetParent") is not None
+    # O outro card continua recolhido.
+    assert pagina.js(f"{outro}.getAttribute('aria-expanded')") == "false"
+    assert "Ver pedido" not in pagina.js(f"{card_js(segundo.id)}.innerText")
+
+    pagina.js(f"{botao}.click()")
+    conferir_recolhido()
+
+    # Expandido e recarregado: volta recolhido (nada é guardado).
+    pagina.js(f"{botao}.click()")
+    pagina.abrir("/producao")
+    conferir_recolhido()
+    # Nada mudou: mesma etapa, nenhum dado gravado.
+    assert etapa_na_tela(pagina, primeiro.id) == "fila_producao"
+    assert repo_pedidos.escritas == escritas and repo_pedidos.movimentos == []
+    assert repo_pedidos.alteracoes_comentario == [] and repo_pedidos.alteracoes_pagamento == []
 
 
 def test_recolher_pelo_teclado_com_foco_visivel(pagina, servidor, repo_pedidos):
@@ -2351,8 +2418,14 @@ def test_recolher_pelo_teclado_com_foco_visivel(pagina, servidor, repo_pedidos):
     botao = f"{card_js(pedido.id)}.querySelector('.producao-recolher')"
     pagina.js(f"{botao}.focus()")
 
-    tecla(pagina, "Enter", "Enter", 13, "\r")
+    # Começa recolhido: Enter expande, Espaço recolhe, Espaço expande de novo.
     assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+    assert visivel_no_card(pagina, pedido.id, ".producao-card-acoes")
+    tecla(pagina, " ", "Space", 32, " ")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    assert not visivel_no_card(pagina, pedido.id, ".producao-card-acoes")
     tecla(pagina, " ", "Space", 32, " ")
     assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
 
@@ -2365,27 +2438,29 @@ def test_recolher_pelo_teclado_com_foco_visivel(pagina, servidor, repo_pedidos):
     assert altura >= 44 and largura >= 44
 
 
-def test_recolhido_continua_recolhido_ao_mover_e_ao_atualizar_o_quadro(
-    pagina, servidor, repo_pedidos
-):
-    pedidos = pedidos_producao(repo_pedidos, servidor, 2)
+def test_estado_do_card_continua_ao_mover_e_ao_atualizar_o_quadro(pagina, servidor, repo_pedidos):
+    pedidos = pedidos_producao(repo_pedidos, servidor, 3)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
-    pagina.js(f"{card_js(pedidos[0].id)}.querySelector('.producao-recolher').click()")
+    recolhido = "{}.classList.contains('recolhido')"
 
+    # Recolhido (padrão) movido pelo arraste: continua recolhido, foco no botão de expandir.
     arrastar_card(pagina, pedidos[0].id, "em_producao")
     esperar_mensagem(pagina)
     assert etapa_na_tela(pagina, pedidos[0].id) == "em_producao"
-    assert pagina.js(f"{card_js(pedidos[0].id)}.classList.contains('recolhido')")
+    assert pagina.js(recolhido.format(card_js(pedidos[0].id)))
     assert pagina.js("document.activeElement.classList.contains('producao-recolher')")
 
-    # Conflito em outro card: o quadro é recarregado e o recolhido continua recolhido.
+    # Conflito em outro card: o quadro é recarregado; o expandido continua expandido e os
+    # demais continuam recolhidos.
+    pagina.js(f"{card_js(pedidos[2].id)}.querySelector('.producao-recolher').click()")
     repo_pedidos.etapas[pedidos[1].id] = "em_producao"
     clicar_avancar(pagina, pedidos[1].id)
     esperar(lambda: "outro usuário" in pagina.texto("#producao-mensagem"))
-    assert pagina.js(f"{card_js(pedidos[0].id)}.classList.contains('recolhido')")
-    assert pagina.js(f"document.getElementById('card-corpo-{pedidos[0].id}').hidden") is True
-    assert not pagina.js(f"{card_js(pedidos[1].id)}.classList.contains('recolhido')")
+    assert not pagina.js(recolhido.format(card_js(pedidos[2].id)))
+    assert pagina.js(f"document.getElementById('card-corpo-{pedidos[2].id}').hidden") is False
+    assert pagina.js(recolhido.format(card_js(pedidos[0].id)))
+    assert pagina.js(recolhido.format(card_js(pedidos[1].id)))
 
 
 # ---------- Comentários da produção ----------
@@ -2559,6 +2634,7 @@ def test_alterna_pagamento_nos_dois_sentidos(pagina, servidor, repo_pedidos):
     (pedido,) = pedidos_producao(repo_pedidos, servidor)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     assert estado_pagamento(pagina, pedido.id) == [
         "pendente",
         "Pendente",
@@ -2596,6 +2672,7 @@ def test_pagamento_pelo_teclado(pagina, servidor, repo_pedidos):
     (pedido,) = pedidos_producao(repo_pedidos, servidor)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     pagina.js(f"{pagamento_js(pedido.id)}.focus()")
 
     tecla(pagina, "Enter", "Enter", 13, "\r")
@@ -2647,6 +2724,7 @@ def test_conflito_no_pagamento_recarrega_o_quadro(pagina, servidor, repo_pedidos
     (pedido,) = pedidos_producao(repo_pedidos, servidor)
     pagina.tela(1280, 800)
     pagina.abrir("/producao")
+    expandir_todos(pagina)
     repo_pedidos.pedidos[pedido.id] = replace(pedido, status_pagamento="pago")  # outro usuário
 
     pagina.js(f"{pagamento_js(pedido.id)}.click()")
@@ -2668,3 +2746,508 @@ def test_pagamento_alterado_aparece_em_pedidos_e_detalhes(pagina, servidor, repo
     assert pagina.js("!!document.querySelector('.selo-status-pago')")
     pagina.abrir(f"/pedidos/{pedido.id}")
     assert pagina.js("!!document.querySelector('.selo-status-pago')")
+
+
+# ---------- Produção: título do card, card recolhido e pedido concluído ----------
+
+
+def pedido_na_etapa(repo, servidor, etapa, status="pendente", quantidade=1):
+    from dataclasses import replace
+
+    pedidos = pedidos_producao(repo, servidor, quantidade)
+    for pedido in pedidos:
+        repo.etapas[pedido.id] = etapa
+        repo.pedidos[pedido.id] = replace(pedido, status_pagamento=status)
+    return pedidos
+
+
+def foco_no_card(p, pedido_id):
+    return p.js(f"{card_js(pedido_id)}.contains(document.activeElement)")
+
+
+# Texto do card -> tamanho em px. Mínimo de legibilidade: 11 px nos rótulos e na última
+# atualização do comentário; 12 px em todo o resto (cliente, produtos, valores, campo, selo,
+# mensagens e botões).
+FONTES_DO_CARD_PX = {
+    "h3": 12,  # nome do cliente
+    ".producao-card-produtos": 12,
+    ".pedido-card-unidades": 12,
+    ".producao-card-dados dt": 11,
+    ".producao-card-dados dd": 12,
+    ".pedido-card-pagamento": 12,  # forma de pagamento
+    ".producao-pagamento-texto": 12,  # selo Pendente/Pago
+    ".producao-card-prazo time": 12,
+    ".producao-card-obs dd": 12,
+    ".producao-comentario label": 11,
+    ".producao-comentario-campo": 12,
+    ".producao-comentario-info": 11,
+    ".producao-comentario-mensagem .alerta": 12,
+    ".producao-salvar-comentario": 12,
+    ".producao-card-acoes a.botao": 12,
+    ".producao-mover": 12,
+}
+# Menor fonte entre os textos visíveis de todos os cards.
+MENOR_FONTE_NOS_CARDS = """
+Math.min(...[...document.querySelectorAll('.producao-card *')]
+  .filter(e => e.getClientRects().length && !e.closest('.visualmente-oculto')
+    && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()))
+  .map(e => parseFloat(getComputedStyle(e).fontSize)))
+"""
+# Elementos visíveis que saem da caixa do próprio card.
+SAINDO_DOS_CARDS = """
+[...document.querySelectorAll('.producao-card')].flatMap(c => {
+  const rc = c.getBoundingClientRect();
+  return [...c.querySelectorAll('*')].filter(e => {
+    if (!e.getClientRects().length) return false;
+    const r = e.getBoundingClientRect();
+    return r.left < rc.left - 0.5 || r.right > rc.right + 0.5 })
+  .map(e => c.dataset.pedido + ' ' + e.tagName + '.' + e.className) })
+"""
+# Controles do card: no mínimo 44 px de altura (e o botão de expandir, 44 de largura).
+CONTROLES_DO_CARD = [
+    ".producao-recolher",
+    ".producao-pagamento",
+    ".producao-comentario-campo",
+    ".producao-salvar-comentario",
+    ".producao-card-acoes a.botao",
+    ".producao-mover",
+]
+
+
+def test_fontes_do_card_com_minimo_de_legibilidade_e_controles_de_44px(
+    pagina, servidor, repo_pedidos
+):
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    pedido = novo_pedido(
+        repo_pedidos,
+        itens=[item(1, "Caneca", 2, "1.00", com_imagem(repo_pedidos, 1, 1))],
+        observacoes="Observação",
+    )
+    repo_pedidos.etapas[pedido.id] = "em_producao"
+    repo_pedidos.comentarios[pedido.id] = ("Azul", momento_exemplo(), 2)
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    expandir_todos(pagina)
+    card = card_js(pedido.id)
+    pagina.js(  # uma mensagem do comentário, como depois de salvar
+        f"{card}.querySelector('.producao-comentario-mensagem').innerHTML ="
+        " '<div class=\"alerta alerta-sucesso\">Comentário salvo.</div>'"
+    )
+
+    medidas = pagina.js(
+        f"(() => {{ const c = {card}, r = {{}};"
+        f" for (const s of {json.dumps(list(FONTES_DO_CARD_PX))})"
+        "  r[s] = parseFloat(getComputedStyle(c.querySelector(s)).fontSize);"
+        " return r })()"
+    )
+    for seletor, px in FONTES_DO_CARD_PX.items():
+        assert medidas[seletor] == px, (seletor, medidas[seletor])
+    assert pagina.js(MENOR_FONTE_NOS_CARDS) == 11
+
+    # O cliente continua o título principal do card: Sora Bold e o maior tamanho do card.
+    familia, peso = pagina.js(
+        f"(() => {{ const s = getComputedStyle({card}.querySelector('h3'));"
+        " return [s.fontFamily, s.fontWeight] })()"
+    )
+    assert familia.split(",")[0].strip('"') == "Sora" and peso == "700"
+    assert medidas["h3"] == max(medidas.values())
+
+    # Ícones sem redução (tamanho calculado: a seta gira ao expandir e a caixa dela muda
+    # durante a animação).
+    icones = pagina.js(
+        f"(() => {{ const c = {card};"
+        " const m = s => { const e = getComputedStyle(c.querySelector(s));"
+        "  return [parseFloat(e.width), parseFloat(e.height)] };"
+        " return [m('.producao-recolher svg'), m('.producao-pagamento svg'),"
+        " m('.producao-card-foto')] })()"
+    )
+    assert icones == [[22, 22], [15, 15], [56, 56]]
+
+    # Controles com pelo menos 44 px.
+    for seletor in CONTROLES_DO_CARD:
+        altura, largura = pagina.js(
+            f"(() => {{ const r = {card}.querySelector({json.dumps(seletor)})"
+            ".getBoundingClientRect(); return [r.height, r.width] })()"
+        )
+        assert altura >= 44 and largura >= 44, (seletor, altura, largura)
+
+    # Fora do card nada muda: os botões do topo da página continuam com 0.875rem (14 px).
+    topo = "getComputedStyle(document.querySelector('.pagina-topo .botao')).fontSize"
+    assert pagina.js(topo) == "14px"
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1100, 1280, 1920])
+def test_cards_legiveis_e_sem_overflow_em_cada_largura(pagina, servidor, repo_pedidos, largura):
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    com_foto = novo_pedido(
+        repo_pedidos,
+        cliente="Ana Beatriz de Souza Albuquerque",
+        itens=[item(1, "Caneca personalizada", 3, "1.00", com_imagem(repo_pedidos, 1, 1))],
+        observacoes="Embalar para presente",
+    )
+    repo_pedidos.comentarios[com_foto.id] = ("Pintar em azul-claro", momento_exemplo(), 2)
+    outros = pedidos_producao(repo_pedidos, servidor, 3)
+    for pedido, etapa in zip(
+        outros, ["em_producao", "aguardando_entrega", "entregue"], strict=True
+    ):
+        repo_pedidos.etapas[pedido.id] = etapa
+    pagina.tela(largura, 900)
+    pagina.abrir("/producao")
+    controles = (
+        "[...document.querySelectorAll('.producao-card button, .producao-card a,"
+        " .producao-card textarea')].filter(e => e.getClientRects().length)"
+        ".filter(e => e.getBoundingClientRect().height < 44).length"
+    )
+
+    for estado in ("recolhido", "expandido"):
+        if estado == "expandido":
+            expandir_todos(pagina)
+        else:
+            assert (
+                pagina.js("document.querySelectorAll('.producao-card:not(.recolhido)').length") == 0
+            )
+            for seletor in (".producao-card-foto", ".producao-comentario-campo"):
+                assert visivel_no_card(pagina, com_foto.id, seletor), (seletor, largura)
+        assert pagina.js(MENOR_FONTE_NOS_CARDS) >= 11, (estado, largura)
+        assert pagina.js(controles) == 0, (estado, largura)
+        assert pagina.js(SAINDO_DOS_CARDS) == [], (estado, largura)
+        assert pagina.js("document.documentElement.scrollWidth") <= largura, (estado, largura)
+        cortes = pagina.js(CORTES.replace("LIMITE_VERTICAL", "false"))
+        assert [c for c in cortes if not c.startswith("OL.coluna-cards")] == [], estado
+
+
+# Mede cada coluna: título (texto, tamanho, família, peso, caixa, cortado?), ícone,
+# contador e a própria coluna.
+MEDIDAS_COLUNAS = """
+[...document.querySelectorAll('.coluna')].map(col => {
+  const h = col.querySelector('.coluna-topo h2'), i = col.querySelector('.coluna-icone');
+  const n = col.querySelector('.coluna-contador'), s = getComputedStyle(h);
+  const caixa = e => { const r = e.getBoundingClientRect();
+    return [r.left, r.right, r.top, r.bottom, r.width, r.height] };
+  // Cada palavra numa única linha: a quebra acontece só entre as palavras.
+  let pos = 0;
+  const inteiras = h.textContent.split(' ').every(p => {
+    const i = h.textContent.indexOf(p, pos), r = document.createRange();
+    r.setStart(h.firstChild, i); r.setEnd(h.firstChild, i + p.length); pos = i + p.length;
+    return r.getClientRects().length === 1 });
+  return {texto: h.textContent, tamanho: parseFloat(s.fontSize), familia: s.fontFamily,
+    peso: s.fontWeight, titulo: caixa(h), cortado: h.scrollWidth > h.clientWidth + 1,
+    palavras_inteiras: inteiras,
+    icone: caixa(i), contador: caixa(n),
+    contador_fonte: parseFloat(getComputedStyle(n).fontSize), coluna: caixa(col)};
+})
+"""
+
+
+def sobrepostos(a, b):
+    """Caixas [left, right, top, bottom, ...] que se cruzam (com meio pixel de folga)."""
+    return a[0] < b[1] - 0.5 and b[0] < a[1] - 0.5 and a[2] < b[3] - 0.5 and b[2] < a[3] - 0.5
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1100, 1280, 1920])
+def test_titulos_das_colunas_com_1_5rem(pagina, servidor, repo_pedidos, largura):
+    pedidos = pedidos_producao(repo_pedidos, servidor, 2)
+    repo_pedidos.etapas[pedidos[1].id] = "em_producao"
+    pagina.tela(largura, 900)
+    pagina.abrir("/producao")
+    raiz = pagina.js("parseFloat(getComputedStyle(document.documentElement).fontSize)")
+
+    colunas = pagina.js(MEDIDAS_COLUNAS)
+
+    assert [c["texto"] for c in colunas] == [
+        "Na Fila de Produção",
+        "Em Produção",
+        "Ag. Entrega",
+        "Entregue",
+    ]
+    for c in colunas:
+        nome = (c["texto"], largura)
+        assert c["tamanho"] == 1.5 * raiz == 24, nome  # era 2rem (32px): 25% menor
+        assert c["familia"].split(",")[0].strip('"') == "Sora" and c["peso"] == "700", nome
+        # Ícone e contador com os tamanhos de antes.
+        assert c["icone"][4:] == [22, 22], nome
+        assert c["contador_fonte"] == 13.6, nome
+        # O título não encosta no ícone nem no contador, fica dentro da coluna, sem corte e
+        # sem partir palavras.
+        titulo, icone, contador, coluna = c["titulo"], c["icone"], c["contador"], c["coluna"]
+        assert not sobrepostos(titulo, icone) and not sobrepostos(titulo, contador), nome
+        for caixa in (titulo, icone, contador):
+            assert coluna[0] <= caixa[0] and caixa[1] <= coluna[1] + 0.5, nome
+        assert not c["cortado"] and c["palavras_inteiras"], nome
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    cortes = pagina.js(CORTES.replace("LIMITE_VERTICAL", "false"))
+    assert [c for c in cortes if not c.startswith("OL.coluna-cards")] == []
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1280, 1920])
+def test_nome_longo_quebra_sem_rolagem_horizontal(pagina, servidor, repo_pedidos, largura):
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    nomes = ["Maria" + "Aparecida" * 10, "Ana Beatriz de Souza Albuquerque Cavalcanti Ferreira"]
+    pedidos = [
+        novo_pedido(
+            repo_pedidos,
+            cliente=nome,
+            itens=[item(1, "Caneca", 2, "1.00", com_imagem(repo_pedidos, n, 1))],
+        )
+        for n, nome in enumerate(nomes, 1)
+    ]
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    pagina.tela(largura, 900)
+    pagina.abrir("/producao")
+
+    for recolher in (True, False):  # começa recolhido; depois, expandido
+        if not recolher:
+            expandir_todos(pagina)
+        assert pagina.js("document.documentElement.scrollWidth") <= largura
+        for pedido in pedidos:
+            dentro, sem_corte = pagina.js(
+                f"(() => {{ const c = {card_js(pedido.id)}, h = c.querySelector('h3');"
+                " const rc = c.getBoundingClientRect(), rh = h.getBoundingClientRect();"
+                " return [rh.left >= rc.left && rh.right <= rc.right + 0.5,"
+                " h.scrollWidth <= h.clientWidth + 1] })()"
+            )
+            assert dentro and sem_corte, (pedido.cliente_nome, recolher)
+        cortes = pagina.js(CORTES.replace("LIMITE_VERTICAL", "false"))
+        assert [c for c in cortes if not c.startswith("OL.coluna-cards")] == []
+
+
+def test_recolhido_sem_foto_nao_deixa_espaco_vazio(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)  # item sem imagem
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")  # o card já começa recolhido
+
+    assert pagina.js(f"{card_js(pedido.id)}.classList.contains('recolhido')")
+    assert not pagina.js(f"!!{card_js(pedido.id)}.querySelector('img')")
+    distancia = pagina.js(
+        f"(() => {{ const c = {card_js(pedido.id)}.getBoundingClientRect(),"
+        f" h = {card_js(pedido.id)}.querySelector('h3').getBoundingClientRect();"
+        " return h.left - c.left })()"
+    )
+    assert distancia < 20  # o título começa junto à borda: nenhum espaço reservado à foto
+    for seletor in SEMPRE_VISIVEIS:
+        if seletor not in (".producao-card-foto", ".producao-comentario-info"):
+            assert visivel_no_card(pagina, pedido.id, seletor), seletor
+
+
+def test_recolhido_usa_a_mesma_foto_do_expandido(pagina, servidor, repo_pedidos):
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    pedido = novo_pedido(
+        repo_pedidos, itens=[item(1, "Caneca", 2, "1.00", com_imagem(repo_pedidos, 1, 1))]
+    )
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    foto = f"{card_js(pedido.id)}.querySelector('.producao-card-foto')"
+    esperar(lambda: pagina.js(f"{foto}.naturalWidth > 0"))
+    medir = f"[{foto}.src, {foto}.alt, getComputedStyle({foto}).objectFit, {foto}.width]"
+    recolhido = pagina.js(medir)  # estado inicial
+
+    pagina.js(f"{card_js(pedido.id)}.querySelector('.producao-recolher').click()")
+
+    assert pagina.js(f"{card_js(pedido.id)}.querySelectorAll('img').length") == 1
+    assert pagina.js(medir) == recolhido
+    assert recolhido[1] == "Foto de referência: Caneca" and recolhido[2] == "cover"
+
+
+def test_comentario_com_card_recolhido(pagina, servidor, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoAlterar
+
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")  # o card já começa recolhido
+    recolhido = f"{card_js(pedido.id)}.classList.contains('recolhido')"
+    assert pagina.js(recolhido)
+
+    # Salvar.
+    escrever_comentario(pagina, pedido.id, "Feito com o card recolhido")
+    salvar_comentario(pagina, pedido.id)
+    assert mensagem_do_card(pagina, pedido.id) == ["Comentário salvo.", "status"]
+    assert repo_pedidos.comentarios[pedido.id][0] == "Feito com o card recolhido"
+    assert pagina.js(recolhido)
+    assert visivel_no_card(pagina, pedido.id, ".producao-comentario-info")
+    assert visivel_no_card(pagina, pedido.id, ".producao-comentario-mensagem .alerta")
+
+    # Erro: o texto digitado continua no campo, o card continua recolhido.
+    limpar_mensagem_do_card(pagina, pedido.id)
+    repo_pedidos.falhar_em["salvar_comentario"] = FalhaAoAlterar()
+    escrever_comentario(pagina, pedido.id, "Texto que não pode sumir")
+    salvar_comentario(pagina, pedido.id)
+    assert mensagem_do_card(pagina, pedido.id)[1] == "alert"
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Texto que não pode sumir"
+    assert pagina.js(recolhido)
+    assert pagina.js("document.activeElement.textContent") == "Salvar comentário"
+    del repo_pedidos.falhar_em["salvar_comentario"]
+
+    # Conflito: o quadro é recarregado, o card continua recolhido e o texto continua no campo.
+    repo_pedidos.comentarios[pedido.id] = ("Da Kassia", momento_exemplo(), 2)
+    salvar_comentario(pagina, pedido.id)
+    texto, papel = mensagem_do_card(pagina, pedido.id)
+    assert "alterado por outro usuário" in texto and papel == "alert"
+    assert pagina.js(recolhido)
+    assert pagina.js(f"document.getElementById('card-corpo-{pedido.id}').hidden") is True
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Texto que não pode sumir"
+    assert pagina.js(f"{comentario_js(pedido.id)}.dataset.salvo") == "Da Kassia"
+    assert pagina.js(f"document.activeElement === {comentario_js(pedido.id)}")
+    assert repo_pedidos.comentarios[pedido.id][0] == "Da Kassia"
+
+
+def test_recolher_e_expandir_nao_apaga_o_texto_nao_salvo(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    botao = f"{card_js(pedido.id)}.querySelector('.producao-recolher')"
+
+    escrever_comentario(pagina, pedido.id, "Rascunho\nainda não salvo")
+    pagina.js(f"{botao}.click()")
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Rascunho\nainda não salvo"
+    pagina.js(f"{botao}.click()")
+    pagina.js(f"{botao}.click()")
+
+    assert pagina.js(f"{comentario_js(pedido.id)}.value") == "Rascunho\nainda não salvo"
+    assert pagina.js(f"{comentario_js(pedido.id)}.dataset.salvo") == ""
+    assert repo_pedidos.alteracoes_comentario == []
+
+
+def test_marcar_pago_na_coluna_entregue_conclui_e_retira_o_card(pagina, servidor, repo_pedidos):
+    pedidos = pedido_na_etapa(repo_pedidos, servidor, "entregue", quantidade=2)
+    lento(repo_pedidos, "alterar_status_pagamento")
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    assert contadores(pagina) == [0, 0, 0, 2]
+
+    pagina.js(f"{pagamento_js(pedidos[0].id)}.click()")
+
+    # Sem remoção antes da resposta: o card continua, com o botão ocupado.
+    assert pagina.js(f"!!{card_js(pedidos[0].id)}")
+    assert pagina.js(f"{pagamento_js(pedidos[0].id)}.disabled") is True
+    texto = esperar_mensagem(pagina)
+    assert texto == "Pedido de Cliente 1 concluído (entregue e pago) e retirado do quadro."
+    papel = pagina.js("document.querySelector('#producao-mensagem .alerta').getAttribute('role')")
+    assert papel == "status"
+    assert not pagina.js(f"!!{card_js(pedidos[0].id)}")
+    assert contadores(pagina) == [0, 0, 0, 1]
+    # Foco no card vizinho da mesma coluna.
+    assert foco_no_card(pagina, pedidos[1].id)
+    assert pagina.js("document.activeElement.classList.contains('producao-recolher')")
+    assert repo_pedidos.pedidos[pedidos[0].id].status_pagamento == "pago"
+    assert repo_pedidos.etapas[pedidos[0].id] == "entregue"  # nada além do pagamento mudou
+
+    # Último card da coluna: o foco vai para a mensagem de sucesso.
+    pagina.js("document.getElementById('producao-mensagem').replaceChildren()")
+    pagina.js(f"{pagamento_js(pedidos[1].id)}.click()")
+    esperar_mensagem(pagina)
+    assert contadores(pagina) == [0, 0, 0, 0]
+    assert not pagina.js(
+        "document.querySelector('.coluna[data-etapa=entregue] .coluna-vazia').hidden"
+    )
+    assert pagina.js(
+        "document.activeElement === document.querySelector('#producao-mensagem .alerta')"
+    )
+
+    # Ao recarregar a página, os concluídos continuam fora; em Pedidos, continuam lá.
+    pagina.abrir("/producao")
+    assert contadores(pagina) == [0, 0, 0, 0]
+    pagina.abrir("/pedidos")
+    assert "Cliente 1" in pagina.js("document.querySelector('main').innerText")
+
+
+def test_pedido_pago_movido_para_entregue_sai_do_quadro(pagina, servidor, repo_pedidos):
+    pedidos = pedido_na_etapa(repo_pedidos, servidor, "aguardando_entrega", "pago", 2)
+    lento(repo_pedidos, "mover_etapa")
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    assert contadores(pagina) == [0, 0, 2, 0]
+
+    clicar_avancar(pagina, pedidos[1].id)
+    pagina.clicar("#confirmar-entrega button[value=confirmar]")
+    assert pagina.js(f"!!{card_js(pedidos[1].id)}")  # ainda esperando o servidor
+    texto = esperar_mensagem(pagina)
+
+    assert texto == "Pedido de Cliente 2 concluído (entregue e pago) e retirado do quadro."
+    assert not pagina.js(f"!!{card_js(pedidos[1].id)}")
+    assert contadores(pagina) == [0, 0, 1, 0]
+    assert foco_no_card(pagina, pedidos[0].id)  # vizinho na coluna de onde o card saiu
+    assert repo_pedidos.etapas[pedidos[1].id] == "entregue"
+
+
+def test_pedido_pendente_movido_para_entregue_continua(pagina, servidor, repo_pedidos):
+    (pedido,) = pedido_na_etapa(repo_pedidos, servidor, "aguardando_entrega")
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    clicar_avancar(pagina, pedido.id)
+    pagina.clicar("#confirmar-entrega button[value=confirmar]")
+
+    assert esperar_mensagem(pagina) == "Pedido de Cliente 1 movido para Entregue."
+    assert etapa_na_tela(pagina, pedido.id) == "entregue"
+    assert contadores(pagina) == [0, 0, 0, 1]
+
+
+@pytest.mark.parametrize("etapa", ["fila_producao", "em_producao", "aguardando_entrega"])
+def test_pagar_antes_da_entrega_mantem_o_card(pagina, servidor, repo_pedidos, etapa):
+    (pedido,) = pedido_na_etapa(repo_pedidos, servidor, etapa)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+
+    pagina.js(f"{pagamento_js(pedido.id)}.click()")
+
+    assert esperar_mensagem(pagina) == "Pedido de Cliente 1: Pagamento marcado como pago."
+    assert etapa_na_tela(pagina, pedido.id) == etapa
+    assert estado_pagamento(pagina, pedido.id)[0] == "pago"
+
+
+def test_falhas_mantem_o_card_status_e_etapa(pagina, servidor, repo_pedidos):
+    from app.pedidos_repositorio import FalhaAoAlterar, FalhaAoMover
+
+    entregue = pedido_na_etapa(repo_pedidos, servidor, "entregue")[0]
+    pago = pedido_na_etapa(repo_pedidos, servidor, "aguardando_entrega", "pago")[0]
+    repo_pedidos.falhar_em["alterar_pagamento"] = FalhaAoAlterar()
+    repo_pedidos.falhar_em["mover_etapa"] = FalhaAoMover()
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    expandir_todos(pagina)
+    antes = contadores(pagina)
+
+    pagina.js(f"{pagamento_js(entregue.id)}.click()")
+    assert esperar_mensagem(pagina).startswith("Não foi possível alterar o pagamento")
+    assert etapa_na_tela(pagina, entregue.id) == "entregue"
+    assert estado_pagamento(pagina, entregue.id)[0] == "pendente"
+    assert pagina.js(f"document.activeElement === {pagamento_js(entregue.id)}")
+
+    pagina.js("document.getElementById('producao-mensagem').replaceChildren()")
+    clicar_avancar(pagina, pago.id)
+    pagina.clicar("#confirmar-entrega button[value=confirmar]")
+    assert esperar_mensagem(pagina) == "Não foi possível mover o pedido agora. Tente novamente."
+    assert etapa_na_tela(pagina, pago.id) == "aguardando_entrega"
+    assert estado_pagamento(pagina, pago.id)[0] == "pago"
+
+    assert contadores(pagina) == antes
+    assert repo_pedidos.alteracoes_pagamento == [] and repo_pedidos.movimentos == []
+
+
+def test_conflito_ao_pagar_na_coluna_entregue_recarrega_o_quadro(pagina, servidor, repo_pedidos):
+    from dataclasses import replace
+
+    pedidos = pedido_na_etapa(repo_pedidos, servidor, "entregue", quantidade=2)
+    pagina.tela(1280, 800)
+    pagina.abrir("/producao")
+    # Outro usuário já marcou como pago: o pedido foi concluído fora desta tela.
+    repo_pedidos.pedidos[pedidos[0].id] = replace(pedidos[0], status_pagamento="pago")
+
+    pagina.js(f"{pagamento_js(pedidos[0].id)}.click()")
+    esperar(lambda: "outro usuário" in pagina.texto("#producao-mensagem"))
+
+    assert not pagina.js(f"!!{card_js(pedidos[0].id)}")  # quadro recarregado, sem o concluído
+    assert contadores(pagina) == [0, 0, 0, 1]
+    assert repo_pedidos.alteracoes_pagamento == []

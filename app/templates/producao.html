@@ -31,10 +31,13 @@
 </svg>
 {%- endmacro %}
 
+{# O card já vem recolhido do servidor (sem depender do JavaScript): mostra cliente, foto,
+   produtos, unidades e o comentário da produção; o botão mostra os detalhes (corpo) e as
+   ações. #}
 {% macro card(c) -%}
 {% set foto = imagens.get(c.imagem_caminho) if c.imagem_caminho else None %}
 {% set auditoria = texto_auditoria(c.comentario_atualizado_por_nome, c.comentario_atualizado_em) %}
-<li class="producao-card" data-pedido="{{ c.id }}" data-etapa="{{ c.etapa }}"
+<li class="producao-card recolhido" data-pedido="{{ c.id }}" data-etapa="{{ c.etapa }}"
   data-cliente="{{ c.cliente_nome }}"{% if c.etapa in movimentos %} draggable="true"{% endif %}>
   <div class="producao-card-topo">
     {% if foto %}
@@ -42,17 +45,17 @@
       width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
     {% endif %}
     <h3>{{ c.cliente_nome }}</h3>
-    <button type="button" class="producao-recolher" aria-expanded="true"
-      aria-controls="card-corpo-{{ c.id }}" title="Recolher pedido">
+    <button type="button" class="producao-recolher" aria-expanded="false"
+      aria-controls="card-corpo-{{ c.id }} card-acoes-{{ c.id }}" title="Expandir pedido">
       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 15 6-6 6 6"/></svg>
-      <span class="visualmente-oculto">Recolher pedido</span>
+      <span class="visualmente-oculto">Expandir pedido</span>
     </button>
   </div>
   <p class="producao-card-produtos">
     {{ c.produtos | join(", ") }}
     <span class="pedido-card-unidades">{{ c.quantidade_total }} {{ "unidade" if c.quantidade_total == 1 else "unidades" }}</span>
   </p>
-  <div class="producao-card-corpo" id="card-corpo-{{ c.id }}">
+  <div class="producao-card-corpo" id="card-corpo-{{ c.id }}" hidden>
   <dl class="producao-card-dados">
     <div><dt>Pagamento</dt><dd class="pedido-card-pagamento">{{ c.forma_pagamento | pagamento }} {{ botao_pagamento(c) }}</dd></div>
     <div><dt>Entrega</dt><dd>{{ c.tipo_entrega | entrega }}</dd></div>
@@ -64,6 +67,7 @@
   {% if c.imagem_caminho and not foto %}
   <p class="pedido-card-aviso">Foto indisponível no momento.</p>
   {% endif %}
+  </div>
   <div class="producao-comentario">
     <label for="comentario-{{ c.id }}">Comentários da produção</label>
     <textarea id="comentario-{{ c.id }}" class="campo-texto producao-comentario-campo" rows="2"
@@ -75,7 +79,7 @@
     </div>
     <div class="producao-comentario-mensagem" aria-live="polite"></div>
   </div>
-  <div class="producao-card-acoes">
+  <div class="producao-card-acoes" id="card-acoes-{{ c.id }}" hidden>
     <a class="botao botao-secundario" href="/pedidos/{{ c.id }}"
       aria-label="Ver pedido de {{ c.cliente_nome }}">Ver pedido</a>
     {% for m in movimentos.get(c.etapa, []) %}
@@ -83,7 +87,6 @@
       data-destino="{{ m.destino }}"
       aria-label="{{ m.texto }}: pedido de {{ c.cliente_nome }}">{{ m.texto }}</button>
     {% endfor %}
-  </div>
   </div>
 </li>
 {%- endmacro %}

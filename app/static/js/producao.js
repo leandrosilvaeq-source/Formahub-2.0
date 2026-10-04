@@ -6,10 +6,15 @@
 // responde "conflito" e o quadro é recarregado. Quem move é sempre o usuário da sessão.
 // "Entregue" pede confirmação. Nenhum dado é guardado no navegador.
 //
-// Cada card pode ser recolhido (só na tela: ao recarregar a página, volta aberto), tem o
+// Cada card começa recolhido e pode ser expandido (só na tela: ao recarregar a página, volta
+// recolhido), tem o
 // comentário da produção (salvo à parte das observações do pedido) e o botão do status do
 // pagamento, que alterna entre Pendente e Pago. Comentário e pagamento seguem a mesma regra
 // do movimento: o valor atual vai junto e a tela só muda depois da confirmação do servidor.
+// Recolhido, o card esconde os detalhes e as ações; o comentário continua editável.
+//
+// Pedido concluído (entregue e pago) sai do quadro: o banco já não o lista, e a tela o retira
+// assim que o servidor confirma o pagamento (na coluna Entregue) ou a entrega (já pago).
 (function () {
   "use strict";
 
@@ -30,9 +35,9 @@
   };
   let arrastado = null;
   let ocupado = false;
-  // Cards recolhidos nesta visita (ids). Só em memória: o quadro atualizado mantém o estado,
-  // a página recarregada volta com tudo aberto.
-  const recolhidos = new Set();
+  // Cards expandidos nesta visita (ids); todos começam recolhidos. Só em memória: o quadro
+  // atualizado mantém o estado, a página recarregada volta com tudo recolhido.
+  const expandidos = new Set();
 
   function quadro() {
     return document.getElementById("quadro");
@@ -126,6 +131,33 @@
     focoDoCard(card);
   }
 
+  // Mesma regra da função listar_producao do banco.
+  function concluido(etapa, statusPagamento) {
+    return etapa === "entregue" && statusPagamento === "pago";
+  }
+
+  function statusDoPagamento(card) {
+    return card.querySelector(".producao-pagamento").dataset.status;
+  }
+
+  // Chamado só depois da confirmação do servidor. O foco vai para o card vizinho na mesma
+  // coluna ou, se ela ficou vazia, para a mensagem de sucesso.
+  function retirarConcluido(card) {
+    const vizinho = card.nextElementSibling || card.previousElementSibling;
+    const cliente = card.dataset.cliente;
+    expandidos.delete(card.dataset.pedido);
+    card.remove();
+    atualizarContadores();
+    avisar("Pedido de " + cliente + " concluído (entregue e pago) e retirado do quadro.", "sucesso");
+    if (vizinho) {
+      vizinho.querySelector(".producao-recolher").focus();
+      return;
+    }
+    const alerta = mensagem.querySelector(".alerta");
+    alerta.tabIndex = -1;
+    alerta.focus();
+  }
+
   async function recarregarQuadro() {
     const atual = quadro();
     atual.classList.add("carregando");
@@ -141,10 +173,10 @@
       const novo = documento.getElementById("quadro");
       if (!resposta.ok || !novo) throw new Error("quadro indisponível");
       atual.replaceWith(document.importNode(novo, true));
-      recolhidos.forEach(function (id) {
+      expandidos.forEach(function (id) {
         const card = cardDoPedido(id);
-        if (card) definirRecolhido(card, true);
-        else recolhidos.delete(id);
+        if (card) definirRecolhido(card, false);
+        else expandidos.delete(id);
       });
       mensagem.replaceChildren();
       return true;
@@ -239,6 +271,10 @@
     botao.textContent = rotulo;
 
     if (corpo && corpo.ok) {
+      if (concluido(corpo.etapa, statusDoPagamento(card))) {
+        retirarConcluido(card);
+        return;
+      }
       aplicarMovimento(card, corpo);
       avisar("Pedido de " + cliente + " movido para " + corpo.titulo + ".", "sucesso");
       return;
@@ -265,12 +301,15 @@
     const botao = card.querySelector(".producao-recolher");
     const texto = recolher ? "Expandir pedido" : "Recolher pedido";
     card.classList.toggle("recolhido", recolher);
-    card.querySelector(".producao-card-corpo").hidden = recolher;
+    // Detalhes e ações (as regiões do aria-controls); o comentário fica sempre à vista.
+    botao.getAttribute("aria-controls").split(" ").forEach(function (id) {
+      document.getElementById(id).hidden = recolher;
+    });
     botao.setAttribute("aria-expanded", recolher ? "false" : "true");
     botao.title = texto;
     botao.querySelector(".visualmente-oculto").textContent = texto;
-    if (recolher) recolhidos.add(card.dataset.pedido);
-    else recolhidos.delete(card.dataset.pedido);
+    if (recolher) expandidos.delete(card.dataset.pedido);
+    else expandidos.add(card.dataset.pedido);
   }
 
   // ---------- Comentário da produção e status do pagamento ----------
@@ -332,11 +371,11 @@
       return;
     }
     if (corpo && corpo.erro === "conflito") {
-      // O quadro volta com o comentário mais recente; o texto digitado continua no campo.
+      // O quadro volta com o comentário mais recente; o texto digitado continua no campo (e o
+      // card continua recolhido, se estava: o comentário fica à vista nos dois estados).
       if (await recarregarQuadro()) {
         const recarregado = cardDoPedido(card.dataset.pedido);
         if (recarregado) {
-          if (recarregado.classList.contains("recolhido")) definirRecolhido(recarregado, false);
           const novoCampo = recarregado.querySelector(".producao-comentario-campo");
           novoCampo.value = digitado;
           avisarNoCard(recarregado, corpo.mensagem, "erro");
@@ -376,6 +415,10 @@
     botao.removeAttribute("aria-busy");
     const corpo = r.corpo;
     if (corpo && corpo.ok) {
+      if (concluido(card.dataset.etapa, corpo.status)) {
+        retirarConcluido(card);
+        return;
+      }
       mostrarPagamento(botao, corpo);
       avisar("Pedido de " + card.dataset.cliente + ": " + corpo.mensagem, "sucesso");
       botao.focus();

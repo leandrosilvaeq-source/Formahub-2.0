@@ -172,8 +172,13 @@ class RepositorioPedidosMemoria:
     def listar_producao(self) -> list[CardProducao]:
         self._talvez_falhar("listar_producao")
         ordem_etapa = ["fila_producao", "em_producao", "aguardando_entrega", "entregue"]
+        # Mesma regra do banco: pedido concluído (entregue e pago) fica fora do quadro.
         pedidos = sorted(
-            self.pedidos.values(),
+            (
+                p
+                for p in self.pedidos.values()
+                if not (self.etapas[p.id] == "entregue" and p.status_pagamento == "pago")
+            ),
             key=lambda p: (ordem_etapa.index(self.etapas[p.id]), self.criado_em[p.id], p.id),
         )
         cards = []

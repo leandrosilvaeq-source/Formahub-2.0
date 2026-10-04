@@ -35,9 +35,13 @@ def pagar(pedido_id, esperado, novo, **extra):
     return client.post(f"/producao/{pedido_id}/pagamento", data={**dados, **extra})
 
 
-def corpo_do_card(c, pedido_id):
-    inicio = c.index(f'<div class="producao-card-corpo" id="card-corpo-{pedido_id}">')
-    return c[:inicio], c[inicio:]
+def partes_do_card(c, pedido_id):
+    """(sempre à vista, oculto no card recolhido): o oculto são o corpo e as ações."""
+    corpo_inicio = c.index(f'<div class="producao-card-corpo" id="card-corpo-{pedido_id}"')
+    corpo_fim = c.index('<div class="producao-comentario">', corpo_inicio)
+    acoes_inicio = c.index(f'<div class="producao-card-acoes" id="card-acoes-{pedido_id}"')
+    visivel = c[:corpo_inicio] + c[corpo_fim:acoes_inicio]
+    return visivel, c[corpo_inicio:corpo_fim] + c[acoes_inicio:]
 
 
 def como_kassia(request: Request) -> Usuario:
@@ -77,14 +81,29 @@ def test_card_tem_botao_de_recolher_acessivel(repo_pedidos):
     c = card(client.get("/producao").text, pedido.id)
 
     botao = re.search(r'<button type="button" class="producao-recolher"[^>]*>', c).group(0)
-    assert 'aria-expanded="true"' in botao
-    assert f'aria-controls="card-corpo-{pedido.id}"' in botao
-    assert 'title="Recolher pedido"' in botao
-    assert '<span class="visualmente-oculto">Recolher pedido</span>' in c
-    assert f'id="card-corpo-{pedido.id}"' in c
+    # O card já vem recolhido do servidor: nada depende do JavaScript para esconder.
+    assert c.startswith('<li class="producao-card recolhido" ')
+    assert 'aria-expanded="false"' in botao
+    # Controla as duas regiões que somem no card recolhido: detalhes e ações.
+    assert f'aria-controls="card-corpo-{pedido.id} card-acoes-{pedido.id}"' in botao
+    assert 'title="Expandir pedido"' in botao
+    assert '<span class="visualmente-oculto">Expandir pedido</span>' in c
+    assert f'<div class="producao-card-corpo" id="card-corpo-{pedido.id}" hidden>' in c
+    assert f'<div class="producao-card-acoes" id="card-acoes-{pedido.id}" hidden>' in c
 
 
-def test_fora_do_corpo_ficam_so_cliente_produtos_unidades_e_o_botao(repo_pedidos):
+def test_todos_os_cards_comecam_recolhidos(repo_pedidos):
+    for etapa in ("fila_producao", "em_producao", "aguardando_entrega", "entregue"):
+        repo_pedidos.etapas[novo_pedido(repo_pedidos).id] = etapa
+
+    html = client.get("/producao").text
+
+    assert html.count('<li class="producao-card recolhido" ') == 4
+    assert html.count('aria-expanded="false"') == 4 and 'aria-expanded="true"' not in html
+    assert len(re.findall(r'class="producao-card-(?:corpo|acoes)" id="[^"]+" hidden>', html)) == 8
+
+
+def test_recolhido_mostra_cliente_foto_produtos_unidades_e_comentario(repo_pedidos):
     pedido = novo_pedido(
         repo_pedidos,
         itens=[item(1, "Caneca", 2, "1.00", com_imagem(repo_pedidos, 1, 1))],
@@ -93,32 +112,50 @@ def test_fora_do_corpo_ficam_so_cliente_produtos_unidades_e_o_botao(repo_pedidos
     repo_pedidos.etapas[pedido.id] = "em_producao"
     repo_pedidos.comentarios[pedido.id] = ("Pintar de azul", datetime(2026, 10, 1, 9), 2)
 
-    cabeca, corpo = corpo_do_card(card(client.get("/producao").text, pedido.id), pedido.id)
+    c = card(client.get("/producao").text, pedido.id)
+    visivel, oculto = partes_do_card(c, pedido.id)
 
-    assert "<h3>Cliente Teste</h3>" in cabeca and "Caneca" in cabeca
-    assert '<span class="pedido-card-unidades">2 unidades</span>' in cabeca
-    assert "producao-recolher" in cabeca
-    # A foto fica no topo, mas o CSS a esconde no card recolhido (.recolhido).
-    assert "producao-card-foto" in cabeca
-    for so_no_corpo in (
+    for sempre in (
+        "<h3>Cliente Teste</h3>",
+        "Caneca",
+        '<span class="pedido-card-unidades">2 unidades</span>',
+        "producao-card-foto",
+        "Comentários da produção",
+        ">Pintar de azul</textarea>",
+        ">Salvar comentário</button>",
+        "Atualizado por Kassia em 01/10/2026 às 09:00",
+        "producao-recolher",
+    ):
+        assert sempre in visivel, sempre
+        assert sempre not in oculto, sempre
+    for so_expandido in (
         "Prazo",
         "Pagamento",
         "Entrega",
         "Observação original",
-        "Comentários da produção",
-        "Pintar de azul",
         "Ver pedido",
         "producao-mover",
         "producao-pagamento",
     ):
-        assert so_no_corpo not in cabeca, so_no_corpo
-        assert so_no_corpo in corpo, so_no_corpo
+        assert so_expandido not in visivel, so_expandido
+        assert so_expandido in oculto, so_expandido
+    # Uma única foto no card (a mesma nos dois estados): uma só URL assinada.
+    assert c.count("<img") == 1 and len(repo_pedidos.assinaturas) == 1
 
 
-def test_css_esconde_a_foto_do_card_recolhido():
+def test_recolhido_sem_foto_nao_tem_imagem(repo_pedidos):
+    pedido = novo_pedido(repo_pedidos)
+
+    visivel, _ = partes_do_card(card(client.get("/producao").text, pedido.id), pedido.id)
+
+    assert "<img" not in visivel and "pedido-card-aviso" not in visivel
+    assert repo_pedidos.assinaturas == []
+
+
+def test_css_nao_esconde_mais_a_foto_do_card_recolhido():
     css = (RAIZ / "app" / "static" / "css" / "app.css").read_text(encoding="utf-8")
 
-    assert ".producao-card.recolhido .producao-card-foto { display: none; }" in css
+    assert ".recolhido .producao-card-foto" not in css
     assert ".producao-recolher:focus-visible" in css
 
 
@@ -510,11 +547,11 @@ def funcao(sql, nome):
     return corpo[: corpo.index("$corpo$;")]
 
 
-def test_migration_e_a_mais_recente_e_nao_mexe_em_dados():
+def test_migration_existe_e_nao_mexe_em_dados():
     migrations = sorted(p.name for p in (RAIZ / "supabase" / "migrations").glob("*.sql"))
     sql = sql_sem_comentarios()
 
-    assert migrations[-1] == MIGRATION.name
+    assert MIGRATION.name in migrations
     assert re.search(r"observacoes\s+text", sql)  # devolvida, nunca alterada
     for proibido in (
         "drop column",

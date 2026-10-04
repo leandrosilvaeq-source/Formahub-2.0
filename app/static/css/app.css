@@ -1816,6 +1816,12 @@ main {
 .producao-mensagem:empty { display: none; }
 .producao-mensagem .alerta { margin-bottom: 0.5rem; }
 
+/* Recebe o foco quando o card concluído sai e a coluna fica sem cards. */
+.producao-mensagem .alerta:focus-visible {
+  outline: 3px solid var(--cor-foco);
+  outline-offset: 2px;
+}
+
 .quadro {
   display: grid;
   gap: 0.75rem;
@@ -1858,11 +1864,17 @@ main {
   stroke-linejoin: round;
 }
 
+/* Título da coluna em destaque (Sora Bold). Ícone e contador não mudam. O título quebra
+   entre as palavras, sem invadir o contador nem sair da coluna; partir uma palavra é só a
+   última proteção contra overflow. */
 .coluna-topo h2 {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.5rem;
+  line-height: 1.15;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 .coluna-contador {
@@ -1926,6 +1938,11 @@ main {
 .producao-card.arrastando { opacity: 0.45; }
 .producao-card.movendo { opacity: 0.6; }
 
+/* Textos do card compactos, com mínimo de legibilidade: 12 px no cliente, produtos, valores,
+   campo, selo, mensagens e botões; 11 px nos rótulos e na última atualização do comentário.
+   Ícones, foto e alturas mínimas dos controles (44 px) não mudam. */
+.producao-card .botao { font-size: 0.75rem; } /* 12px */
+
 .producao-card-topo {
   display: flex;
   align-items: center;
@@ -1937,7 +1954,7 @@ main {
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.75rem; /* 12px */
   overflow-wrap: anywhere;
 }
 
@@ -1953,6 +1970,7 @@ main {
 
 .producao-card-produtos {
   margin: 0;
+  font-size: 0.75rem; /* 12px */
   font-weight: 600;
   overflow-wrap: anywhere;
 }
@@ -1970,24 +1988,25 @@ main {
 .producao-card-obs { grid-column: 1 / -1; }
 
 .producao-card-dados dt {
-  font-size: 0.72rem;
+  font-size: 0.6875rem; /* 11px */
   font-weight: 700;
   color: var(--cor-texto-suave);
 }
 
 .producao-card-dados dd {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.75rem; /* 12px */
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
 .producao-card-obs dd { white-space: pre-line; }
 
-.producao-card .pedido-card-aviso { margin: 0; }
+.producao-card .pedido-card-aviso { margin: 0; font-size: 0.75rem; } /* 12px */
 
-/* Recolher/expandir: só o estado na tela (nada é gravado). Recolhido mostra cliente,
-   produtos e unidades; o restante (corpo e foto) fica oculto. */
+/* Recolher/expandir: só o estado na tela (nada é gravado). Recolhido mostra cliente, foto,
+   produtos, unidades e o comentário da produção; o corpo (detalhes) e as ações ficam ocultos
+   pelo atributo hidden. */
 .producao-card-corpo {
   display: grid;
   gap: 0.5rem;
@@ -2028,8 +2047,6 @@ main {
 
 .producao-recolher[aria-expanded="false"] svg { transform: rotate(180deg); }
 
-.producao-card.recolhido .producao-card-foto { display: none; }
-
 .producao-recolher:focus-visible,
 .producao-pagamento:focus-visible {
   outline: 3px solid var(--cor-foco);
@@ -2044,6 +2061,7 @@ main {
   justify-content: center;
   margin-left: 0.15rem;
   font-family: inherit;
+  font-size: 0.75rem; /* 12px (selo) */
   cursor: pointer;
   vertical-align: middle;
   transition: filter 0.15s;
@@ -2064,14 +2082,14 @@ main {
 }
 
 .producao-comentario label {
-  font-size: 0.72rem;
+  font-size: 0.6875rem; /* 11px */
   font-weight: 700;
   color: var(--cor-texto-suave);
 }
 
 .producao-comentario-campo {
   min-height: 4.2rem;
-  font-size: 0.9rem;
+  font-size: 0.75rem; /* 12px */
 }
 
 .producao-comentario-rodape {
@@ -2086,12 +2104,12 @@ main {
   flex: 1 1 10rem;
   margin: 0;
   color: var(--cor-texto-suave);
-  font-size: 0.75rem;
+  font-size: 0.6875rem; /* 11px */
 }
 
 .producao-comentario-info:empty { display: none; }
 
-.producao-comentario-mensagem { font-size: 0.85rem; }
+.producao-comentario-mensagem { font-size: 0.75rem; } /* 12px */
 .producao-comentario-mensagem:empty { display: none; }
 .producao-comentario-mensagem .alerta { margin: 0; padding: 0.45rem 0.65rem; }
 

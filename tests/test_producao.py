@@ -24,7 +24,7 @@ def coluna(html, etapa):
 
 
 def card(html, pedido_id):
-    inicio = html.index(f'<li class="producao-card" data-pedido="{pedido_id}"')
+    inicio = html.rindex("<li", 0, html.index(f'data-pedido="{pedido_id}"'))
     return html[inicio : html.index("</li>", inicio)]
 
 
