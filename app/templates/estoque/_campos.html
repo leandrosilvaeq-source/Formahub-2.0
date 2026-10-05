@@ -1,0 +1,33 @@
+{# Campos dos formulários do Estoque (mesmas classes e mensagens do Novo pedido). #}
+
+{% macro erro(mensagem, id) -%}
+  {% if mensagem %}<p class="campo-erro" id="{{ id }}-erro">{{ mensagem }}</p>{% endif %}
+{%- endmacro %}
+
+{% macro invalido(mensagem, id) -%}
+  {% if mensagem %} aria-invalid="true" aria-describedby="{{ id }}-erro"{% endif %}
+{%- endmacro %}
+
+{% macro texto(form, nome, rotulo, extra="") -%}
+{% set mensagem = form.erros.get(nome) %}
+<div class="campo{% if mensagem %} tem-erro{% endif %}">
+  <label for="{{ nome }}">{{ rotulo }} <span class="obrigatorio">*</span></label>
+  <input id="{{ nome }}" name="{{ nome }}" type="text" value="{{ form[nome] }}" autocomplete="off"
+    {{- extra | safe }}{{ invalido(mensagem, nome) }}>
+  {{ erro(mensagem, nome) }}
+</div>
+{%- endmacro %}
+
+{% macro data_compra(form) -%}
+{% set mensagem = form.erros.get("data_compra") %}
+<div class="campo{% if mensagem %} tem-erro{% endif %}">
+  <label for="data_compra">Data de compra <span class="obrigatorio">*</span></label>
+  <input id="data_compra" name="data_compra" type="date" value="{{ form.data_compra }}"
+    min="2000-01-01" max="2099-12-31"{{ invalido(mensagem, "data_compra") }}>
+  {{ erro(mensagem, "data_compra") }}
+</div>
+{%- endmacro %}
+
+{% macro alertas(erro) -%}
+{% if erro %}<div class="alerta alerta-erro" role="alert">{{ erro }}</div>{% endif %}
+{%- endmacro %}

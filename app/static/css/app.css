@@ -2187,3 +2187,218 @@ main {
     transition: none !important;
   }
 }
+
+/* ==========================================================
+   Estoque (/estoque): três áreas com busca, filtros e totais.
+   Celular: cada lote vira um cartão com rótulos; tabela a partir
+   de 760 px (acessórios e embalagens) e 1024 px (filamentos).
+   ========================================================== */
+.estoque { padding-bottom: calc(var(--espaco) * 2); }
+
+.estoque-area { scroll-margin-top: var(--espaco); }
+
+.estoque-area-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.secao .estoque-area-topo h2 { margin: 0; font-size: 1.15rem; }
+
+.estoque-total {
+  flex: 1 1 12rem;
+  margin: 0;
+  color: var(--cor-texto-suave);
+  font-size: 0.875rem;
+}
+
+.estoque-total strong {
+  color: var(--cor-texto);
+  font-family: var(--fonte-titulo);
+  font-size: 1rem;
+}
+
+.estoque-total-rotulo::after { content: ":"; }
+
+.estoque-area-topo .botao { margin-left: auto; }
+
+.estoque select,
+.estoque-form select {
+  width: 100%;
+  min-height: var(--alvo-toque);
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+  font: inherit;
+  font-weight: 500;
+}
+
+.estoque select:hover,
+.estoque-form select:hover { border-color: var(--cor-primaria); }
+
+.estoque select:focus,
+.estoque-form select:focus {
+  outline: none;
+  border-color: var(--cor-foco);
+  box-shadow: 0 0 0 1px var(--cor-foco), 0 0 0 4px var(--cor-foco-halo);
+}
+
+.estoque-form .tem-erro select {
+  border-color: var(--cor-erro);
+  box-shadow: 0 0 0 1px var(--cor-erro);
+}
+
+.estoque-filtros {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem 0.75rem;
+  align-items: end;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.estoque-filtro-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.estoque-filtro-acoes .botao { flex: 1 1 auto; }
+
+.estoque-vazio {
+  margin: 0;
+  padding: 1rem 0 0.25rem;
+  color: var(--cor-texto-suave);
+  text-align: center;
+}
+
+/* Tabela: no celular, cada linha é um cartão com o rótulo de cada valor */
+.estoque-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.estoque-tabela thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.estoque-tabela tbody { display: grid; gap: 0.6rem; }
+
+.estoque-tabela tr {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-campo);
+}
+
+.estoque-tabela th,
+.estoque-tabela td {
+  min-width: 0;
+  padding: 0.15rem 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.estoque-tabela tbody th {
+  font-family: var(--fonte-titulo);
+  font-size: 1rem;
+  padding-bottom: 0.3rem;
+}
+
+.estoque-tabela td[data-rotulo] {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.estoque-tabela td[data-rotulo]::before {
+  content: attr(data-rotulo);
+  flex: none;
+  color: var(--cor-texto-suave);
+  font-weight: 600;
+}
+
+.estoque-acao { padding-top: 0.5rem !important; }
+.estoque-acao .botao { width: 100%; }
+
+.estoque-form .estoque-acoes { justify-content: flex-end; margin-bottom: calc(var(--espaco) * 2); }
+
+@media (min-width: 640px) {
+  .estoque-grade { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .estoque-filtros { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .estoque-filtros .estoque-busca { grid-column: 1 / -1; }
+  .estoque-filtro-acoes { grid-column: 1 / -1; justify-content: flex-end; }
+  .estoque-filtro-acoes .botao { flex: none; }
+}
+
+/* Tabela de verdade: cabeçalho visível e uma linha por lote */
+@media (min-width: 760px) {
+  .estoque-filtros:not(.estoque-filtros-filamentos) {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto;
+  }
+  .estoque-filtros:not(.estoque-filtros-filamentos) .estoque-busca,
+  .estoque-filtros:not(.estoque-filtros-filamentos) .estoque-filtro-acoes { grid-column: auto; }
+
+  .estoque-tabela-itens thead { position: static; width: auto; height: auto; clip-path: none; }
+  .estoque-tabela-itens tbody { display: table-row-group; }
+  .estoque-tabela-itens tr { display: table-row; border: 0; }
+  .estoque-tabela-itens th,
+  .estoque-tabela-itens td {
+    padding: 0.55rem 0.6rem;
+    border-bottom: 1px solid var(--cor-borda);
+    vertical-align: middle;
+  }
+  .estoque-tabela-itens thead th {
+    color: var(--cor-texto-suave);
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .estoque-tabela-itens tbody th { font-size: 0.875rem; padding-bottom: 0.55rem; }
+  .estoque-tabela-itens td[data-rotulo] { display: table-cell; }
+  .estoque-tabela-itens td[data-rotulo]::before { content: none; }
+  .estoque-tabela-itens .numero { text-align: right; white-space: nowrap; }
+  .estoque-tabela-itens .estoque-acao { width: 1%; padding-top: 0.55rem !important; }
+  .estoque-tabela-itens .estoque-acao .botao { width: auto; }
+}
+
+@media (min-width: 1024px) {
+  .estoque-filtros-filamentos {
+    grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr)) minmax(11.5rem, 1.2fr) auto;
+  }
+  .estoque-filtros-filamentos .estoque-busca,
+  .estoque-filtros-filamentos .estoque-filtro-acoes { grid-column: auto; }
+
+  .estoque-tabela-filamentos thead { position: static; width: auto; height: auto; clip-path: none; }
+  .estoque-tabela-filamentos tbody { display: table-row-group; }
+  .estoque-tabela-filamentos tr { display: table-row; border: 0; }
+  .estoque-tabela-filamentos th,
+  .estoque-tabela-filamentos td {
+    padding: 0.55rem 0.5rem;
+    border-bottom: 1px solid var(--cor-borda);
+    vertical-align: middle;
+  }
+  .estoque-tabela-filamentos thead th {
+    color: var(--cor-texto-suave);
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+  .estoque-tabela-filamentos tbody th { font-size: 0.875rem; padding-bottom: 0.55rem; }
+  .estoque-tabela-filamentos td[data-rotulo] { display: table-cell; }
+  .estoque-tabela-filamentos td[data-rotulo]::before { content: none; }
+  .estoque-tabela-filamentos .numero { text-align: right; white-space: nowrap; }
+  .estoque-tabela-filamentos .estoque-acao { width: 1%; padding-top: 0.55rem !important; }
+  .estoque-tabela-filamentos .estoque-acao .botao { width: auto; }
+}

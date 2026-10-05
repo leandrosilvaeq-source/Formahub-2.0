@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}Estoque · FormaHub 2.0{% endblock %}
+
+{# Campos ocultos com a busca das outras áreas: filtrar uma área não limpa as demais. #}
+{% macro manter(prefixo) -%}
+  {% for nome, valor in atuais.items() if valor and not nome.startswith(prefixo ~ "_") %}
+  <input type="hidden" name="{{ nome }}" value="{{ valor }}">
+  {% endfor %}
+{%- endmacro %}
+
+{% macro opcoes_ordem(ordens, atual) -%}
+  {% for codigo, (rotulo, _chave, _decrescente) in ordens.items() %}
+  <option value="{{ codigo }}"{% if codigo == atual %} selected{% endif %}>{{ rotulo }}</option>
+  {% endfor %}
+{%- endmacro %}
+
+{% macro busca(prefixo, consulta, rotulo) -%}
+<div class="campo estoque-busca">
+  <label for="{{ prefixo }}_busca">Buscar</label>
+  <input id="{{ prefixo }}_busca" name="{{ prefixo }}_busca" type="search" value="{{ consulta.busca }}"
+    maxlength="60" placeholder="{{ rotulo }}" autocomplete="off">
+</div>
+{%- endmacro %}
+
+{% macro filtro_acoes(ancora, consulta) -%}
+<div class="estoque-filtro-acoes">
+  <button type="submit" class="botao botao-secundario">Aplicar</button>
+  {% if consulta.filtrando %}
+  <a class="botao botao-secundario" href="/estoque#{{ ancora }}">Limpar</a>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% macro cabecalho(id, titulo, total_rotulo, total, lotes, cadastrados, filtrando, novo_url, novo_texto) -%}
+<div class="estoque-area-topo">
+  <h2 id="{{ id }}-titulo">{{ titulo }}</h2>
+  <p class="estoque-total" id="{{ id }}-total">
+    <span class="estoque-total-rotulo">{{ "Total filtrado" if filtrando else total_rotulo }}</span>
+    <strong>{{ total }}</strong>
+    <span class="estoque-total-lotes">· {{ lotes }} {{ "lote" if lotes == 1 else "lotes" }}{% if filtrando %} de {{ cadastrados }}{% endif %}</span>
+  </p>
+  <a class="botao botao-primario" href="{{ novo_url }}">{{ novo_texto }}</a>
+</div>
+{%- endmacro %}
+
+{% macro vazio(cadastrados, nome_plural, ancora) -%}
+{% if not cadastrados %}
+<p class="estoque-vazio">Nenhum lote de {{ nome_plural }} cadastrado ainda.</p>
+{% else %}
+<p class="estoque-vazio">Nenhum lote encontrado com essa busca. <a href="/estoque#{{ ancora }}">Limpar filtros</a></p>
+{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="estoque">
+
+<div class="pagina-topo">
+  <div>
+    <h1>Estoque</h1>
+    <p>Saldos disponíveis dos insumos de produção, por lote de compra.</p>
+  </div>
+  <nav class="pagina-topo-acoes" aria-label="Áreas do estoque">
+    <a class="botao botao-secundario" href="#filamentos">Filamentos</a>
+    <a class="botao botao-secundario" href="#acessorios">Acessórios</a>
+    <a class="botao botao-secundario" href="#embalagens">Embalagens</a>
+  </nav>
+</div>
+
+{% if sucesso %}
+<div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>
+{% endif %}
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+<a class="botao botao-secundario" href="/estoque">Tentar novamente</a>
+{% else %}
+
+{# ---------- Filamentos ---------- #}
+{% set f = filamentos %}
+<section class="secao estoque-area" id="filamentos" aria-labelledby="filamentos-titulo">
+  {{ cabecalho("filamentos", "Filamentos", "Peso disponível", f.total | peso, f.lotes | length, f.cadastrados, f.consulta.filtrando, "/estoque/filamentos/novo", "Novo filamento") }}
+
+  {% if f.cadastrados %}
+  <form class="estoque-filtros estoque-filtros-filamentos" method="get" action="/estoque#filamentos" role="search" aria-label="Buscar filamentos">
+    {{ manter("f") }}
+    {{ busca("f", f.consulta, "Cor, material, tipo ou marca") }}
+    <div class="campo">
+      <label for="f_material">Material</label>
+      <select id="f_material" name="f_material">
+        <option value="">Todos</option>
+        {% for material in f.materiais %}
+        <option value="{{ material }}"{% if material | lower == f.consulta.material | lower %} selected{% endif %}>{{ material }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label for="f_tipo">Tipo</label>
+      <select id="f_tipo" name="f_tipo">
+        <option value="">Todos</option>
+        {% for codigo, rotulo in tipos.items() %}
+        <option value="{{ codigo }}"{% if codigo == f.consulta.tipo %} selected{% endif %}>{{ rotulo }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo">
+      <label for="f_ordem">Ordenar por</label>
+      <select id="f_ordem" name="f_ordem">{{ opcoes_ordem(ordens_filamento, f.consulta.ordem) }}</select>
+    </div>
+    {{ filtro_acoes("filamentos", f.consulta) }}
+  </form>
+  {% endif %}
+
+  {% if f.lotes %}
+  <table class="estoque-tabela estoque-tabela-filamentos">
+    <thead>
+      <tr>
+        <th scope="col">Cor</th>
+        <th scope="col">Material</th>
+        <th scope="col">Tipo</th>
+        <th scope="col">Marca</th>
+        <th scope="col" class="numero">Peso disponível (g)</th>
+        <th scope="col">Data de compra</th>
+        <th scope="col" class="numero">Custo/kg (R$)</th>
+        <th scope="col"><span class="visualmente-oculto">Ações</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lote in f.lotes %}
+      <tr>
+        <th scope="row" data-rotulo="Cor">{{ lote.cor }}</th>
+        <td data-rotulo="Material">{{ lote.material }}</td>
+        <td data-rotulo="Tipo">{{ tipos.get(lote.tipo, lote.tipo) }}</td>
+        <td data-rotulo="Marca">{{ lote.marca }}</td>
+        <td data-rotulo="Peso disponível" class="numero">{{ lote.peso_g | peso }}</td>
+        <td data-rotulo="Data de compra">{{ lote.data_compra | data_compra }}</td>
+        <td data-rotulo="Custo/kg" class="numero">{{ lote.custo_kg | brl }}</td>
+        <td class="estoque-acao">
+          <a class="botao botao-secundario" href="/estoque/filamentos/{{ lote.id }}/editar"
+            aria-label="Editar lote de {{ lote.cor }} {{ lote.material }} comprado em {{ lote.data_compra | data_compra }}">Editar</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ vazio(f.cadastrados, "filamentos", "filamentos") }}
+  {% endif %}
+</section>
+
+{# ---------- Acessórios e Embalagens ---------- #}
+{% for a in areas %}
+{% set area = a.area %}
+<section class="secao estoque-area" id="{{ area.slug }}" aria-labelledby="{{ area.slug }}-titulo">
+  {{ cabecalho(area.slug, area.plural, "Unidades disponíveis", a.total | unidades, a.lotes | length, a.cadastrados, a.consulta.filtrando, "/estoque/%s/novo" % area.slug, "Nov%s %s" % ("a" if area.categoria == "embalagem" else "o", area.singular | lower)) }}
+
+  {% if a.cadastrados %}
+  <form class="estoque-filtros" method="get" action="/estoque#{{ area.slug }}" role="search" aria-label="Buscar {{ area.plural | lower }}">
+    {{ manter(a.prefixo) }}
+    {{ busca(a.prefixo, a.consulta, "Nome") }}
+    <div class="campo">
+      <label for="{{ a.prefixo }}_ordem">Ordenar por</label>
+      <select id="{{ a.prefixo }}_ordem" name="{{ a.prefixo }}_ordem">{{ opcoes_ordem(ordens_item, a.consulta.ordem) }}</select>
+    </div>
+    {{ filtro_acoes(area.slug, a.consulta) }}
+  </form>
+  {% endif %}
+
+  {% if a.lotes %}
+  <table class="estoque-tabela estoque-tabela-itens">
+    <thead>
+      <tr>
+        <th scope="col">{{ area.singular }}</th>
+        <th scope="col" class="numero">Quantidade disponível (un)</th>
+        <th scope="col">Data de compra</th>
+        <th scope="col" class="numero">Custo por unidade (R$)</th>
+        <th scope="col"><span class="visualmente-oculto">Ações</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for lote in a.lotes %}
+      <tr>
+        <th scope="row" data-rotulo="{{ area.singular }}">{{ lote.nome }}</th>
+        <td data-rotulo="Quantidade disponível" class="numero">{{ lote.quantidade | unidades }}</td>
+        <td data-rotulo="Data de compra">{{ lote.data_compra | data_compra }}</td>
+        <td data-rotulo="Custo por unidade" class="numero">{{ lote.custo_unitario | brl }}</td>
+        <td class="estoque-acao">
+          <a class="botao botao-secundario" href="/estoque/{{ area.slug }}/{{ lote.id }}/editar"
+            aria-label="Editar lote de {{ lote.nome }} comprado em {{ lote.data_compra | data_compra }}">Editar</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ vazio(a.cadastrados, area.plural | lower, area.slug) }}
+  {% endif %}
+</section>
+{% endfor %}
+
+{% endif %}
+</div>
+{% endblock %}

@@ -17,6 +17,7 @@ from app.auth.rotas import (
     tratar_servico_indisponivel,
 )
 from app.auth.rotas import router as rotas_auth
+from app.estoque_rotas import router as rotas_estoque
 from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
     ESCOLHA_OBRIGATORIA,
@@ -67,6 +68,7 @@ MENSAGEM_CONSULTA_INDISPONIVEL = (
 app = FastAPI(title="FormaHub 2.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 app.include_router(rotas_auth)
+app.include_router(rotas_estoque)
 app.add_exception_handler(NaoAutenticado, tratar_nao_autenticado)
 app.add_exception_handler(ServicoIndisponivel, tratar_servico_indisponivel)
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -80,7 +82,11 @@ templates.env.filters["status_pagamento"] = lambda codigo: ROTULOS_STATUS.get(co
 
 MODULOS = [
     {"titulo": "Produtos", "descricao": "Cadastro e consulta dos produtos."},
-    {"titulo": "Estoque", "descricao": "Saldos e movimentações de estoque."},
+    {
+        "titulo": "Estoque",
+        "descricao": "Saldos disponíveis de filamentos, acessórios e embalagens.",
+        "links": [{"url": "/estoque", "texto": "Ver estoque", "principal": True}],
+    },
     {
         "titulo": "Pedidos",
         "descricao": "Registro e acompanhamento de pedidos.",

@@ -7,7 +7,7 @@ Aplicação web simples em Python (FastAPI + Jinja2), com banco PostgreSQL hospe
 ## Requisitos
 
 - Python 3.12
-- Node.js (apenas para o Supabase CLI, instalado via `npm install`)
+- Node.js (para o Supabase CLI e o PGlite dos testes SQL locais, instalados via `npm install`)
 
 ## Primeira execução (em cada computador)
 
@@ -54,6 +54,22 @@ ruff format --check .
 
 O banco só é alterado por migrations em `supabase/migrations/`, criadas com o Supabase CLI
 (`npx supabase migration new <nome>`). Não existe banco local.
+
+### Testes SQL locais (PGlite)
+
+`npm run test:sql` aplica todas as migrations deste checkout num PostgreSQL em memória (PGlite,
+versão fixa no `package.json`) e roda `supabase/tests/estoque_test.sql`. Nada se conecta ao
+Supabase nem grava em disco. Outros arquivos de teste podem ser passados ao executor:
+
+```powershell
+npm run test:sql
+node supabase/tests/executar_pglite.mjs supabase/tests/estoque_test.sql
+```
+
+O ambiente do Supabase é simulado só no que as migrations usam (papéis `anon`, `authenticated` e
+`service_role`, privilégios padrão do schema `public` e `storage.buckets`). O `pytest` também roda
+esse teste e confere o repositório do Estoque contra as funções reais (é pulado sem Node/PGlite).
+Depois de aplicar uma migration no Supabase, o teste correspondente ainda deve rodar lá.
 
 `supabase/operacoes/` guarda correções de dados de execução única: são rodadas manualmente, uma
 vez, por decisão explícita, e nunca pelo `db push`. Cada arquivo explica o que confere e o que altera.
