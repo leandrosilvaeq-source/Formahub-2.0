@@ -18,16 +18,6 @@
 </div>
 {%- endmacro %}
 
-{% macro data_compra(form) -%}
-{% set mensagem = form.erros.get("data_compra") %}
-<div class="campo{% if mensagem %} tem-erro{% endif %}">
-  <label for="data_compra">Data de compra <span class="obrigatorio">*</span></label>
-  <input id="data_compra" name="data_compra" type="date" value="{{ form.data_compra }}"
-    min="2000-01-01" max="2099-12-31"{{ invalido(mensagem, "data_compra") }}>
-  {{ erro(mensagem, "data_compra") }}
-</div>
-{%- endmacro %}
-
 {% macro alertas(erro) -%}
 {% if erro %}<div class="alerta alerta-erro" role="alert">{{ erro }}</div>{% endif %}
 {%- endmacro %}

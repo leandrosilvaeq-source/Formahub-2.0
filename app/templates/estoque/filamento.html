@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% import "estoque/_campos.html" as c %}
 
-{% set titulo = "Editar lote de filamento" if lote_id else "Novo lote de filamento" %}
+{% set titulo = "Editar lote de filamento" %}
 {% block title %}{{ titulo }} · FormaHub 2.0{% endblock %}
 
 {% block content %}
@@ -10,14 +10,14 @@
 <div class="pagina-topo">
   <div>
     <h1>{{ titulo }}</h1>
-    <p>Cada compra é um lote, com saldo, data e custo próprios.</p>
+    <p>Corrija a descrição do lote. O saldo só aumenta por uma compra.</p>
   </div>
   <a class="botao botao-secundario" href="/estoque#filamentos">Voltar ao estoque</a>
 </div>
 
 {{ c.alertas(erro) }}
 
-<form method="post" action="{{ '/estoque/filamentos/%d/editar' % lote_id if lote_id else '/estoque/filamentos/novo' }}" novalidate>
+<form method="post" action="/estoque/filamentos/{{ lote_id }}/editar" novalidate>
   <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
 
   <section class="secao">
@@ -40,14 +40,17 @@
     </div>
   </section>
 
+  {% if lote %}
   <section class="secao">
     <h2>Saldo e compra</h2>
-    <div class="grade estoque-grade">
-      {{ c.texto(form, "peso", "Peso disponível (g)", ' inputmode="decimal" maxlength="10" placeholder="Ex.: 1000 ou 750,5"') }}
-      {{ c.data_compra(form) }}
-      {{ c.texto(form, "custo_kg", "Custo/kg (R$)", ' inputmode="decimal" maxlength="16" placeholder="R$ 0,00"') }}
-    </div>
+    <dl class="estoque-resumo">
+      <div><dt>Peso disponível (g)</dt><dd>{{ lote.peso_g | peso }}</dd></div>
+      <div><dt>Data de compra</dt><dd>{{ lote.data_compra | data_compra }}</dd></div>
+      <div><dt>Custo/kg (R$/kg)</dt><dd>{{ lote.custo_kg | brl }}</dd></div>
+    </dl>
+    <p class="estoque-resumo-nota">Saldo, data e custo vêm da compra e não mudam aqui.</p>
   </section>
+  {% endif %}
 
   <div class="acoes estoque-acoes">
     <a class="botao botao-secundario" href="/estoque#filamentos">Cancelar</a>

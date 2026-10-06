@@ -6,7 +6,7 @@
 //   node supabase/tests/executar_pglite.mjs <teste.sql> [...]
 //   node supabase/tests/executar_pglite.mjs --chamadas entrada.json --listagem saida.json
 //     Executa as chamadas RPC [{funcao, parametros}] por nome de parâmetro (como o PostgREST)
-//     num estoque vazio e grava o resultado de listar_estoque() em saida.json.
+//     num estoque vazio (sem compras) e grava o resultado de listar_estoque() em saida.json.
 //
 // Cada arquivo de teste precisa terminar devolvendo uma linha com a coluna `resultado`
 // (ex.: 'estoque_test: ok'); qualquer erro interrompe com código de saída 1.
@@ -73,14 +73,22 @@ async function rodarTeste(db, arquivo) {
 }
 
 async function rodarChamadas(db, entrada, saida) {
-  await db.exec("truncate public.estoque_filamentos, public.estoque_itens restart identity");
+  await db.exec(
+    "truncate public.estoque_filamentos, public.estoque_itens, public.compra_itens, public.compras"
+      + " restart identity",
+  );
   for (const { funcao, parametros } of JSON.parse(fs.readFileSync(entrada, "utf8"))) {
     if (!/^[a-z_]+$/.test(funcao)) throw new Error(`nome de função inválido: ${funcao}`);
     const nomes = Object.keys(parametros);
     if (!nomes.every((n) => /^p_[a-z_]+$/.test(n))) throw new Error(`parâmetros: ${nomes}`);
     // Valores sem tipo, como o PostgREST envia: o banco converte para o tipo do parâmetro.
     const sql = `select public.${funcao}(${nomes.map((n, i) => `${n} => $${i + 1}`).join(", ")})`;
-    const valores = nomes.map((n) => (parametros[n] === null ? null : String(parametros[n])));
+    // Listas e objetos (ex.: p_itens) vão como JSON, como no corpo da requisição do PostgREST.
+    const valores = nomes.map((n) => {
+      const valor = parametros[n];
+      if (valor === null) return null;
+      return typeof valor === "object" ? JSON.stringify(valor) : String(valor);
+    });
     await db.query(sql, valores);
     console.log(`chamada: ${funcao}(${nomes.join(", ")})`);
   }

@@ -317,7 +317,7 @@ def validar(pedido: Pedido) -> Pedido:
                 item.valor_unitario = formatar_brl(valor)
 
         if item.imagem is not None:
-            problema = _problema_da_imagem(item.imagem)
+            problema = problema_da_imagem(item.imagem)
             if problema:
                 item.erros["imagem"] = problema
 
@@ -330,7 +330,7 @@ def validar(pedido: Pedido) -> Pedido:
     return pedido
 
 
-def _problema_da_imagem(imagem: Imagem) -> str | None:
+def problema_da_imagem(imagem: Imagem) -> str | None:
     """Mesmas regras da tela; preenche o tipo e a extensão da imagem aceita."""
     if not imagem.conteudo:
         return "Arquivo vazio."

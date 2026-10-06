@@ -1,15 +1,18 @@
-"""Rotas da tela Estoque (/estoque): consulta das três áreas, cadastro e edição dos lotes.
+"""Rotas da tela Estoque (/estoque): consulta das três áreas, Registrar Compra e edição.
 
-Sem JavaScript: busca, filtros e ordenação são parâmetros da URL (cada área com os seus);
-o formulário salva por POST e, se der certo, volta para /estoque com a mensagem de sucesso.
+Busca, filtros e ordenação são parâmetros da URL (cada área com os seus), sem JavaScript.
+Toda entrada no estoque é feita pela janela Registrar Compra (POST /estoque/compras, enviado
+pelo JavaScript da tela, com resposta em JSON); não há cadastro direto de lotes. A edição de
+um lote só corrige a descrição: o saldo, a data e o custo vêm da compra.
 """
 
 import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.datastructures import UploadFile
 
 from app.auth import sessoes
 from app.auth.repositorio import Usuario
@@ -39,13 +42,22 @@ from app.estoque import (
     validar_filamento,
     validar_item,
 )
+from app.estoque_compra import (
+    CATEGORIAS,
+    LIMITE_ITENS,
+    LOCAIS,
+    LOCAIS_COM_NOME,
+    CompraNaoSalva,
+    gravar_compra,
+    validar_compra,
+)
 from app.estoque_repositorio import (
     FalhaNoEstoque,
     LoteNaoEncontrado,
     RepositorioEstoque,
     get_repositorio_estoque,
 )
-from app.pedidos import formatar_brl
+from app.pedidos import LIMITE_IMAGEM_BYTES, LIMITE_IMAGEM_MB, formatar_brl
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
@@ -56,6 +68,8 @@ templates.env.filters["data_compra"] = formatar_data
 
 # Id do lote na URL: só dígitos, dentro do limite de um bigint.
 ID_LOTE = re.compile(r"[0-9]{1,18}")
+# Foto da linha na posição n da janela Registrar Compra.
+CAMPO_FOTO = re.compile(r"item_(\d{1,3})_foto")
 # Prefixo dos parâmetros de busca de cada área na URL.
 PREFIXOS = {"filamentos": "f", "acessorios": "a", "embalagens": "e"}
 PARAMETROS_CONSULTA = ("f_busca", "f_material", "f_tipo", "f_ordem") + tuple(
@@ -69,13 +83,11 @@ MENSAGEM_CORRIGIR = "Não foi possível salvar. Corrija os campos destacados."
 
 # Sucesso: código na URL depois de salvar -> mensagem (nada do navegador vai para a tela).
 SUCESSO = {
-    "filamento-novo": "Lote de filamento cadastrado.",
+    "compra": "Compra registrada. Os itens já estão no estoque.",
     "filamento-editado": "Lote de filamento atualizado.",
 }
 for _area in AREAS_ITENS.values():
-    _nome = _area.singular.lower()
-    SUCESSO[f"{_area.categoria}-novo"] = f"Lote de {_nome} cadastrado."
-    SUCESSO[f"{_area.categoria}-editado"] = f"Lote de {_nome} atualizado."
+    SUCESSO[f"{_area.categoria}-editado"] = f"Lote de {_area.singular.lower()} atualizado."
 
 
 def _pagina(request: Request, modelo: str, contexto: dict, status_code: int = 200):
@@ -107,6 +119,12 @@ def estoque(request: Request, repo: RepositorioEstoque | None = Depends(get_repo
         "tipos": TIPOS_FILAMENTO,
         "ordens_filamento": ORDENS_FILAMENTO,
         "ordens_item": ORDENS_ITEM,
+        # Janela Registrar Compra
+        "locais": LOCAIS,
+        "locais_com_nome": LOCAIS_COM_NOME,
+        "categorias": CATEGORIAS,
+        "limite_itens": LIMITE_ITENS,
+        "limite_imagem_mb": LIMITE_IMAGEM_MB,
     }
     try:
         if repo is None:
@@ -143,7 +161,52 @@ def estoque(request: Request, repo: RepositorioEstoque | None = Depends(get_repo
     return _pagina(request, "estoque/lista.html", contexto)
 
 
-# ---------- Formulários ----------
+# ---------- Registrar Compra ----------
+
+
+def _json(conteudo: dict, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(conteudo, status_code=status_code, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/estoque/compras")
+async def registrar_compra(
+    request: Request,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+):
+    async with request.form() as formulario:
+        # Só os campos de texto e as fotos; qualquer usuário enviado pelo navegador é
+        # ignorado: o responsável pela compra é sempre o usuário da sessão.
+        textos = {c: v for c, v in formulario.multi_items() if isinstance(v, str)}
+        valida = origem_confiavel(request) and sessoes.csrf_valido(
+            request.state.csrf, textos.get("csrf", "")
+        )
+        if not valida:
+            return _json({"erro": MENSAGEM_EXPIRADA}, status_code=403)
+        imagens = {}
+        for chave, valor in formulario.multi_items():
+            encontrado = CAMPO_FOTO.fullmatch(chave)
+            if encontrado and isinstance(valor, UploadFile):
+                # Lê no máximo 1 byte além do limite: o excesso basta para recusar.
+                imagens[int(encontrado.group(1))] = await valor.read(LIMITE_IMAGEM_BYTES + 1)
+        compra = validar_compra(textos, imagens)
+
+    if compra.chave_envio is None:
+        # Sem a chave da submissão não há proteção contra duplicação: a janela é antiga.
+        return _json({"erro": MENSAGEM_EXPIRADA}, status_code=403)
+    if compra.erros:
+        return _json({"erro": MENSAGEM_CORRIGIR, "campos": compra.erros}, status_code=422)
+
+    try:
+        if repo is None:
+            raise CompraNaoSalva
+        gravar_compra(repo, compra, usuario.id)
+    except CompraNaoSalva:
+        return _json({"erro": MENSAGEM_NAO_SALVO}, status_code=503)
+    return _json({"destino": "/estoque?salvo=compra"})
+
+
+# ---------- Edição da descrição do lote ----------
 
 
 async def _ler_post(request: Request) -> tuple[dict[str, str], bool]:
@@ -156,20 +219,6 @@ async def _ler_post(request: Request) -> tuple[dict[str, str], bool]:
     return dados, valida
 
 
-def _tela_filamento(
-    request: Request, form: FormFilamento, lote_id: int | None, erro: str = "", status_code=200
-):
-    contexto = {"form": form, "lote_id": lote_id, "tipos": TIPOS_FILAMENTO, "erro": erro}
-    return _pagina(request, "estoque/filamento.html", contexto, status_code=status_code)
-
-
-def _tela_item(
-    request: Request, area: Area, form: FormItem, lote_id: int | None, erro="", status_code=200
-):
-    contexto = {"area": area, "form": form, "lote_id": lote_id, "erro": erro}
-    return _pagina(request, "estoque/item.html", contexto, status_code=status_code)
-
-
 def _voltar(codigo: str, ancora: str) -> RedirectResponse:
     return RedirectResponse(f"/estoque?salvo={codigo}#{ancora}", status_code=303)
 
@@ -178,16 +227,39 @@ def _lote_da_url(lote_id: str) -> int | None:
     return int(lote_id) if ID_LOTE.fullmatch(lote_id) else None
 
 
+def _buscar_lote(repo: RepositorioEstoque | None, encontrar):
+    """O lote procurado (None se não existir); FalhaNoEstoque se o banco não responder."""
+    if repo is None:
+        raise FalhaNoEstoque
+    return encontrar(repo.listar_estoque())
+
+
+def _lote_para_resumo(repo: RepositorioEstoque | None, encontrar):
+    """Lote para o resumo da tela de edição; sem banco, a tela abre sem o resumo."""
+    try:
+        return _buscar_lote(repo, encontrar)
+    except FalhaNoEstoque:
+        return None
+
+
 # ---------- Filamentos ----------
 
 
-@router.get(
-    "/estoque/filamentos/novo",
-    response_class=HTMLResponse,
-    dependencies=[Depends(exigir_usuario)],
-)
-def novo_filamento(request: Request):
-    return _tela_filamento(request, FormFilamento(), None)
+def _tela_filamento(
+    request: Request, form: FormFilamento, lote, numero: int, erro: str = "", status_code=200
+):
+    contexto = {
+        "form": form,
+        "lote": lote,
+        "lote_id": numero,
+        "tipos": TIPOS_FILAMENTO,
+        "erro": erro,
+    }
+    return _pagina(request, "estoque/filamento.html", contexto, status_code=status_code)
+
+
+def _filamento(numero: int):
+    return lambda estoque: next((f for f in estoque.filamentos if f.id == numero), None)
 
 
 @router.get(
@@ -204,60 +276,59 @@ def editar_filamento(
     if numero is None:
         return _nao_encontrado(request)
     try:
-        if repo is None:
-            raise FalhaNoEstoque
-        lote = next((f for f in repo.listar_estoque().filamentos if f.id == numero), None)
+        lote = _buscar_lote(repo, _filamento(numero))
     except FalhaNoEstoque:
         return _indisponivel(request)
     if lote is None:
         return _nao_encontrado(request)
-    return _tela_filamento(request, form_de_filamento(lote), numero)
+    return _tela_filamento(request, form_de_filamento(lote), lote, numero)
 
 
-@router.post("/estoque/filamentos/novo", response_class=HTMLResponse)
 @router.post("/estoque/filamentos/{lote_id}/editar", response_class=HTMLResponse)
 async def salvar_filamento(
     request: Request,
-    lote_id: str | None = None,
+    lote_id: str,
     usuario: Usuario = Depends(exigir_usuario),
     repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
 ):
-    numero = None
-    if lote_id is not None:
-        numero = _lote_da_url(lote_id)
-        if numero is None:
-            return _nao_encontrado(request)
+    numero = _lote_da_url(lote_id)
+    if numero is None:
+        return _nao_encontrado(request)
 
+    # Só a descrição é lida: saldo, data ou custo enviados pelo navegador são ignorados.
     dados, valida = await _ler_post(request)
     form = ler_filamento(dados)
-    if not valida:
-        return _tela_filamento(request, form, numero, MENSAGEM_EXPIRADA, status_code=403)
-    lote = validar_filamento(form, numero)
-    if lote is None:
-        return _tela_filamento(request, form, numero, MENSAGEM_CORRIGIR, status_code=422)
+    if not valida or not validar_filamento(form):
+        erro, status = (MENSAGEM_CORRIGIR, 422) if valida else (MENSAGEM_EXPIRADA, 403)
+        lote = _lote_para_resumo(repo, _filamento(numero))
+        return _tela_filamento(request, form, lote, numero, erro, status_code=status)
 
     try:
         if repo is None:
             raise FalhaNoEstoque
-        repo.salvar_filamento(lote, usuario.id)
+        repo.editar_filamento(numero, form.cor, form.material, form.tipo, form.marca, usuario.id)
     except LoteNaoEncontrado:
         return _nao_encontrado(request)
     except FalhaNoEstoque:
-        return _tela_filamento(request, form, numero, MENSAGEM_NAO_SALVO, status_code=503)
-    return _voltar("filamento-editado" if numero else "filamento-novo", "filamentos")
+        lote = _lote_para_resumo(repo, _filamento(numero))
+        return _tela_filamento(request, form, lote, numero, MENSAGEM_NAO_SALVO, status_code=503)
+    return _voltar("filamento-editado", "filamentos")
 
 
 # ---------- Acessórios e embalagens ----------
 
 
-@router.get(
-    "/estoque/{slug}/novo", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)]
-)
-def novo_item(request: Request, slug: str):
-    area = AREAS_ITENS.get(slug)
-    if area is None:
-        return _nao_encontrado(request)
-    return _tela_item(request, area, FormItem(), None)
+def _tela_item(
+    request: Request, area: Area, form: FormItem, lote, numero: int, erro="", status_code=200
+):
+    contexto = {"area": area, "form": form, "lote": lote, "lote_id": numero, "erro": erro}
+    return _pagina(request, "estoque/item.html", contexto, status_code=status_code)
+
+
+def _item(area: Area, numero: int):
+    return lambda estoque: next(
+        (i for i in estoque.itens if i.id == numero and i.categoria == area.categoria), None
+    )
 
 
 @router.get(
@@ -276,49 +347,42 @@ def editar_item(
     if area is None or numero is None:
         return _nao_encontrado(request)
     try:
-        if repo is None:
-            raise FalhaNoEstoque
-        itens = repo.listar_estoque().itens
+        lote = _buscar_lote(repo, _item(area, numero))
     except FalhaNoEstoque:
         return _indisponivel(request)
-    lote = next((i for i in itens if i.id == numero and i.categoria == area.categoria), None)
     if lote is None:
         return _nao_encontrado(request)
-    return _tela_item(request, area, form_de_item(lote), numero)
+    return _tela_item(request, area, form_de_item(lote), lote, numero)
 
 
-@router.post("/estoque/{slug}/novo", response_class=HTMLResponse)
 @router.post("/estoque/{slug}/{lote_id}/editar", response_class=HTMLResponse)
 async def salvar_item(
     request: Request,
     slug: str,
-    lote_id: str | None = None,
+    lote_id: str,
     usuario: Usuario = Depends(exigir_usuario),
     repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
 ):
     area = AREAS_ITENS.get(slug)
-    numero = None
-    if lote_id is not None:
-        numero = _lote_da_url(lote_id)
-        if numero is None:
-            return _nao_encontrado(request)
-    if area is None:
+    numero = _lote_da_url(lote_id)
+    if area is None or numero is None:
         return _nao_encontrado(request)
 
+    # Só o nome é lido: quantidade, data ou custo enviados pelo navegador são ignorados.
     dados, valida = await _ler_post(request)
     form = ler_item(dados)
-    if not valida:
-        return _tela_item(request, area, form, numero, MENSAGEM_EXPIRADA, status_code=403)
-    lote = validar_item(form, area, numero)
-    if lote is None:
-        return _tela_item(request, area, form, numero, MENSAGEM_CORRIGIR, status_code=422)
+    if not valida or not validar_item(form):
+        erro, status = (MENSAGEM_CORRIGIR, 422) if valida else (MENSAGEM_EXPIRADA, 403)
+        lote = _lote_para_resumo(repo, _item(area, numero))
+        return _tela_item(request, area, form, lote, numero, erro, status_code=status)
 
     try:
         if repo is None:
             raise FalhaNoEstoque
-        repo.salvar_item(lote, usuario.id)
+        repo.editar_item(numero, area.categoria, form.nome, usuario.id)
     except LoteNaoEncontrado:
         return _nao_encontrado(request)
     except FalhaNoEstoque:
-        return _tela_item(request, area, form, numero, MENSAGEM_NAO_SALVO, status_code=503)
-    return _voltar(f"{area.categoria}-{'editado' if numero else 'novo'}", area.slug)
+        lote = _lote_para_resumo(repo, _item(area, numero))
+        return _tela_item(request, area, form, lote, numero, MENSAGEM_NAO_SALVO, status_code=503)
+    return _voltar(f"{area.categoria}-editado", area.slug)

@@ -32,7 +32,8 @@
 </div>
 {%- endmacro %}
 
-{% macro cabecalho(id, titulo, total_rotulo, total, lotes, cadastrados, filtrando, novo_url, novo_texto) -%}
+{# Cada área abre a janela Registrar Compra já com uma linha da sua categoria. #}
+{% macro cabecalho(id, titulo, total_rotulo, total, lotes, cadastrados, filtrando, categoria) -%}
 <div class="estoque-area-topo">
   <h2 id="{{ id }}-titulo">{{ titulo }}</h2>
   <p class="estoque-total" id="{{ id }}-total">
@@ -40,13 +41,14 @@
     <strong>{{ total }}</strong>
     <span class="estoque-total-lotes">· {{ lotes }} {{ "lote" if lotes == 1 else "lotes" }}{% if filtrando %} de {{ cadastrados }}{% endif %}</span>
   </p>
-  <a class="botao botao-primario" href="{{ novo_url }}">{{ novo_texto }}</a>
+  <button type="button" class="botao botao-primario" data-abrir-compra="{{ categoria }}" aria-haspopup="dialog"
+    aria-label="Registrar compra de {{ titulo | lower }}">Registrar Compra</button>
 </div>
 {%- endmacro %}
 
 {% macro vazio(cadastrados, nome_plural, ancora) -%}
 {% if not cadastrados %}
-<p class="estoque-vazio">Nenhum lote de {{ nome_plural }} cadastrado ainda.</p>
+<p class="estoque-vazio">Nenhum lote de {{ nome_plural }} ainda. As entradas são feitas por <strong>Registrar Compra</strong>.</p>
 {% else %}
 <p class="estoque-vazio">Nenhum lote encontrado com essa busca. <a href="/estoque#{{ ancora }}">Limpar filtros</a></p>
 {% endif %}
@@ -58,7 +60,7 @@
 <div class="pagina-topo">
   <div>
     <h1>Estoque</h1>
-    <p>Saldos disponíveis dos insumos de produção, por lote de compra.</p>
+    <p>Saldos disponíveis dos insumos de produção, por lote de compra. Toda entrada é feita por uma compra.</p>
   </div>
   <nav class="pagina-topo-acoes" aria-label="Áreas do estoque">
     <a class="botao botao-secundario" href="#filamentos">Filamentos</a>
@@ -79,7 +81,7 @@
 {# ---------- Filamentos ---------- #}
 {% set f = filamentos %}
 <section class="secao estoque-area" id="filamentos" aria-labelledby="filamentos-titulo">
-  {{ cabecalho("filamentos", "Filamentos", "Peso disponível", f.total | peso, f.lotes | length, f.cadastrados, f.consulta.filtrando, "/estoque/filamentos/novo", "Novo filamento") }}
+  {{ cabecalho("filamentos", "Filamentos", "Peso disponível", f.total | peso, f.lotes | length, f.cadastrados, f.consulta.filtrando, "filamento") }}
 
   {% if f.cadastrados %}
   <form class="estoque-filtros estoque-filtros-filamentos" method="get" action="/estoque#filamentos" role="search" aria-label="Buscar filamentos">
@@ -152,7 +154,7 @@
 {% for a in areas %}
 {% set area = a.area %}
 <section class="secao estoque-area" id="{{ area.slug }}" aria-labelledby="{{ area.slug }}-titulo">
-  {{ cabecalho(area.slug, area.plural, "Unidades disponíveis", a.total | unidades, a.lotes | length, a.cadastrados, a.consulta.filtrando, "/estoque/%s/novo" % area.slug, "Nov%s %s" % ("a" if area.categoria == "embalagem" else "o", area.singular | lower)) }}
+  {{ cabecalho(area.slug, area.plural, "Unidades disponíveis", a.total | unidades, a.lotes | length, a.cadastrados, a.consulta.filtrando, area.categoria) }}
 
   {% if a.cadastrados %}
   <form class="estoque-filtros" method="get" action="/estoque#{{ area.slug }}" role="search" aria-label="Buscar {{ area.plural | lower }}">
@@ -198,6 +200,14 @@
 </section>
 {% endfor %}
 
+{% include "estoque/_compra.html" %}
 {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if not erro %}
+<script src="{{ url_for('static', path='js/imagem-referencia.js') }}"></script>
+<script src="{{ url_for('static', path='js/estoque-compra.js') }}"></script>
+{% endif %}
 {% endblock %}

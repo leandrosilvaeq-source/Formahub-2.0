@@ -1,5 +1,6 @@
-"""Tela Estoque com repositório falso: cadastro, edição, validações, busca, filtros e totais.
+"""Tela Estoque com repositório falso: consulta, edição da descrição, busca, filtros e totais.
 
+O fluxo Registrar Compra (entrada no estoque) está em test_estoque_compra.py.
 Nenhum teste acessa o Supabase; todos os lotes são fictícios e ficam só em memória.
 """
 
@@ -9,14 +10,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from app.estoque_repositorio import (
-    FalhaNoEstoque,
-    Filamento,
-    ItemEstoque,
-    LoteNaoEncontrado,
-    RepositorioEstoqueSupabase,
-    get_repositorio_estoque,
-)
+from app.estoque_repositorio import get_repositorio_estoque
 from app.main import app
 from tests.fake_estoque import RepositorioEstoqueMemoria
 
@@ -30,48 +24,16 @@ def estoque():
     return repo  # o conftest limpa as substituições ao final de cada teste
 
 
-def filamento(**extra) -> dict:
+def descricao_filamento(**extra) -> dict:
     dados = {
         "csrf": "csrf-de-teste",
         "cor": "Preto",
         "material": "PLA",
         "tipo": "solido",
         "marca": "Marca Teste",
-        "peso": "1000",
-        "data_compra": "2026-09-20",
-        "custo_kg": "R$ 120,00",
     }
     dados.update(extra)
     return dados
-
-
-def item(**extra) -> dict:
-    dados = {
-        "csrf": "csrf-de-teste",
-        "nome": "Argola Teste",
-        "quantidade": "50",
-        "data_compra": "2026-09-21",
-        "custo_unitario": "0,35",
-    }
-    dados.update(extra)
-    return dados
-
-
-def lote_filamento(repo, cor="Preto", material="PLA", tipo="solido", marca="Marca A", **extra):
-    dados = {
-        "peso_g": Decimal("1000"),
-        "data_compra": date(2026, 9, 1),
-        "custo_kg": Decimal("100.00"),
-    }
-    dados.update(extra)
-    lote = Filamento(None, cor, material, tipo, marca, **dados)
-    return repo.salvar_filamento(lote, 1)
-
-
-def lote_item(repo, nome, categoria="acessorio", quantidade=10, **extra):
-    dados = {"data_compra": date(2026, 9, 1), "custo_unitario": Decimal("1.00")}
-    dados.update(extra)
-    return repo.salvar_item(ItemEstoque(None, categoria, nome, quantidade, **dados), 1)
 
 
 def area(html: str, id_: str) -> str:
@@ -97,18 +59,21 @@ def test_home_tem_link_para_o_estoque():
 
 @pytest.mark.sem_login
 def test_estoque_exige_login():
-    for caminho in ("/estoque", "/estoque/filamentos/novo", "/estoque/acessorios/novo"):
+    for caminho in ("/estoque", "/estoque/filamentos/1/editar", "/estoque/acessorios/1/editar"):
         resposta = client.get(caminho, follow_redirects=False)
         assert resposta.status_code == 303
         assert resposta.headers["location"].startswith("/entrar")
 
 
 @pytest.mark.sem_login
-def test_salvar_exige_login(estoque):
-    resposta = client.post("/estoque/filamentos/novo", data=filamento(), follow_redirects=False)
+def test_editar_exige_login(estoque):
+    lote_id = estoque.com_filamento()
+    resposta = client.post(
+        f"/estoque/filamentos/{lote_id}/editar", data=descricao_filamento(), follow_redirects=False
+    )
     assert resposta.status_code == 303
     assert resposta.headers["location"].startswith("/entrar")
-    assert not estoque.gravacoes
+    assert not estoque.edicoes
 
 
 def test_estoque_vazio_mostra_as_tres_areas(estoque):
@@ -123,15 +88,33 @@ def test_estoque_vazio_mostra_as_tres_areas(estoque):
         ("embalagens", "Embalagens"),
     ):
         assert f'<h2 id="{id_}-titulo">{titulo}</h2>' in html
-        assert f"Nenhum lote de {titulo.lower()} cadastrado ainda." in area(html, id_)
+        assert f"Nenhum lote de {titulo.lower()} ainda." in area(html, id_)
         assert "<table" not in area(html, id_)
         assert "<form" not in area(html, id_)  # sem busca enquanto não há lotes
     assert "0 g" in total(html, "filamentos")
     assert "0 un" in total(html, "acessorios")
     assert "0 un" in total(html, "embalagens")
-    assert 'href="/estoque/filamentos/novo"' in html
-    assert 'href="/estoque/acessorios/novo"' in html
-    assert 'href="/estoque/embalagens/novo"' in html
+
+
+def test_botoes_registrar_compra_no_lugar_do_cadastro_direto(estoque):
+    html = client.get("/estoque").text
+
+    for id_, categoria in (
+        ("filamentos", "filamento"),
+        ("acessorios", "acessorio"),
+        ("embalagens", "embalagem"),
+    ):
+        secao = area(html, id_)
+        assert f'data-abrir-compra="{categoria}"' in secao
+        assert ">Registrar Compra</button>" in secao
+    assert "/novo" not in html
+    assert "Novo filamento" not in html and "Novo acessório" not in html
+    # A janela vem junto com a página, com o token da sessão e o script do envio.
+    assert '<dialog id="compra-janela"' in html
+    assert 'action="/estoque/compras"' in html
+    assert 'name="csrf" value="csrf-de-teste"' in html
+    assert "js/estoque-compra.js" in html
+    assert "js/imagem-referencia.js" in html
 
 
 def test_falha_ao_carregar_mostra_erro(estoque):
@@ -141,6 +124,7 @@ def test_falha_ao_carregar_mostra_erro(estoque):
     assert resposta.status_code == 503
     assert "Não foi possível carregar o estoque agora" in resposta.text
     assert "<table" not in resposta.text
+    assert "compra-janela" not in resposta.text
 
 
 def test_sem_banco_configurado_mostra_erro():
@@ -148,294 +132,57 @@ def test_sem_banco_configurado_mostra_erro():
     assert client.get("/estoque").status_code == 503
 
 
-# ---------- Cadastro de filamento ----------
+# ---------- Cadastro direto bloqueado ----------
 
 
-def test_formulario_novo_filamento(estoque):
-    html = client.get("/estoque/filamentos/novo").text
+@pytest.mark.parametrize(
+    "caminho",
+    ["/estoque/filamentos/novo", "/estoque/acessorios/novo", "/estoque/embalagens/novo"],
+)
+def test_cadastro_direto_nao_existe_mais(estoque, caminho):
+    assert client.get(caminho).status_code in (404, 405)
+    dados = {
+        "csrf": "csrf-de-teste",
+        "cor": "Preto",
+        "material": "PLA",
+        "tipo": "solido",
+        "marca": "M",
+        "peso": "1000",
+        "nome": "Argola",
+        "quantidade": "10",
+        "data_compra": "2026-09-01",
+        "custo_kg": "100",
+        "custo_unitario": "1",
+    }
+    assert client.post(caminho, data=dados).status_code in (404, 405)
+    assert not estoque.filamentos and not estoque.itens and not estoque.compras
 
-    assert "Novo lote de filamento" in html
-    assert 'name="csrf" value="csrf-de-teste"' in html
-    for campo in ("cor", "material", "tipo", "marca", "peso", "data_compra", "custo_kg"):
-        assert f'name="{campo}"' in html
-    for rotulo in ("Sólido", "Velvet", "Silk", "Bicolor", "Tricolor"):
-        assert f">{rotulo}</option>" in html
-    assert 'type="date"' in html
-    assert 'href="/estoque#filamentos">Cancelar</a>' in html
+
+# ---------- Lotes na consulta (valores da compra) ----------
 
 
-def test_cadastra_filamento_com_decimais(estoque):
-    resposta = client.post(
-        "/estoque/filamentos/novo",
-        data=filamento(peso="750,5", custo_kg="R$ 1.234,56"),
-        follow_redirects=False,
+def test_lote_mostra_data_e_custo_da_compra(estoque):
+    estoque.com_filamento(
+        cor="Azul",
+        peso_g=Decimal("2250"),
+        peso_rolo_g=Decimal("750"),
+        valor_unitario=Decimal("100.00"),
+        data_compra=date(2026, 9, 20),
     )
+    estoque.com_item("Argola", quantidade=3, valor_total=Decimal("10.00"))
 
-    assert resposta.status_code == 303
-    assert resposta.headers["location"] == "/estoque?salvo=filamento-novo#filamentos"
-    (lote,) = estoque.filamentos.values()
-    assert lote.peso_g == Decimal("750.5")
-    assert lote.custo_kg == Decimal("1234.56")
-    assert lote.data_compra == date(2026, 9, 20)
-    assert lote.tipo == "solido"
-    assert estoque.gravacoes == [("filamento", None, 1)]  # gravado pelo usuário da sessão
-
-    html = client.get(resposta.headers["location"]).text
-    assert "Lote de filamento cadastrado." in html
-    assert "750,5 g" in html
-    assert "R$ 1.234,56" in html
-    assert "20/09/2026" in html
-
-
-def test_peso_com_ponto_decimal_e_saldo_zero(estoque):
-    client.post("/estoque/filamentos/novo", data=filamento(peso="12.25"))
-    client.post("/estoque/filamentos/novo", data=filamento(peso="0", custo_kg="0"))
-
-    pesos = sorted(f.peso_g for f in estoque.filamentos.values())
-    assert pesos == [Decimal("0"), Decimal("12.25")]
-
-
-def test_texto_sem_espacos_extras(estoque):
-    client.post("/estoque/filamentos/novo", data=filamento(cor="  Azul   Royal ", marca=" X "))
-    (lote,) = estoque.filamentos.values()
-    assert (lote.cor, lote.marca) == ("Azul Royal", "X")
-
-
-def test_mesmo_filamento_em_compras_diferentes(estoque):
-    client.post("/estoque/filamentos/novo", data=filamento(data_compra="2026-08-01", peso="300"))
-    client.post(
-        "/estoque/filamentos/novo",
-        data=filamento(data_compra="2026-09-15", peso="1000", custo_kg="135,90"),
-    )
-
-    assert len(estoque.filamentos) == 2
     html = client.get("/estoque").text
     secao = area(html, "filamentos")
-    assert secao.count("<tr>") == 3  # cabeçalho + dois lotes
-    assert "01/08/2026" in secao and "15/09/2026" in secao
-    assert "R$ 120,00" in secao and "R$ 135,90" in secao
-    assert "1.300 g" in total(html, "filamentos")
-    assert "2 lotes" in total(html, "filamentos")
-
-
-@pytest.mark.parametrize(
-    ("campo", "valor", "mensagem"),
-    [
-        ("cor", "", "Informe a cor."),
-        ("material", "  ", "Informe o material."),
-        ("marca", "", "Informe a marca."),
-        ("cor", "x" * 61, "Use no máximo 60 caracteres."),
-        ("tipo", "", "Escolha o tipo."),
-        ("tipo", "Sólido", "Escolha o tipo."),
-        ("tipo", "metalico", "Escolha o tipo."),
-        ("peso", "", "Informe o peso disponível."),
-        ("peso", "-5", "O peso não pode ser negativo."),
-        ("peso", "1,555", "Use só números, com até 2 casas decimais"),
-        ("peso", "1.000,5", "Use só números, com até 2 casas decimais"),
-        ("peso", "abc", "Use só números, com até 2 casas decimais"),
-        ("peso", "99999999", "Use só números, com até 2 casas decimais"),
-        ("data_compra", "", "Informe a data de compra."),
-        ("data_compra", "2026-02-30", "Data inválida."),
-        ("data_compra", "1999-12-31", "Data inválida."),
-        ("data_compra", "ontem", "Use o formato dd/mm/aaaa."),
-        ("custo_kg", "", "Informe o custo por kg."),
-        ("custo_kg", "-1", "O custo não pode ser negativo."),
-        ("custo_kg", "R$ -0,01", "O custo não pode ser negativo."),
-        ("custo_kg", "dez reais", "Valor inválido."),
-        ("custo_kg", "10000000", "Valor alto demais."),
-    ],
-)
-def test_validacao_do_filamento(estoque, campo, valor, mensagem):
-    resposta = client.post("/estoque/filamentos/novo", data=filamento(**{campo: valor}))
-
-    assert resposta.status_code == 422
-    assert "Não foi possível salvar. Corrija os campos destacados." in resposta.text
-    assert mensagem in resposta.text
-    assert f'aria-describedby="{campo}-erro"' in resposta.text
-    assert not estoque.filamentos and not estoque.gravacoes
-
-
-def test_erro_preserva_o_que_foi_digitado(estoque):
-    dados = filamento(cor="Verde", peso="-3", data_compra="2026-09-02", tipo="silk")
-    html = client.post("/estoque/filamentos/novo", data=dados).text
-
-    assert 'value="Verde"' in html
-    assert 'value="-3"' in html
-    assert 'value="2026-09-02"' in html
-    assert '<option value="silk" selected>' in html
-    assert 'value="R$ 120,00"' in html  # campos válidos voltam formatados
-
-
-def test_data_digitada_dd_mm_aaaa(estoque):
-    client.post("/estoque/filamentos/novo", data=filamento(data_compra="05/09/2026"))
-    (lote,) = estoque.filamentos.values()
-    assert lote.data_compra == date(2026, 9, 5)
-
-
-def test_pagina_expirada_nao_salva(estoque):
-    resposta = client.post("/estoque/filamentos/novo", data=filamento(csrf="outro"))
-
-    assert resposta.status_code == 403
-    assert "A página expirou" in resposta.text
-    assert 'value="Preto"' in resposta.text
-    assert not estoque.gravacoes
-
-
-def test_outra_origem_nao_salva(estoque):
-    resposta = client.post(
-        "/estoque/filamentos/novo", data=filamento(), headers={"Origin": "https://exemplo.com"}
-    )
-    assert resposta.status_code == 403
-    assert not estoque.gravacoes
-
-
-def test_falha_ao_salvar_preserva_os_dados(estoque):
-    estoque.falhar = True
-    resposta = client.post("/estoque/filamentos/novo", data=filamento(cor="Branco"))
-
-    assert resposta.status_code == 503
-    assert "Não foi possível salvar agora" in resposta.text
-    assert 'value="Branco"' in resposta.text
-
-
-# ---------- Edição de filamento ----------
-
-
-def test_editar_filamento_preenche_e_atualiza(estoque):
-    lote_id = lote_filamento(estoque, cor="Azul", peso_g=Decimal("1250.50"))
-    html = client.get(f"/estoque/filamentos/{lote_id}/editar").text
-
-    assert "Editar lote de filamento" in html
-    assert f'action="/estoque/filamentos/{lote_id}/editar"' in html
-    assert 'value="Azul"' in html
-    assert 'value="1250,5"' in html  # sem separador de milhar, para editar
-    assert 'value="2026-09-01"' in html
-    assert 'value="R$ 100,00"' in html
-    assert '<option value="solido" selected>' in html
-
-    resposta = client.post(
-        f"/estoque/filamentos/{lote_id}/editar",
-        data=filamento(cor="Azul", peso="980,25", tipo="velvet"),
-        follow_redirects=False,
-    )
-    assert resposta.headers["location"] == "/estoque?salvo=filamento-editado#filamentos"
-    lote = estoque.filamentos[lote_id]
-    assert (lote.peso_g, lote.tipo) == (Decimal("980.25"), "velvet")
-    assert len(estoque.filamentos) == 1
-    assert "Lote de filamento atualizado." in client.get(resposta.headers["location"]).text
-
-
-def test_editar_filamento_inexistente(estoque):
-    assert client.get("/estoque/filamentos/99/editar").status_code == 404
-    assert client.get("/estoque/filamentos/abc/editar").status_code == 404
-    resposta = client.post("/estoque/filamentos/99/editar", data=filamento())
-    assert resposta.status_code == 404
-    assert "Lote não encontrado" in resposta.text
-    assert not estoque.filamentos
-
-
-def test_editar_com_falha_ao_carregar(estoque):
-    lote_id = lote_filamento(estoque)
-    estoque.falhar = True
-    resposta = client.get(f"/estoque/filamentos/{lote_id}/editar")
-    assert resposta.status_code == 503
-    assert "Não foi possível carregar o estoque agora" in resposta.text
-
-
-# ---------- Acessórios e embalagens ----------
-
-
-@pytest.mark.parametrize(
-    ("slug", "categoria", "titulo", "sucesso"),
-    [
-        ("acessorios", "acessorio", "Novo lote de acessório", "Lote de acessório cadastrado."),
-        ("embalagens", "embalagem", "Novo lote de embalagem", "Lote de embalagem cadastrado."),
-    ],
-)
-def test_cadastra_item(estoque, slug, categoria, titulo, sucesso):
-    html = client.get(f"/estoque/{slug}/novo").text
-    assert titulo in html
-    assert f'href="/estoque#{slug}">Cancelar</a>' in html
-
-    resposta = client.post(f"/estoque/{slug}/novo", data=item(), follow_redirects=False)
-
-    assert resposta.status_code == 303
-    assert resposta.headers["location"] == f"/estoque?salvo={categoria}-novo#{slug}"
-    (lote,) = estoque.itens.values()
-    assert lote.categoria == categoria
-    assert (lote.quantidade, lote.custo_unitario) == (50, Decimal("0.35"))
-    html = client.get(resposta.headers["location"]).text
-    assert sucesso in html
-    assert "Argola Teste" in area(html, slug)
-    outra = "embalagens" if slug == "acessorios" else "acessorios"
-    assert "Argola Teste" not in area(html, outra)
-
-
-@pytest.mark.parametrize(
-    ("campo", "valor", "mensagem"),
-    [
-        ("nome", "", "Informe o nome."),
-        ("quantidade", "", "Informe a quantidade disponível."),
-        ("quantidade", "1,5", "Use um número inteiro."),
-        ("quantidade", "2.5", "Use um número inteiro."),
-        ("quantidade", "-1", "A quantidade não pode ser negativa."),
-        ("quantidade", "²", "Use um número inteiro."),
-        ("quantidade", "1000000", "Quantidade alta demais."),
-        ("data_compra", "31/04/2026", "Data inválida."),
-        ("custo_unitario", "", "Informe o custo por unidade."),
-        ("custo_unitario", "-0,50", "O custo não pode ser negativo."),
-    ],
-)
-def test_validacao_do_item(estoque, campo, valor, mensagem):
-    resposta = client.post("/estoque/acessorios/novo", data=item(**{campo: valor}))
-
-    assert resposta.status_code == 422
-    assert mensagem in resposta.text
-    assert not estoque.itens
-
-
-def test_quantidade_zero_e_aceita(estoque):
-    client.post("/estoque/embalagens/novo", data=item(quantidade="0", custo_unitario="0"))
-    (lote,) = estoque.itens.values()
-    assert lote.quantidade == 0
-
-
-def test_editar_item(estoque):
-    lote_id = lote_item(estoque, "Caixa P", categoria="embalagem", quantidade=30)
-    html = client.get(f"/estoque/embalagens/{lote_id}/editar").text
-    assert "Editar lote de embalagem" in html
-    assert 'value="Caixa P"' in html and 'value="30"' in html
-
-    resposta = client.post(
-        f"/estoque/embalagens/{lote_id}/editar",
-        data=item(nome="Caixa P", quantidade="12"),
-        follow_redirects=False,
-    )
-    assert resposta.headers["location"] == "/estoque?salvo=embalagem-editado#embalagens"
-    assert estoque.itens[lote_id].quantidade == 12
-    assert estoque.itens[lote_id].categoria == "embalagem"
-
-
-def test_item_nao_e_editado_pela_area_errada(estoque):
-    lote_id = lote_item(estoque, "Ímã", categoria="acessorio")
-
-    assert client.get(f"/estoque/embalagens/{lote_id}/editar").status_code == 404
-    resposta = client.post(f"/estoque/embalagens/{lote_id}/editar", data=item())
-    assert resposta.status_code == 404
-    assert estoque.itens[lote_id].nome == "Ímã"
-
-
-def test_area_desconhecida(estoque):
-    assert client.get("/estoque/parafusos/novo").status_code == 404
-    assert client.post("/estoque/parafusos/novo", data=item()).status_code == 404
-    assert client.get("/estoque/parafusos/1/editar").status_code == 404
-    assert not estoque.gravacoes
+    assert "2.250 g" in secao
+    assert "20/09/2026" in secao
+    assert "R$ 133,33" in secao  # 100 x 1000 / 750, arredondado só na tela
+    assert "R$ 3,33" in area(html, "acessorios")  # 10 / 3
 
 
 def test_mesmo_item_em_compras_diferentes_e_total(estoque):
-    lote_item(estoque, "Argola", quantidade=40, data_compra=date(2026, 8, 1))
-    lote_item(estoque, "Argola", quantidade=1200, data_compra=date(2026, 9, 1))
-    lote_item(estoque, "Caixa", categoria="embalagem", quantidade=7)
+    estoque.com_item("Argola", quantidade=40, data_compra=date(2026, 8, 1))
+    estoque.com_item("Argola", quantidade=1200, data_compra=date(2026, 9, 1))
+    estoque.com_item("Caixa", categoria="embalagem", quantidade=7)
 
     html = client.get("/estoque").text
     assert area(html, "acessorios").count("Argola") >= 2
@@ -449,13 +196,189 @@ def test_mensagem_de_sucesso_so_para_codigos_conhecidos(estoque):
     html = client.get("/estoque?salvo=<script>alert(1)</script>").text
     assert "alerta-sucesso" not in html
     assert "<script>alert(1)" not in html
+    assert "Compra registrada." in client.get("/estoque?salvo=compra").text
 
 
 def test_texto_do_lote_e_escapado(estoque):
-    lote_item(estoque, "<b>Argola</b>")
+    estoque.com_item("<b>Argola</b>")
     html = client.get("/estoque").text
     assert "<b>Argola</b>" not in html
     assert "&lt;b&gt;Argola&lt;/b&gt;" in html
+
+
+# ---------- Edição: só a descrição ----------
+
+
+def test_editar_filamento_mostra_resumo_e_corrige_a_descricao(estoque):
+    lote_id = estoque.com_filamento(
+        cor="Azul", peso_g=Decimal("1250.50"), valor_unitario=Decimal("120.00")
+    )
+    html = client.get(f"/estoque/filamentos/{lote_id}/editar").text
+
+    assert "Editar lote de filamento" in html
+    assert f'action="/estoque/filamentos/{lote_id}/editar"' in html
+    assert 'value="Azul"' in html
+    assert '<option value="solido" selected>' in html
+    # Saldo, data e custo aparecem só para leitura.
+    for campo in ("peso", "data_compra", "custo_kg", "quantidade"):
+        assert f'name="{campo}"' not in html
+    assert "1.250,5 g" in html and "01/09/2026" in html and "R$ 120,00" in html
+
+    resposta = client.post(
+        f"/estoque/filamentos/{lote_id}/editar",
+        data=descricao_filamento(cor="Azul Royal", tipo="velvet"),
+        follow_redirects=False,
+    )
+    assert resposta.headers["location"] == "/estoque?salvo=filamento-editado#filamentos"
+    lote = estoque.filamentos[lote_id]
+    assert (lote.cor, lote.tipo, lote.peso_g) == ("Azul Royal", "velvet", Decimal("1250.50"))
+    assert estoque.edicoes == [("filamento", lote_id, 1)]  # usuário da sessão
+    assert "Lote de filamento atualizado." in client.get(resposta.headers["location"]).text
+
+
+def test_edicao_nao_aumenta_o_saldo(estoque):
+    filamento_id = estoque.com_filamento(peso_g=Decimal("500"))
+    item_id = estoque.com_item("Caixa", categoria="embalagem", quantidade=5)
+
+    client.post(
+        f"/estoque/filamentos/{filamento_id}/editar",
+        data=descricao_filamento(peso="99999", peso_g="99999", custo_kg="0"),
+    )
+    client.post(
+        f"/estoque/embalagens/{item_id}/editar",
+        data={"csrf": "csrf-de-teste", "nome": "Caixa", "quantidade": "500"},
+    )
+
+    assert estoque.filamentos[filamento_id].peso_g == Decimal("500")
+    assert estoque.itens[item_id].quantidade == 5
+    assert len(estoque.edicoes) == 2  # só a descrição foi gravada
+
+
+@pytest.mark.parametrize(
+    ("campo", "valor", "mensagem"),
+    [
+        ("cor", "", "Informe a cor."),
+        ("material", "  ", "Informe o material."),
+        ("marca", "", "Informe a marca."),
+        ("cor", "x" * 61, "Use no máximo 60 caracteres."),
+        ("tipo", "", "Escolha o tipo."),
+        ("tipo", "Sólido", "Escolha o tipo."),
+    ],
+)
+def test_validacao_da_edicao_do_filamento(estoque, campo, valor, mensagem):
+    lote_id = estoque.com_filamento(cor="Verde")
+    resposta = client.post(
+        f"/estoque/filamentos/{lote_id}/editar", data=descricao_filamento(**{campo: valor})
+    )
+
+    assert resposta.status_code == 422
+    assert "Corrija os campos destacados." in resposta.text
+    assert mensagem in resposta.text
+    assert f'aria-describedby="{campo}-erro"' in resposta.text
+    assert "1.000 g" in resposta.text  # o resumo continua na tela
+    assert not estoque.edicoes
+    assert estoque.filamentos[lote_id].cor == "Verde"
+
+
+def test_edicao_texto_sem_espacos_extras(estoque):
+    lote_id = estoque.com_filamento()
+    client.post(
+        f"/estoque/filamentos/{lote_id}/editar",
+        data=descricao_filamento(cor="  Azul   Royal ", marca=" X "),
+    )
+    lote = estoque.filamentos[lote_id]
+    assert (lote.cor, lote.marca) == ("Azul Royal", "X")
+
+
+def test_edicao_com_pagina_expirada_ou_outra_origem(estoque):
+    lote_id = estoque.com_filamento()
+    expirada = client.post(
+        f"/estoque/filamentos/{lote_id}/editar", data=descricao_filamento(csrf="outro", cor="X")
+    )
+    assert expirada.status_code == 403
+    assert "A página expirou" in expirada.text
+    assert 'value="X"' in expirada.text
+
+    origem = client.post(
+        f"/estoque/filamentos/{lote_id}/editar",
+        data=descricao_filamento(),
+        headers={"Origin": "https://exemplo.com"},
+    )
+    assert origem.status_code == 403
+    assert not estoque.edicoes
+
+
+def test_edicao_com_falha_ao_salvar_preserva_os_dados(estoque):
+    lote_id = estoque.com_filamento()
+    estoque.falhar = True
+    resposta = client.post(
+        f"/estoque/filamentos/{lote_id}/editar", data=descricao_filamento(cor="Branco")
+    )
+
+    assert resposta.status_code == 503
+    assert "Não foi possível salvar agora" in resposta.text
+    assert 'value="Branco"' in resposta.text
+
+
+def test_editar_filamento_inexistente(estoque):
+    assert client.get("/estoque/filamentos/99/editar").status_code == 404
+    assert client.get("/estoque/filamentos/abc/editar").status_code == 404
+    resposta = client.post("/estoque/filamentos/99/editar", data=descricao_filamento())
+    assert resposta.status_code == 404
+    assert "Lote não encontrado" in resposta.text
+    assert not estoque.filamentos
+
+
+def test_editar_com_falha_ao_carregar(estoque):
+    lote_id = estoque.com_filamento()
+    estoque.falhar = True
+    resposta = client.get(f"/estoque/filamentos/{lote_id}/editar")
+    assert resposta.status_code == 503
+    assert "Não foi possível carregar o estoque agora" in resposta.text
+
+
+def test_editar_item(estoque):
+    lote_id = estoque.com_item("Caixa P", categoria="embalagem", quantidade=30)
+    html = client.get(f"/estoque/embalagens/{lote_id}/editar").text
+    assert "Editar lote de embalagem" in html
+    assert 'value="Caixa P"' in html
+    assert "30 un" in html and 'name="quantidade"' not in html
+
+    resposta = client.post(
+        f"/estoque/embalagens/{lote_id}/editar",
+        data={"csrf": "csrf-de-teste", "nome": "Caixa Pequena"},
+        follow_redirects=False,
+    )
+    assert resposta.headers["location"] == "/estoque?salvo=embalagem-editado#embalagens"
+    lote = estoque.itens[lote_id]
+    assert (lote.nome, lote.quantidade, lote.categoria) == ("Caixa Pequena", 30, "embalagem")
+
+
+def test_validacao_da_edicao_do_item(estoque):
+    lote_id = estoque.com_item("Argola")
+    resposta = client.post(
+        f"/estoque/acessorios/{lote_id}/editar", data={"csrf": "csrf-de-teste", "nome": ""}
+    )
+    assert resposta.status_code == 422
+    assert "Informe o nome." in resposta.text
+    assert estoque.itens[lote_id].nome == "Argola"
+
+
+def test_item_nao_e_editado_pela_area_errada(estoque):
+    lote_id = estoque.com_item("Ímã", categoria="acessorio")
+
+    assert client.get(f"/estoque/embalagens/{lote_id}/editar").status_code == 404
+    resposta = client.post(
+        f"/estoque/embalagens/{lote_id}/editar", data={"csrf": "csrf-de-teste", "nome": "X"}
+    )
+    assert resposta.status_code == 404
+    assert estoque.itens[lote_id].nome == "Ímã"
+
+
+def test_area_desconhecida(estoque):
+    assert client.get("/estoque/parafusos/1/editar").status_code == 404
+    assert client.post("/estoque/parafusos/1/editar", data={"nome": "X"}).status_code == 404
+    assert not estoque.edicoes
 
 
 # ---------- Busca, filtros, ordenação e totais ----------
@@ -463,39 +386,37 @@ def test_texto_do_lote_e_escapado(estoque):
 
 @pytest.fixture
 def varios(estoque):
-    lote_filamento(
-        estoque,
+    # custo/kg = valor unitário (rolo de 1 kg)
+    estoque.com_filamento(
         "Preto",
         "PLA",
         "solido",
         "Marca A",
         peso_g=Decimal("1000"),
         data_compra=date(2026, 9, 1),
-        custo_kg=Decimal("100"),
+        valor_unitario=Decimal("100"),
     )
-    lote_filamento(
-        estoque,
+    estoque.com_filamento(
         "Azul Céu",
         "PETG",
         "silk",
         "Marca B",
         peso_g=Decimal("500.5"),
         data_compra=date(2026, 9, 10),
-        custo_kg=Decimal("150"),
+        valor_unitario=Decimal("150"),
     )
-    lote_filamento(
-        estoque,
+    estoque.com_filamento(
         "Branco",
         "pla",
         "velvet",
         "Marca C",
         peso_g=Decimal("250"),
         data_compra=date(2026, 8, 5),
-        custo_kg=Decimal("90"),
+        valor_unitario=Decimal("90"),
     )
-    lote_item(estoque, "Argola", quantidade=10, data_compra=date(2026, 9, 1))
-    lote_item(estoque, "Ímã", quantidade=5, data_compra=date(2026, 9, 5))
-    lote_item(estoque, "Caixa", categoria="embalagem", quantidade=3)
+    estoque.com_item("Argola", quantidade=10, data_compra=date(2026, 9, 1))
+    estoque.com_item("Ímã", quantidade=5, data_compra=date(2026, 9, 5))
+    estoque.com_item("Caixa", categoria="embalagem", quantidade=3)
     return estoque
 
 
@@ -608,94 +529,3 @@ def test_total_de_embalagens_com_busca(varios):
     html = client.get("/estoque?e_busca=xyz").text
     assert "0 un" in total(html, "embalagens")
     assert "Nenhum lote encontrado com essa busca." in area(html, "embalagens")
-
-
-# ---------- Repositório do Supabase (cliente falso) ----------
-
-
-class _Resposta:
-    def __init__(self, data):
-        self.data = data
-
-
-class _ClienteFalso:
-    def __init__(self, data=None, erro=None):
-        self.data, self.erro, self.chamadas = data, erro, []
-
-    def rpc(self, funcao, parametros):
-        self.chamadas.append((funcao, parametros))
-        return self
-
-    def execute(self):
-        if self.erro:
-            raise self.erro
-        return _Resposta(self.data)
-
-
-def test_repositorio_converte_numeros_de_texto_para_decimal():
-    dados = {
-        "filamentos": [
-            {
-                "id": 1,
-                "cor": "Preto",
-                "material": "PLA",
-                "tipo": "solido",
-                "marca": "M",
-                "peso_disponivel_g": "750.50",
-                "data_compra": "2026-09-01",
-                "custo_kg": "120.00",
-            }
-        ],
-        "itens": [
-            {
-                "id": 2,
-                "categoria": "embalagem",
-                "nome": "Caixa",
-                "quantidade_disponivel": 3,
-                "data_compra": "2026-09-02",
-                "custo_unitario": "0.35",
-            }
-        ],
-    }
-    estoque = RepositorioEstoqueSupabase(_ClienteFalso(dados)).listar_estoque()
-
-    assert estoque.filamentos[0].peso_g == Decimal("750.50")
-    assert estoque.filamentos[0].data_compra == date(2026, 9, 1)
-    assert estoque.itens[0].custo_unitario == Decimal("0.35")
-
-
-def test_repositorio_envia_numeros_como_texto():
-    cliente = _ClienteFalso(7)
-    lote = Filamento(
-        None, "Preto", "PLA", "solido", "M", Decimal("750.5"), date(2026, 9, 1), Decimal("120.00")
-    )
-    assert RepositorioEstoqueSupabase(cliente).salvar_filamento(lote, 2) == 7
-
-    funcao, parametros = cliente.chamadas[0]
-    assert funcao == "salvar_estoque_filamento"
-    assert parametros["p_id"] is None
-    assert parametros["p_peso_disponivel_g"] == "750.5"
-    assert parametros["p_custo_kg"] == "120.00"
-    assert parametros["p_data_compra"] == "2026-09-01"
-    assert parametros["p_usuario_id"] == 2
-
-
-def test_repositorio_traduz_erros():
-    from postgrest.exceptions import APIError
-
-    lote = ItemEstoque(5, "acessorio", "Argola", 1, date(2026, 9, 1), Decimal("1"))
-    nao_encontrado = _ClienteFalso(erro=APIError({"code": "PT404", "message": "x"}))
-    with pytest.raises(LoteNaoEncontrado):
-        RepositorioEstoqueSupabase(nao_encontrado).salvar_item(lote, 1)
-
-    recusado = _ClienteFalso(erro=APIError({"code": "23514", "message": "x"}))
-    with pytest.raises(FalhaNoEstoque):
-        RepositorioEstoqueSupabase(recusado).salvar_item(lote, 1)
-
-    sem_rede = _ClienteFalso(erro=TimeoutError())
-    with pytest.raises(FalhaNoEstoque):
-        RepositorioEstoqueSupabase(sem_rede).listar_estoque()
-
-    # Banco ainda sem a migration: resposta em formato inesperado.
-    with pytest.raises(FalhaNoEstoque):
-        RepositorioEstoqueSupabase(_ClienteFalso({"outra": []})).listar_estoque()

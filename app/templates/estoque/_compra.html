@@ -1,0 +1,141 @@
+{# Janela Registrar Compra (aberta pelos botões das áreas do Estoque; js/estoque-compra.js).
+
+   As linhas dos itens não têm "name": na hora de salvar, o JavaScript envia cada campo como
+   item_{posição}_{campo} e a foto como item_{posição}_foto. O servidor valida tudo de novo e
+   devolve os erros com essas mesmas chaves. Cancelar fecha a janela sem enviar nada. #}
+
+{% macro campo(nome, rotulo, extra="", dica="") -%}
+<div class="campo compra-campo-{{ nome }}">
+  <label data-para="{{ nome }}">{{ rotulo }} <span class="obrigatorio">*</span>{% if dica %}<span class="visualmente-oculto"> {{ dica }}</span>{% endif %}</label>
+  <input type="text" data-campo="{{ nome }}" autocomplete="off"{{ extra | safe }}>
+</div>
+{%- endmacro %}
+
+{% macro calculo(nome, rotulo) -%}
+<div><dt>{{ rotulo }}</dt><dd data-calculo="{{ nome }}">—</dd></div>
+{%- endmacro %}
+
+{# Foto opcional: o mesmo controle da imagem de referência dos pedidos (imagem-referencia.js). #}
+{% macro foto() -%}
+<div class="campo compra-item-foto">
+  <span class="item-rotulo" aria-hidden="true">Foto <span class="item-opcional">(opcional · PNG, JPG ou WebP, até {{ limite_imagem_mb }} MB)</span></span>
+  <div class="upload-item" role="group" aria-label="Foto" data-rotulo="Foto do item" data-max-mb="{{ limite_imagem_mb }}">
+    <span class="upload-dica" title="PNG, JPG ou WebP, até {{ limite_imagem_mb }} MB">Arraste uma imagem aqui</span>
+    <img class="upload-miniatura" alt="Miniatura da foto" width="40" height="40" hidden>
+    <p class="upload-erro" role="alert" hidden></p>
+    <p class="upload-info" hidden><span class="upload-nome"></span><span class="upload-tamanho"></span></p>
+    <span class="upload-ou" aria-hidden="true">ou</span>
+    <button type="button" class="botao botao-secundario upload-botao upload-selecionar">Selecionar foto</button>
+    <button type="button" class="botao botao-secundario upload-botao upload-trocar" aria-label="Trocar foto" hidden>Trocar</button>
+    <button type="button" class="botao botao-secundario upload-botao upload-remover" hidden>Remover foto</button>
+    <input type="file" class="upload-arquivo" accept="image/png,image/jpeg,image/webp" hidden tabindex="-1">
+    <span class="visualmente-oculto upload-status" role="status" aria-live="polite"></span>
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro linha(categoria) -%}
+<article class="compra-item" data-categoria="{{ categoria }}">
+  <div class="compra-item-topo">
+    <h4 class="compra-item-titulo">{{ categorias[categoria] }}</h4>
+    <button type="button" class="botao botao-secundario compra-item-remover">Remover</button>
+  </div>
+  <input type="hidden" data-campo="categoria" value="{{ categoria }}">
+  <div class="compra-item-campos">
+  {% if categoria == "filamento" %}
+    {{ campo("quantidade", "Quantidade de rolos", ' inputmode="numeric" maxlength="4"') }}
+    {{ campo("cor", "Cor", ' maxlength="60" placeholder="Ex.: Preto"') }}
+    {{ campo("material", "Material", ' maxlength="60" placeholder="Ex.: PLA"') }}
+    <div class="campo compra-campo-tipo">
+      <label data-para="tipo">Tipo <span class="obrigatorio">*</span></label>
+      <select data-campo="tipo">
+        <option value="">Escolha o tipo</option>
+        {% for codigo, rotulo in tipos.items() %}
+        <option value="{{ codigo }}">{{ rotulo }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {{ campo("marca", "Marca", ' maxlength="60"') }}
+    {{ campo("peso_rolo", "Peso por rolo (g)", ' inputmode="decimal" maxlength="8" placeholder="Ex.: 1000"', "(gramas de cada rolo)") }}
+    {{ campo("valor_unitario", "Valor unitário por rolo (R$)", ' inputmode="numeric" maxlength="14" placeholder="R$ 0,00"') }}
+  {% else %}
+    {{ campo("nome", categorias[categoria] ~ " (nome)", ' maxlength="60"') }}
+    {{ campo("quantidade", "Quantidade (un)", ' inputmode="numeric" maxlength="6"') }}
+    {{ campo("valor_total", "Valor total (R$)", ' inputmode="numeric" maxlength="14" placeholder="R$ 0,00"', "(de todas as unidades)") }}
+  {% endif %}
+  </div>
+  <dl class="compra-item-calculos">
+  {% if categoria == "filamento" %}
+    {{ calculo("peso_total", "Peso total recebido (g)") }}
+    {{ calculo("valor_total", "Valor total (R$)") }}
+    {{ calculo("custo", "Custo/kg (R$/kg)") }}
+  {% else %}
+    {{ calculo("custo", "Custo unitário (R$/un)") }}
+  {% endif %}
+  </dl>
+  {{ foto() }}
+</article>
+{%- endmacro %}
+
+<dialog id="compra-janela" class="compra-janela" aria-labelledby="compra-titulo">
+  <form id="form-compra" method="post" action="/estoque/compras" novalidate>
+    <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
+    <input type="hidden" name="chave_envio" value="">
+
+    <div class="compra-topo">
+      <h2 id="compra-titulo">Registrar Compra</h2>
+      <button type="button" class="botao-icone compra-fechar" data-cancelar aria-label="Cancelar e fechar" title="Cancelar">&times;</button>
+    </div>
+
+    <div class="compra-corpo">
+      <div class="alerta alerta-erro" id="compra-alerta" role="alert" hidden></div>
+
+      <div class="compra-dados">
+        <div class="campo" id="campo-data_compra">
+          <label for="compra-data">Data de compra <span class="obrigatorio">*</span><span class="visualmente-oculto"> (dia, mês e ano: dd/mm/aaaa)</span></label>
+          <input id="compra-data" name="data_compra" type="text" inputmode="numeric" maxlength="10"
+            placeholder="dd/mm/aaaa" autocomplete="off">
+        </div>
+
+        <fieldset class="escolhas compra-locais" id="campo-local">
+          <legend>Local de compra <span class="obrigatorio">*</span></legend>
+          <div class="escolhas-opcoes compra-locais-opcoes">
+            {% for codigo, rotulo in locais.items() %}
+            <label class="escolha">
+              <input class="escolha-input" type="radio" name="local" value="{{ codigo }}"
+                {%- if codigo in locais_com_nome %} data-com-nome{% endif %}>
+              <span class="escolha-card"><span class="escolha-titulo">{{ rotulo }}</span></span>
+            </label>
+            {% endfor %}
+          </div>
+        </fieldset>
+
+        <div class="campo" id="campo-local_nome" hidden>
+          <label for="compra-local-nome">Nome do local <span class="obrigatorio">*</span></label>
+          <input id="compra-local-nome" name="local_nome" type="text" maxlength="60" autocomplete="off">
+        </div>
+      </div>
+
+      <section class="compra-itens-secao" aria-labelledby="compra-itens-titulo">
+        <h3 id="compra-itens-titulo">Itens da compra</h3>
+        <p class="compra-itens-dica">Cada linha de filamento é um conjunto de rolos iguais (mesmas características, peso e valor). Para rolos diferentes, adicione outra linha.</p>
+        <div id="compra-itens" class="compra-itens" data-imagens-referencia data-linha="compra-item"></div>
+        <p id="compra-itens-vazio" class="itens-vazio">Nenhum item adicionado.</p>
+        <div class="compra-adicionar" id="campo-itens">
+          <button type="button" class="botao botao-secundario" data-adicionar="filamento">+ Adicionar Filamento</button>
+          <button type="button" class="botao botao-secundario" data-adicionar="acessorio">+ Adicionar Acessório</button>
+          <button type="button" class="botao botao-secundario" data-adicionar="embalagem">+ Adicionar Embalagem</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="compra-rodape">
+      <button type="button" class="botao botao-secundario" data-cancelar>Cancelar</button>
+      <button type="submit" class="botao botao-primario">Salvar compra</button>
+    </div>
+  </form>
+
+  {% for categoria in categorias %}
+  <template id="modelo-{{ categoria }}">{{ linha(categoria) }}</template>
+  {% endfor %}
+</dialog>
