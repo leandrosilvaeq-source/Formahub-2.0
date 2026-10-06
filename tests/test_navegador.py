@@ -2371,6 +2371,7 @@ def test_recolher_e_expandir_cada_card(pagina, servidor, repo_pedidos):
             "Expandir pedido",
             "Caneca, Copo 5 unidades",
             "Comentários da produção",
+            "Ocultar comentário",
             "Atualizado por Kassia em 01/10/2026 às 14:32",
             "Salvar comentário",
         ]
@@ -2921,6 +2922,52 @@ def test_cards_legiveis_e_sem_overflow_em_cada_largura(pagina, servidor, repo_pe
         assert [c for c in cortes if not c.startswith("OL.coluna-cards")] == [], estado
 
 
+def test_botao_de_recolher_fica_dentro_do_card_expandido_em_coluna_estreita_com_rolagem(
+    pagina, servidor, repo_pedidos
+):
+    """Regressão: a 1024 px a coluna é estreita; com rolagem vertical (barra clássica de 15 px)
+    o topo do card (foto + nome + botão de 44 px) era mais largo que o card e o botão de recolher
+    passava da borda. Confere a geometria renderizada, não a regra de CSS."""
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    pedidos = [
+        novo_pedido(
+            repo_pedidos,
+            cliente=f"Cliente {n}",
+            itens=[item(1, "Caneca", 2, "1.00", com_imagem(repo_pedidos, n, 1))],
+        )
+        for n in range(1, 8)
+    ]
+    for pedido in pedidos:  # todos na mesma coluna: ela precisa de rolagem vertical
+        repo_pedidos.etapas[pedido.id] = "aguardando_entrega"
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    pagina.tela(1024, 900)
+    pagina.abrir("/producao")
+    expandir_todos(pagina)
+
+    # Pré-condições: a coluna rola na vertical e os cards expandidos têm foto.
+    assert pagina.js(
+        "(() => { const ol = document.querySelector('.coluna[data-etapa=aguardando_entrega]"
+        " .coluna-cards'); return ol.scrollHeight > ol.clientHeight })()"
+    )
+    assert pagina.js("document.querySelectorAll('.producao-card .producao-card-foto').length") == 7
+
+    fora = pagina.js(
+        "[...document.querySelectorAll('.producao-card')].flatMap(c => {"
+        " const rc = c.getBoundingClientRect(), b = c.querySelector('.producao-recolher')"
+        "   .getBoundingClientRect();"
+        " return (b.left >= rc.left - 0.5 && b.right <= rc.right + 0.5"
+        "   && b.top >= rc.top - 0.5 && b.bottom <= rc.bottom + 0.5) ? []"
+        "   : [c.dataset.pedido + ' ' + [rc.left, rc.right, b.left, b.right].join(',')] })"
+    )
+    assert fora == []  # o botão de recolher dentro dos limites de cada card
+    assert pagina.js(SAINDO_DOS_CARDS) == []
+    assert pagina.js("document.documentElement.scrollWidth") <= 1024
+    assert pagina.js("document.querySelectorAll('.producao-card:not(.recolhido)').length") == 7
+
+
 # Mede cada coluna: título (texto, tamanho, família, peso, caixa, cortado?), ícone,
 # contador e a própria coluna.
 MEDIDAS_COLUNAS = """
@@ -3251,3 +3298,490 @@ def test_conflito_ao_pagar_na_coluna_entregue_recarrega_o_quadro(pagina, servido
     assert not pagina.js(f"!!{card_js(pedidos[0].id)}")  # quadro recarregado, sem o concluído
     assert contadores(pagina) == [0, 0, 0, 1]
     assert repo_pedidos.alteracoes_pagamento == []
+
+
+# ---------- Ocultar e mostrar o comentário (card recolhido) ----------
+
+
+def alternar_comentario_js(pedido_id):
+    return f"{card_js(pedido_id)}.querySelector('.producao-comentario-alternar')"
+
+
+def comentario_a_vista(p, pedido_id):
+    """Texto (campo) e última atualização visíveis."""
+    return visivel_no_card(p, pedido_id, ".producao-comentario-campo") and visivel_no_card(
+        p, pedido_id, ".producao-comentario-info"
+    )
+
+
+def test_ocultar_e_mostrar_o_comentario_de_cada_card_recolhido(pagina, servidor, repo_pedidos):
+    com, sem, outro = pedidos_producao(repo_pedidos, servidor, 3)
+    repo_pedidos.comentarios[com.id] = ("Pintar de azul", momento_exemplo(), 2)
+    repo_pedidos.comentarios[outro.id] = ("Embalar com cuidado", momento_exemplo(), 2)
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    botao = alternar_comentario_js(com.id)
+    escritas = repo_pedidos.escritas
+
+    # Padrão: comentário à vista; o botão só existe (visível) em card com comentário.
+    assert pagina.js(f"{card_js(com.id)}.classList.contains('recolhido')")
+    assert comentario_a_vista(pagina, com.id)
+    assert visivel_no_card(pagina, com.id, ".producao-comentario-alternar")
+    assert not visivel_no_card(pagina, sem.id, ".producao-comentario-alternar")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+    assert pagina.js(f"{botao}.textContent.trim()") == "Ocultar comentário"
+    assert pagina.js(f"{botao}.title") == "Ocultar comentário"
+    alvo = pagina.js(f"{botao}.getAttribute('aria-controls')")
+    assert alvo == f"comentario-corpo-{com.id}"
+    assert pagina.js(f"!!document.getElementById('{alvo}')")
+    # O ícone fica na mesma linha do título.
+    assert pagina.js(
+        f"(() => {{ const t = {card_js(com.id)}.querySelector('.producao-comentario-titulo');"
+        " const l = t.querySelector('label').getBoundingClientRect(),"
+        f" b = {botao}.querySelector('svg').getBoundingClientRect();"
+        " return b.top >= l.top - 8 && b.bottom <= l.bottom + 8 })()"
+    )
+
+    # Nenhuma requisição ao servidor para ocultar ou mostrar.
+    pagina.js(
+        "window.__chamadas = 0; const f = window.fetch;"
+        " window.fetch = function () { window.__chamadas++; return f.apply(this, arguments) }"
+    )
+
+    pagina.js(f"{botao}.click()")
+
+    assert not pagina.js(f"{comentario_js(com.id)}.getClientRects().length > 0")
+    assert not visivel_no_card(pagina, com.id, ".producao-comentario-info")
+    assert not visivel_no_card(pagina, com.id, ".producao-salvar-comentario")
+    assert visivel_no_card(pagina, com.id, ".producao-comentario label")  # o título continua
+    assert visivel_no_card(pagina, com.id, ".producao-comentario-alternar")  # e o botão também
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    assert pagina.js(f"{botao}.textContent.trim()") == "Mostrar comentário"
+    assert pagina.js(f"{botao}.title") == "Mostrar comentário"
+    # O clique não expande o card nem muda dados; os outros cards seguem como estavam.
+    assert pagina.js(f"{card_js(com.id)}.classList.contains('recolhido')")
+    recolher = f"{card_js(com.id)}.querySelector('.producao-recolher')"
+    assert pagina.js(f"{recolher}.getAttribute('aria-expanded')") == "false"
+    assert etapa_na_tela(pagina, com.id) == "fila_producao"
+    assert comentario_a_vista(pagina, outro.id)  # cada card controla o seu
+    assert pagina.js(f"{comentario_js(com.id)}.dataset.salvo") == "Pintar de azul"
+    assert pagina.js(f"{comentario_js(com.id)}.value") == "Pintar de azul"
+
+    # Expandido: o comentário aparece normalmente e o botão sai; recolhido de novo, a escolha
+    # anterior (oculto) é respeitada.
+    pagina.js(f"{recolher}.click()")
+    assert comentario_a_vista(pagina, com.id)
+    assert not visivel_no_card(pagina, com.id, ".producao-comentario-alternar")
+    pagina.js(f"{recolher}.click()")
+    assert not pagina.js(f"{comentario_js(com.id)}.getClientRects().length > 0")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+
+    pagina.js(f"{botao}.click()")  # mostrar de novo
+    assert comentario_a_vista(pagina, com.id)
+    assert pagina.js(f"{botao}.textContent.trim()") == "Ocultar comentário"
+
+    # Nenhuma requisição, escrita, comentário ou movimento.
+    assert pagina.js("window.__chamadas") == 0
+    assert repo_pedidos.escritas == escritas and repo_pedidos.movimentos == []
+    assert repo_pedidos.alteracoes_comentario == [] and repo_pedidos.alteracoes_pagamento == []
+    assert repo_pedidos.comentarios[com.id][0] == "Pintar de azul"
+
+    # Ao recarregar a página, volta ao padrão (visível).
+    pagina.js(f"{botao}.click()")
+    assert not pagina.js(f"{comentario_js(com.id)}.getClientRects().length > 0")
+    pagina.abrir("/producao")
+    assert comentario_a_vista(pagina, com.id)
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+
+
+def test_ocultar_comentario_por_teclado_com_foco_visivel(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.comentarios[pedido.id] = ("Pintar de azul", momento_exemplo(), 2)
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    botao = alternar_comentario_js(pedido.id)
+
+    tecla(pagina, "Tab", "Tab", 9)  # modalidade de teclado: o foco passa a ser "visível"
+    pagina.js(f"{botao}.focus()")
+    estilo = f"getComputedStyle({botao})"
+    contorno = pagina.js(f"[{estilo}.outlineStyle, {estilo}.outlineWidth]")
+    assert contorno[0] != "none" and contorno[1] != "0px"
+
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    assert not pagina.js(f"{comentario_js(pedido.id)}.getClientRects().length > 0")
+    assert pagina.js(f"document.activeElement === {botao}")  # o foco não se perde
+    assert pagina.js(f"{botao}.textContent.trim()") == "Mostrar comentário"
+
+    tecla(pagina, " ", "Space", 32, " ")
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "true"
+    assert comentario_a_vista(pagina, pedido.id)
+    assert pagina.js(f"{botao}.textContent.trim()") == "Ocultar comentário"
+    assert pagina.js(f"{card_js(pedido.id)}.classList.contains('recolhido')")
+
+
+def test_escolha_de_ocultar_sobrevive_ao_quadro_recarregado(pagina, servidor, repo_pedidos):
+    com, outro = pedidos_producao(repo_pedidos, servidor, 2)
+    repo_pedidos.comentarios[com.id] = ("Pintar de azul", momento_exemplo(), 2)
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    pagina.js(f"{alternar_comentario_js(com.id)}.click()")
+    repo_pedidos.etapas[outro.id] = "em_producao"  # outro usuário moveu: o clique dá conflito
+
+    expandir_todos(pagina)  # as ações do card só aparecem expandido
+    clicar_avancar(pagina, outro.id)
+    esperar(
+        lambda: (
+            pagina.texto("#producao-mensagem") == "Este pedido foi atualizado por outro usuário."
+        )
+    )
+
+    botao = alternar_comentario_js(com.id)  # o quadro foi recarregado: elementos novos
+    assert pagina.js(f"{botao}.getAttribute('aria-expanded')") == "false"
+    assert pagina.js(f"{botao}.textContent.trim()") == "Mostrar comentário"
+    assert pagina.js(f"{card_js(com.id)}.classList.contains('recolhido')") is False  # expandido
+    pagina.js(f"{card_js(com.id)}.querySelector('.producao-recolher').click()")  # recolhe
+    assert not pagina.js(f"{comentario_js(com.id)}.getClientRects().length > 0")
+    assert repo_pedidos.alteracoes_comentario == []
+
+
+def test_botao_do_comentario_acompanha_salvar_e_apagar(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    assert not visivel_no_card(pagina, pedido.id, ".producao-comentario-alternar")
+
+    escrever_comentario(pagina, pedido.id, "Primeiro comentário")
+    salvar_comentario(pagina, pedido.id)
+    mensagem_do_card(pagina, pedido.id)
+    assert visivel_no_card(pagina, pedido.id, ".producao-comentario-alternar")  # agora existe
+
+    pagina.js(f"{alternar_comentario_js(pedido.id)}.click()")
+    assert not pagina.js(f"{comentario_js(pedido.id)}.getClientRects().length > 0")
+    pagina.js(f"{alternar_comentario_js(pedido.id)}.click()")
+    limpar_mensagem_do_card(pagina, pedido.id)
+    escrever_comentario(pagina, pedido.id, "   ")
+    salvar_comentario(pagina, pedido.id)
+    assert mensagem_do_card(pagina, pedido.id)[0] == "Comentário removido."
+
+    # Sem comentário não há o que ocultar: o botão some e o campo continua à vista.
+    assert not visivel_no_card(pagina, pedido.id, ".producao-comentario-alternar")
+    assert visivel_no_card(pagina, pedido.id, ".producao-comentario-campo")
+
+
+def test_botao_do_comentario_nao_arrasta_o_card(pagina, servidor, repo_pedidos):
+    (pedido,) = pedidos_producao(repo_pedidos, servidor)
+    repo_pedidos.comentarios[pedido.id] = ("Pintar de azul", momento_exemplo(), 2)
+    pagina.tela(1280, 900)
+    pagina.abrir("/producao")
+    card = card_js(pedido.id)
+    botao = alternar_comentario_js(pedido.id)
+    apertar = f"{botao}.dispatchEvent(new PointerEvent('pointerdown', {{bubbles: true}}))"
+    soltar = "document.dispatchEvent(new PointerEvent('pointerup', {bubbles: true}))"
+    assert pagina.js(f"{card}.getAttribute('draggable')") == "true"
+
+    pagina.js(apertar)
+    assert pagina.js(f"{card}.hasAttribute('draggable')") is False  # apertado: não arrasta
+    pagina.js(soltar)
+    assert pagina.js(f"{card}.getAttribute('draggable')") == "true"  # solto: volta ao normal
+
+    # Durante a edição do comentário o card segue não arrastável (a regra anterior vale).
+    pagina.js(f"{comentario_js(pedido.id)}.focus()")
+    assert pagina.js(f"{card}.hasAttribute('draggable')") is False
+    pagina.js(apertar)
+    pagina.js(f"{comentario_js(pedido.id)}.focus()")
+    pagina.js(soltar)
+    assert pagina.js(f"{card}.hasAttribute('draggable')") is False
+
+
+GEOMETRIA_DO_COMENTARIO = """
+[...document.querySelectorAll('.producao-card')].flatMap(c => {
+  const rc = c.getBoundingClientRect(), b = c.querySelector('.producao-comentario-alternar'),
+    l = c.querySelector('.producao-comentario-titulo label'),
+    t = c.querySelector('.producao-comentario-titulo'), i = b.querySelector('svg');
+  const rb = b.getBoundingClientRect(), rl = l.getBoundingClientRect(),
+    ri = i.getBoundingClientRect(), rt = t.getBoundingClientRect();
+  const linha = parseFloat(getComputedStyle(l).lineHeight) || rl.height;
+  const problemas = [];
+  if (rb.left < rc.left - 0.5 || rb.right > rc.right + 0.5) problemas.push('botão fora do card');
+  if (Math.round(rl.height / linha) !== 1) problemas.push('título em mais de uma linha');
+  if (rt.height > rl.height + 1) problemas.push('linha do título mais alta que o texto');
+  if (ri.left < rl.right - 0.5 && ri.bottom > rl.top && ri.top < rl.bottom)
+    problemas.push('ícone sobre o título');
+  if (l.scrollWidth > l.clientWidth + 1) problemas.push('título cortado');
+  return problemas.map(p => c.dataset.pedido + ' ' + p);
+})
+"""
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1100, 1280, 1920])
+def test_botao_do_comentario_na_mesma_linha_sem_aumentar_o_card(
+    pagina, servidor, repo_pedidos, largura
+):
+    from tests.test_pedidos_consulta import com_imagem, item, novo_pedido
+
+    pedidos = [
+        novo_pedido(
+            repo_pedidos,
+            cliente=f"Cliente {n}",
+            itens=[item(1, "Caneca", 2, "1.00", com_imagem(repo_pedidos, n, 1))],
+            observacoes="Embalar para presente",
+        )
+        for n in range(1, 8)
+    ]
+    for pedido in pedidos:  # mesma coluna: rolagem vertical e coluna estreita em 1024
+        repo_pedidos.etapas[pedido.id] = "aguardando_entrega"
+        repo_pedidos.comentarios[pedido.id] = ("Pintar em azul-claro", momento_exemplo(), 2)
+    repo_pedidos.assinar_imagens = lambda caminhos: {
+        c: f"{servidor}/static/img/logo-forma3d-horizontal.png" for c in caminhos
+    }
+    pagina.tela(largura, 900)
+    pagina.abrir("/producao")
+    cards = "[...document.querySelectorAll('.producao-card')]"
+    controles = (
+        f"{cards}.flatMap(c => [...c.querySelectorAll('button, a, textarea')])"
+        ".filter(e => e.getClientRects().length)"
+        ".filter(e => e.getBoundingClientRect().height < 44).length"
+    )
+    alturas = f"{cards}.map(c => c.getBoundingClientRect().height)"
+    fotos = f"{cards}.every(c => c.querySelector('.producao-card-foto').getClientRects().length)"
+
+    for oculto in (False, True):
+        if oculto:
+            pagina.js(
+                f"{cards}.forEach(c => c.querySelector('.producao-comentario-alternar').click())"
+            )
+        contexto = (largura, oculto)
+        assert pagina.js(GEOMETRIA_DO_COMENTARIO) == [], contexto
+        assert pagina.js(controles) == 0, contexto
+        assert pagina.js(SAINDO_DOS_CARDS) == [], contexto
+        assert pagina.js("document.documentElement.scrollWidth") <= largura, contexto
+        assert pagina.js(MENOR_FONTE_NOS_CARDS) >= 11, contexto
+        assert pagina.js(fotos), contexto  # a foto continua à vista
+
+    # O botão não aumenta o card: a altura é a mesma com o botão escondido (como em um card sem
+    # comentário), ou seja, o ícone está na linha do título e não cria outra.
+    com_botao = pagina.js(alturas)
+    pagina.js(
+        f"{cards}.forEach(c => c.querySelector('.producao-comentario-alternar').hidden = true)"
+    )
+    sem_botao = pagina.js(alturas)
+    assert [round(a - b, 1) for a, b in zip(com_botao, sem_botao, strict=True)] == [0.0] * 7
+
+
+# ---------- Custos (repositório falso) ----------
+
+
+def navegar(p, expressao):
+    """Executa o clique que muda de página e espera a página nova terminar de carregar."""
+    p.js("window.__antiga = true")
+    p.js(expressao)
+    p._esperar_carregar()
+
+
+def custos_texto(p, seletor):
+    return " ".join(p.js(f"document.querySelector({json.dumps(seletor)}).innerText").split())
+
+
+def editar_custo(p, seletor_link):
+    navegar(p, f"document.querySelector({json.dumps(seletor_link)}).click()")
+
+
+def preencher(p, seletor, texto):
+    p.js(f"document.querySelector({json.dumps(seletor)}).value = ''")
+    p.digitar(seletor, texto)
+
+
+def salvar_custo(p, seletor_form):
+    navegar(
+        p, f"document.querySelector({json.dumps(seletor_form)} + ' button[type=submit]').click()"
+    )
+
+
+def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos):
+    from decimal import Decimal
+
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    assert "R$ 100,00/kg" in custos_texto(pagina, "#filamento-1")
+    assert "Energia por hora (calculado) R$ 0,12/h" in custos_texto(pagina, "#energia")
+    resumo = custos_texto(pagina, "#resumo")
+    assert "Subtotal por hora ≈ R$ 0,8978/h (≈ R$ 0,90/h)" in resumo
+    assert "Manutenção ainda não definida" in resumo and "Total" not in resumo
+    assert "Manutenção A definir" in custos_texto(pagina, "#manutencao")
+    assert "Depreciação por hora (calculado) ≈ R$ 0,2778/h" in custos_texto(pagina, "#depreciacao")
+
+    # Editar -> Salvar: o valor novo aparece, com aviso de sucesso, e fica gravado.
+    editar_custo(pagina, "#filamento-1 .custos-editar")
+    assert pagina.js("location.search") == "?editar=filamento-1"
+    assert pagina.valor("#filamento-1-valor_kg") == "100,00"
+    preencher(pagina, "#filamento-1-valor_kg", "99,5")
+    salvar_custo(pagina, "#filamento-1 form")
+    assert pagina.texto(".alerta-sucesso") == "Valor do filamento atualizado."
+    assert pagina.js("document.querySelector('.alerta-sucesso').getAttribute('role')") == "status"
+    assert "R$ 99,50/kg" in custos_texto(pagina, "#filamento-1")
+    assert repo_custos.filamentos[1].valor_kg == Decimal("99.5")
+    assert repo_custos.gravacoes == [("filamento", 1, Decimal("99.5"), 1)]  # usuário da sessão
+    pagina.abrir("/custos")  # persistiu: recarregar mantém
+    assert "R$ 99,50/kg" in custos_texto(pagina, "#filamento-1")
+
+    # Cancelar: nada é gravado.
+    editar_custo(pagina, "#filamento-2 .custos-editar")
+    preencher(pagina, "#filamento-2-valor_kg", "1")
+    navegar(pagina, "document.querySelector('#filamento-2 a.botao-secundario').click()")
+    assert repo_custos.filamentos[2].valor_kg == Decimal("125")
+    assert "R$ 125,00/kg" in custos_texto(pagina, "#filamento-2")
+    assert pagina.js("document.querySelectorAll('form input[name=valor_kg]').length") == 0
+
+    # Valor inválido: o formulário continua aberto, com o que foi digitado e o erro.
+    editar_custo(pagina, "#filamento-3 .custos-editar")
+    preencher(pagina, "#filamento-3-valor_kg", "abc")
+    salvar_custo(pagina, "#filamento-3 form")
+    assert pagina.valor("#filamento-3-valor_kg") == "abc"
+    assert "número válido" in pagina.texto("#filamento-3 .campo-erro")
+    assert (
+        pagina.js("document.getElementById('filamento-3-valor_kg').getAttribute('aria-invalid')")
+        == "true"
+    )
+    assert repo_custos.filamentos[3].valor_kg == Decimal("85")
+
+    # Energia: tarifa e consumo; o custo por hora é recalculado (0,95 x 150 / 1000 = 0,1425).
+    pagina.abrir("/custos")
+    editar_custo(pagina, "#energia .custos-editar")
+    preencher(pagina, "#valores-energia-tarifa_kwh", "0,95")
+    preencher(pagina, "#valores-energia-consumo_w", "150")
+    salvar_custo(pagina, "#energia form")
+    assert "Energia por hora (calculado) R$ 0,1425/h" in custos_texto(pagina, "#energia")
+    # Subtotal: 0,1425 + 0,50 + 0,27777... (a manutenção segue a definir).
+    assert "Subtotal por hora ≈ R$ 0,9203/h" in custos_texto(pagina, "#resumo")
+
+    # Manutenção: sai de "A definir" para um valor; o resumo passa a ser o total completo.
+    editar_custo(pagina, "#manutencao .custos-editar")
+    assert pagina.valor("#valores-manutencao-manutencao_hora") == ""
+    preencher(pagina, "#valores-manutencao-manutencao_hora", "0,10")
+    salvar_custo(pagina, "#manutencao form")
+    assert pagina.texto(".alerta-sucesso") == "Manutenção atualizada."
+    assert "Manutenção R$ 0,10/h" in custos_texto(pagina, "#manutencao")
+    assert "Total ≈ R$ 1,0203/h" in custos_texto(pagina, "#resumo")
+    assert repo_custos.parametros["manutencao_hora"] == Decimal("0.10")
+    editar_custo(pagina, "#manutencao .custos-editar")  # em branco volta a "A definir"
+    preencher(pagina, "#valores-manutencao-manutencao_hora", "")
+    salvar_custo(pagina, "#manutencao form")
+    assert "A definir" in custos_texto(pagina, "#manutencao")
+    assert repo_custos.parametros["manutencao_hora"] is None
+
+    # Depreciação: edita os critérios e o valor por hora é recalculado (6.000 / 12.000 = 0,50).
+    editar_custo(pagina, "#depreciacao .custos-editar")
+    assert pagina.valor("#valores-depreciacao-valor_aquisicao") == "6.000,00"
+    preencher(pagina, "#valores-depreciacao-valor_aquisicao", "7200")
+    preencher(pagina, "#valores-depreciacao-vida_util_anos", "4")
+    preencher(pagina, "#valores-depreciacao-valor_residual", "1200")
+    preencher(pagina, "#valores-depreciacao-horas_dia", "10")
+    preencher(pagina, "#valores-depreciacao-dias_mes", "25")
+    salvar_custo(pagina, "#depreciacao form")
+    assert pagina.texto(".alerta-sucesso") == "Depreciação atualizada."
+    deprec = custos_texto(pagina, "#depreciacao")
+    assert "Depreciação por hora (calculado) R$ 0,50/h" in deprec
+    assert (
+        "Depreciação mensal R$ 125,00/mês" in deprec
+        and "Horas mensais (dias × horas) 250 h" in deprec
+    )
+    # Critério inválido: residual maior que a aquisição; nada é gravado e o formulário fica aberto.
+    editar_custo(pagina, "#depreciacao .custos-editar")
+    preencher(pagina, "#valores-depreciacao-valor_residual", "9999")
+    salvar_custo(pagina, "#depreciacao form")
+    assert "não pode ser maior que o valor de aquisição" in pagina.texto("#depreciacao .campo-erro")
+    assert pagina.valor("#valores-depreciacao-valor_residual") == "9999"
+    assert repo_custos.parametros["depreciacao_valor_residual"] == Decimal("1200.00")
+
+    # Acessório: cadastro e edição recalculam o custo unitário (10 / 3, depois 10 / 4).
+    pagina.abrir("/custos")
+    preencher(pagina, "#novo-acessorios-nome", "Chaveiro")
+    preencher(pagina, "#novo-acessorios-valor_compra", "10")
+    preencher(pagina, "#novo-acessorios-quantidade", "3")
+    salvar_custo(pagina, "#acessorios .custos-novo")
+    assert pagina.texto(".alerta-sucesso") == "Acessório cadastrado."
+    item = custos_texto(pagina, "#acessorios .custos-item")
+    assert "Chaveiro" in item and "Valor de compra R$ 10,00" in item and "Quantidade 3 un" in item
+    assert "Custo unitário R$ 3,3333/un" in item
+    (item_id,) = repo_custos.itens
+    editar_custo(pagina, f"#item-{item_id} .custos-editar")
+    preencher(pagina, f"#item-{item_id}-quantidade", "4")
+    salvar_custo(pagina, f"#item-{item_id} form")
+    assert pagina.texto(".alerta-sucesso") == "Acessório atualizado."
+    assert "Custo unitário R$ 2,50/un" in custos_texto(pagina, f"#item-{item_id}")
+    assert "Quantidade 4 un" in custos_texto(pagina, f"#item-{item_id}")
+    assert len(repo_custos.itens) == 1
+
+    # Quantidade inválida no cadastro: nada é gravado e o digitado fica.
+    preencher(pagina, "#novo-embalagens-nome", "Caixa")
+    preencher(pagina, "#novo-embalagens-valor_compra", "20")
+    preencher(pagina, "#novo-embalagens-quantidade", "0")
+    salvar_custo(pagina, "#embalagens .custos-novo")
+    assert "maior que zero" in pagina.texto("#embalagens .campo-erro")
+    assert pagina.valor("#novo-embalagens-nome") == "Caixa"
+    assert len(repo_custos.itens) == 1
+
+
+MENOR_FONTE_NA_PAGINA = """
+Math.min(...[...document.querySelectorAll('main *')]
+  .filter(e => e.getClientRects().length && !e.closest('.visualmente-oculto, svg')
+    && [...e.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()))
+  .map(e => parseFloat(getComputedStyle(e).fontSize)))
+"""
+CONTROLES_BAIXOS = """
+[...document.querySelectorAll('main a.botao, main button, main input')]
+  .filter(e => e.getClientRects().length && e.type !== 'hidden')
+  .filter(e => e.getBoundingClientRect().height < 44).map(e => e.tagName + '.' + e.className)
+"""
+SAINDO_NA_HORIZONTAL = """
+[...document.querySelectorAll('main *')].filter(e => {
+  if (!e.getClientRects().length || e.closest('svg')) return false;
+  const r = e.getBoundingClientRect();
+  return r.left < -0.5 || r.right > document.documentElement.clientWidth + 0.5 })
+  .map(e => e.tagName + '.' + e.className)
+"""
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1024, 1100, 1280, 1920])
+def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
+    pagina, servidor, repo_custos, largura
+):
+    from decimal import Decimal
+
+    repo_custos.salvar_item(None, "acessorio", "Chaveiro " + "x" * 90, Decimal("1234.5678"), 7, 1)
+    repo_custos.salvar_item(None, "acessorio", "Imã", Decimal("10"), 3, 1)
+    repo_custos.salvar_item(None, "embalagem", "Caixa " + "y" * 100, Decimal("36"), 12, 1)
+    pagina.tela(largura, 900)
+
+    estados = [
+        "/custos",
+        "/custos?editar=filamento-1",
+        "/custos?editar=valores-energia",
+        "/custos?editar=valores-perdas",
+        "/custos?editar=valores-mdo",
+        "/custos?editar=valores-manutencao",
+        "/custos?editar=valores-depreciacao",
+        "/custos?editar=item-1",
+        "/custos?editar=item-3",
+    ]
+    for estado in estados:
+        pagina.abrir(estado)
+        contexto = (largura, estado)
+        assert pagina.js("document.documentElement.scrollWidth") <= largura, contexto
+        assert pagina.js(SAINDO_NA_HORIZONTAL) == [], contexto
+        assert pagina.js(CONTROLES_BAIXOS) == [], contexto
+        assert pagina.js(MENOR_FONTE_NA_PAGINA) >= 11, contexto
+        # Campo de texto com valor comprido rola por dentro por natureza.
+        cortes = [
+            c
+            for c in pagina.js(CORTES.replace("LIMITE_VERTICAL", "false"))
+            if not c.startswith(("INPUT", "TEXTAREA"))
+        ]
+        assert cortes == [], contexto
+        # Custos Diretos antes de Custos Indiretos, e todas as seções visíveis.
+        titulos = pagina.js(
+            "[...document.querySelectorAll('main h2')].map(h => h.textContent.trim())"
+        )
+        assert titulos == ["Custos Diretos", "Custos Indiretos"], contexto
+        assert pagina.js("document.querySelectorAll('main section.secao').length") == 9, contexto

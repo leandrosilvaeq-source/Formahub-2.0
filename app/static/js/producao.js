@@ -38,6 +38,9 @@
   // Cards expandidos nesta visita (ids); todos começam recolhidos. Só em memória: o quadro
   // atualizado mantém o estado, a página recarregada volta com tudo recolhido.
   const expandidos = new Set();
+  // Comentários ocultados pelo botão do card recolhido (ids). Só em memória (nada vai ao banco):
+  // o quadro atualizado mantém a escolha, a página recarregada volta com tudo visível.
+  const comentariosOcultos = new Set();
 
   function quadro() {
     return document.getElementById("quadro");
@@ -178,6 +181,11 @@
         if (card) definirRecolhido(card, false);
         else expandidos.delete(id);
       });
+      comentariosOcultos.forEach(function (id) {
+        const card = cardDoPedido(id);
+        if (card && temComentarioSalvo(card)) aplicarComentario(card);
+        else comentariosOcultos.delete(id);
+      });
       mensagem.replaceChildren();
       return true;
     } catch (erro) {
@@ -310,6 +318,41 @@
     botao.querySelector(".visualmente-oculto").textContent = texto;
     if (recolher) expandidos.delete(card.dataset.pedido);
     else expandidos.add(card.dataset.pedido);
+    aplicarComentario(card); // expandido: sempre à vista; recolhido: respeita a escolha anterior
+  }
+
+  // ---------- Ocultar e mostrar o comentário (card recolhido) ----------
+  const ICONES_COMENTARIO = {
+    ocultar: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/><path d="m4 4 16 16"/>',
+    mostrar: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/>',
+  };
+
+  function temComentarioSalvo(card) {
+    return card.querySelector(".producao-comentario-campo").dataset.salvo !== "";
+  }
+
+  // Estado do comentário no card: oculto só quando o card está recolhido, tem comentário salvo e
+  // a pessoa escolheu ocultar. O botão (aria-expanded e nome) acompanha o que está à vista.
+  function aplicarComentario(card) {
+    const botao = card.querySelector(".producao-comentario-alternar");
+    const conteudo = card.querySelector(".producao-comentario-conteudo");
+    const salvo = temComentarioSalvo(card);
+    if (!salvo) comentariosOcultos.delete(card.dataset.pedido); // sem comentário: nada a ocultar
+    const oculto = comentariosOcultos.has(card.dataset.pedido);
+    const texto = oculto ? "Mostrar comentário" : "Ocultar comentário";
+    botao.hidden = !salvo;
+    botao.setAttribute("aria-expanded", oculto ? "false" : "true");
+    botao.title = texto;
+    botao.querySelector(".visualmente-oculto").textContent = texto;
+    botao.querySelector("svg").innerHTML = ICONES_COMENTARIO[oculto ? "mostrar" : "ocultar"];
+    conteudo.hidden = oculto && card.classList.contains("recolhido");
+  }
+
+  function alternarComentario(card) {
+    const id = card.dataset.pedido;
+    if (comentariosOcultos.has(id)) comentariosOcultos.delete(id);
+    else comentariosOcultos.add(id);
+    aplicarComentario(card);
   }
 
   // ---------- Comentário da produção e status do pagamento ----------
@@ -362,6 +405,7 @@
       campo.dataset.salvo = corpo.comentario;
       if (campo.value === digitado) campo.value = corpo.comentario; // sem espaços nas pontas
       card.querySelector(".producao-comentario-info").textContent = corpo.auditoria;
+      aplicarComentario(card); // comentário novo ou apagado: o botão aparece ou some
       avisarNoCard(card, corpo.mensagem, "sucesso");
       return;
     }
@@ -377,6 +421,8 @@
         const recarregado = cardDoPedido(card.dataset.pedido);
         if (recarregado) {
           const novoCampo = recarregado.querySelector(".producao-comentario-campo");
+          comentariosOcultos.delete(recarregado.dataset.pedido); // mostra o texto e a mensagem
+          aplicarComentario(recarregado);
           novoCampo.value = digitado;
           avisarNoCard(recarregado, corpo.mensagem, "erro");
           novoCampo.focus();
@@ -454,6 +500,12 @@
       definirRecolhido(card, !card.classList.contains("recolhido"));
       return;
     }
+    const comentario = evento.target.closest(".producao-comentario-alternar");
+    if (comentario) {
+      // Só ocultar/mostrar: não expande o card nem mexe em etapa, pagamento ou comentário.
+      alternarComentario(comentario.closest(".producao-card"));
+      return;
+    }
     const pagamento = evento.target.closest(".producao-pagamento");
     if (pagamento) {
       alternarPagamento(pagamento);
@@ -474,6 +526,27 @@
     const card = evento.target.closest(".producao-card");
     if (card.querySelector(".producao-mover")) card.setAttribute("draggable", "true");
   });
+
+  // Apertar o botão de ocultar/mostrar o comentário não pode virar arraste do card: o card sai
+  // de "arrastável" enquanto o ponteiro está apertado e volta ao soltar.
+  let cardSemArraste = null;
+  pagina.addEventListener("pointerdown", function (evento) {
+    const botao = evento.target.closest && evento.target.closest(".producao-comentario-alternar");
+    if (!botao) return;
+    cardSemArraste = botao.closest(".producao-card");
+    cardSemArraste.removeAttribute("draggable");
+  });
+  function devolverArraste() {
+    const card = cardSemArraste;
+    cardSemArraste = null;
+    // Só este card, e não enquanto o comentário dele está em edição (ver focusin acima).
+    const editando = document.activeElement.classList.contains("producao-comentario-campo");
+    if (card && card.querySelector(".producao-mover") && !editando) {
+      card.setAttribute("draggable", "true");
+    }
+  }
+  document.addEventListener("pointerup", devolverArraste);
+  document.addEventListener("pointercancel", devolverArraste);
 
   // Foto que não carregou (URL expirada, arquivo removido): some, sem deixar espaço vazio.
   pagina.addEventListener("error", function (evento) {

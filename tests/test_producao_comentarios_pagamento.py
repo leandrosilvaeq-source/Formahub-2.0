@@ -99,7 +99,8 @@ def test_todos_os_cards_comecam_recolhidos(repo_pedidos):
     html = client.get("/producao").text
 
     assert html.count('<li class="producao-card recolhido" ') == 4
-    assert html.count('aria-expanded="false"') == 4 and 'aria-expanded="true"' not in html
+    assert html.count('class="producao-recolher" aria-expanded="false"') == 4
+    assert 'class="producao-recolher" aria-expanded="true"' not in html
     assert len(re.findall(r'class="producao-card-(?:corpo|acoes)" id="[^"]+" hidden>', html)) == 8
 
 
@@ -649,3 +650,43 @@ def test_teste_sql_e_transacional_e_usa_ids_negativos():
         r"public\.(?:atualizar_comentario_producao|alterar_status_pagamento)\(\s*(-?\d+)", sql
     ):
         assert int(chamada) < 0
+
+
+# ---------- Ocultar e mostrar o comentário (botão do card) ----------
+
+
+def botao_alternar_comentario(c):
+    return re.search(r'<button[^>]*class="producao-comentario-alternar"[^>]*>', c).group(0)
+
+
+def test_botao_de_ocultar_comentario_so_aparece_em_card_com_comentario(repo_pedidos):
+    com = novo_pedido(repo_pedidos)
+    sem = novo_pedido(repo_pedidos)
+    repo_pedidos.comentarios[com.id] = ("Pintar de azul", datetime(2026, 10, 1, 9), 2)
+
+    html = client.get("/producao").text
+    com_botao, sem_botao = (
+        botao_alternar_comentario(card(html, com.id)),
+        botao_alternar_comentario(card(html, sem.id)),
+    )
+
+    # Com comentário: visível, começa mostrando o texto e aponta para o conteúdo do comentário.
+    assert " hidden" not in com_botao
+    assert 'aria-expanded="true"' in com_botao and 'title="Ocultar comentário"' in com_botao
+    assert f'aria-controls="comentario-corpo-{com.id}"' in com_botao
+    assert f'id="comentario-corpo-{com.id}"' in card(html, com.id)
+    assert ">Ocultar comentário</span>" in card(html, com.id)
+    # Sem comentário: o botão existe só para o JS poder mostrá-lo após salvar, mas fica oculto.
+    assert " hidden" in sem_botao
+
+
+def test_ocultar_comentario_nao_envolve_o_servidor_nem_o_dado_salvo(repo_pedidos):
+    pedido = novo_pedido(repo_pedidos)
+    repo_pedidos.comentarios[pedido.id] = ("Pintar de azul", datetime(2026, 10, 1, 9), 2)
+    escritas = repo_pedidos.escritas
+    c = card(client.get("/producao").text, pedido.id)
+
+    # O texto salvo e a última atualização continuam no HTML; ocultar é só na tela.
+    assert ">Pintar de azul</textarea>" in c and 'data-salvo="Pintar de azul"' in c
+    assert "Atualizado por Kassia em 01/10/2026 às 09:00" in c
+    assert repo_pedidos.alteracoes_comentario == [] and repo_pedidos.escritas == escritas

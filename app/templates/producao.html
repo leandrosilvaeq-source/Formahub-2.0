@@ -69,15 +69,25 @@
   {% endif %}
   </div>
   <div class="producao-comentario">
-    <label for="comentario-{{ c.id }}">Comentários da produção</label>
-    <textarea id="comentario-{{ c.id }}" class="campo-texto producao-comentario-campo" rows="2"
-      maxlength="{{ limite_comentario }}" data-salvo="{{ c.comentario_producao or '' }}"
-      aria-describedby="comentario-{{ c.id }}-info">{{ c.comentario_producao or '' }}</textarea>
-    <div class="producao-comentario-rodape">
-      <p id="comentario-{{ c.id }}-info" class="producao-comentario-info">{{ auditoria }}</p>
-      <button type="button" class="botao botao-secundario producao-salvar-comentario">Salvar comentário</button>
+    <div class="producao-comentario-titulo">
+      <label for="comentario-{{ c.id }}">Comentários da produção</label>
+      {# Só com o card recolhido e com comentário salvo (o CSS e o JS cuidam do resto). #}
+      <button type="button" class="producao-comentario-alternar" aria-expanded="true"
+        aria-controls="comentario-corpo-{{ c.id }}" title="Ocultar comentário"{% if not c.comentario_producao %} hidden{% endif %}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/><path d="m4 4 16 16"/></svg>
+        <span class="visualmente-oculto">Ocultar comentário</span>
+      </button>
     </div>
-    <div class="producao-comentario-mensagem" aria-live="polite"></div>
+    <div class="producao-comentario-conteudo" id="comentario-corpo-{{ c.id }}">
+      <textarea id="comentario-{{ c.id }}" class="campo-texto producao-comentario-campo" rows="2"
+        maxlength="{{ limite_comentario }}" data-salvo="{{ c.comentario_producao or '' }}"
+        aria-describedby="comentario-{{ c.id }}-info">{{ c.comentario_producao or '' }}</textarea>
+      <div class="producao-comentario-rodape">
+        <p id="comentario-{{ c.id }}-info" class="producao-comentario-info">{{ auditoria }}</p>
+        <button type="button" class="botao botao-secundario producao-salvar-comentario">Salvar comentário</button>
+      </div>
+      <div class="producao-comentario-mensagem" aria-live="polite"></div>
+    </div>
   </div>
   <div class="producao-card-acoes" id="card-acoes-{{ c.id }}" hidden>
     <a class="botao botao-secundario" href="/pedidos/{{ c.id }}"

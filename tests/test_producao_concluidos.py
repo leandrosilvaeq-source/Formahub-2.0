@@ -247,11 +247,12 @@ def sem_espacos_extras(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip()
 
 
-def test_migration_e_a_mais_recente_e_so_recria_listar_producao():
+def test_migration_so_recria_listar_producao():
     migrations = sorted(p.name for p in MIGRATIONS.glob("*.sql"))
     sql = sql_sem_comentarios()
 
-    assert migrations[-1] == MIGRATION.name
+    assert MIGRATION.name in migrations  # as seguintes (ex.: custos) não a alteram
+    assert MIGRATION.name > "20261005120000_comentarios_pagamento_producao.sql"
     assert re.findall(r"create (?:or replace )?function public\.(\w+)", sql) == ["listar_producao"]
     assert "create or replace function public.listar_producao()" in sql
     # Sem drop (nada de sobrecarga nem perda de permissões) e sem mexer em dados ou tabelas.
