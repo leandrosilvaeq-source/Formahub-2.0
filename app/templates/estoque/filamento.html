@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "estoque/_campos.html" as c %}
+
+{% set titulo = "Editar lote de filamento" %}
+{% block title %}{{ titulo }} · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="pedido estoque-form">
+
+<div class="pagina-topo">
+  <div>
+    <h1>{{ titulo }}</h1>
+    <p>Corrija a descrição do lote. O saldo só aumenta por uma compra.</p>
+  </div>
+  <a class="botao botao-secundario" href="/estoque#filamentos">Voltar ao estoque</a>
+</div>
+
+{{ c.alertas(erro) }}
+
+<form method="post" action="/estoque/filamentos/{{ lote_id }}/editar" novalidate>
+  <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
+
+  <section class="secao">
+    <h2>Filamento</h2>
+    <div class="grade estoque-grade">
+      {{ c.texto(form, "cor", "Cor", ' maxlength="60" placeholder="Ex.: Preto"') }}
+      {{ c.texto(form, "material", "Material", ' maxlength="60" placeholder="Ex.: PLA"') }}
+      {% set mensagem = form.erros.get("tipo") %}
+      <div class="campo{% if mensagem %} tem-erro{% endif %}">
+        <label for="tipo">Tipo <span class="obrigatorio">*</span></label>
+        <select id="tipo" name="tipo"{{ c.invalido(mensagem, "tipo") }}>
+          <option value=""{% if form.tipo not in tipos %} selected{% endif %}>Escolha o tipo</option>
+          {% for codigo, rotulo in tipos.items() %}
+          <option value="{{ codigo }}"{% if form.tipo == codigo %} selected{% endif %}>{{ rotulo }}</option>
+          {% endfor %}
+        </select>
+        {{ c.erro(mensagem, "tipo") }}
+      </div>
+      {{ c.texto(form, "marca", "Marca", ' maxlength="60"') }}
+    </div>
+  </section>
+
+  {% if lote %}
+  <section class="secao">
+    <h2>Saldo e compra</h2>
+    <dl class="estoque-resumo">
+      <div><dt>Peso disponível (g)</dt><dd>{{ lote.peso_g | peso }}</dd></div>
+      <div><dt>Data de compra</dt><dd>{{ lote.data_compra | data_compra }}</dd></div>
+      <div><dt>Custo/kg (R$/kg)</dt><dd>{{ lote.custo_kg | brl }}</dd></div>
+    </dl>
+    <p class="estoque-resumo-nota">Saldo, data e custo vêm da compra e não mudam aqui.</p>
+  </section>
+  {% endif %}
+
+  <div class="acoes estoque-acoes">
+    <a class="botao botao-secundario" href="/estoque#filamentos">Cancelar</a>
+    <button type="submit" class="botao botao-primario">Salvar</button>
+  </div>
+</form>
+</div>
+{% endblock %}

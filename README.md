@@ -7,7 +7,7 @@ Aplicação web simples em Python (FastAPI + Jinja2), com banco PostgreSQL hospe
 ## Requisitos
 
 - Python 3.12
-- Node.js (apenas para o Supabase CLI, instalado via `npm install`)
+- Node.js (para o Supabase CLI e o PGlite dos testes SQL locais, instalados via `npm install`)
 
 ## Primeira execução (em cada computador)
 
@@ -54,6 +54,37 @@ ruff format --check .
 
 O banco só é alterado por migrations em `supabase/migrations/`, criadas com o Supabase CLI
 (`npx supabase migration new <nome>`). Não existe banco local.
+
+### Testes SQL locais (PGlite)
+
+`npm run test:sql` aplica todas as migrations deste checkout num PostgreSQL em memória (PGlite,
+versão fixa no `package.json`) e roda `supabase/tests/estoque_test.sql` (Estoque e Registrar
+Compra, com as migrations 20261009 e 20261010). Nada se conecta ao
+Supabase nem grava em disco. Outros arquivos de teste podem ser passados ao executor:
+
+```powershell
+npm run test:sql
+node supabase/tests/executar_pglite.mjs supabase/tests/estoque_test.sql
+```
+
+O ambiente do Supabase é simulado só no que as migrations usam (papéis `anon`, `authenticated` e
+`service_role`, privilégios padrão do schema `public` e `storage.buckets`). O `pytest` também roda
+esse teste e confere o repositório do Estoque contra as funções reais (é pulado sem Node/PGlite).
+Depois de aplicar uma migration no Supabase, o teste correspondente ainda deve rodar lá.
+
+### Estoque: entrada por compra (migrations 20261009 e 20261010)
+
+- `20261009120000_estoque.sql` cria as tabelas de lotes (filamentos, acessórios e embalagens).
+- `20261010120000_compras_estoque.sql` faz toda entrada passar por uma compra: cria `compras` e
+  `compra_itens`, liga cada lote ao item que o originou (`compra_item_id`), troca o cadastro
+  direto por `registrar_compra()` (compra, itens e lotes numa transação; a `chave_envio` impede
+  duplicar a mesma submissão), limita a edição à descrição do lote e cria o bucket privado
+  `compra-imagens`. Um gatilho impede que o saldo de um lote aumente por UPDATE.
+- As duas são aplicadas juntas e nessa ordem. A 20261010 **exige as tabelas de lotes vazias**
+  (lotes antigos não têm compra) e que o bucket `compra-imagens` ainda não exista; se não,
+  ela para com erro sem alterar nada.
+- Depois de aplicar no Supabase (por pedido explícito), rodar lá
+  `supabase db query --linked -f supabase/tests/estoque_test.sql` (tudo em ROLLBACK).
 
 `supabase/operacoes/` guarda correções de dados de execução única: são rodadas manualmente, uma
 vez, por decisão explícita, e nunca pelo `db push`. Cada arquivo explica o que confere e o que altera.

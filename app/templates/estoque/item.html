@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "estoque/_campos.html" as c %}
+
+{% set titulo = "Editar lote de " ~ area.singular | lower %}
+{% block title %}{{ titulo }} · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="pedido estoque-form">
+
+<div class="pagina-topo">
+  <div>
+    <h1>{{ titulo }}</h1>
+    <p>Corrija o nome do lote. O saldo só aumenta por uma compra.</p>
+  </div>
+  <a class="botao botao-secundario" href="/estoque#{{ area.slug }}">Voltar ao estoque</a>
+</div>
+
+{{ c.alertas(erro) }}
+
+<form method="post" action="/estoque/{{ area.slug }}/{{ lote_id }}/editar" novalidate>
+  <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
+
+  <section class="secao">
+    <h2>{{ area.singular }}</h2>
+    <div class="grade estoque-grade">
+      {{ c.texto(form, "nome", area.singular ~ " (nome)", ' maxlength="60"') }}
+    </div>
+  </section>
+
+  {% if lote %}
+  <section class="secao">
+    <h2>Saldo e compra</h2>
+    <dl class="estoque-resumo">
+      <div><dt>Quantidade disponível (un)</dt><dd>{{ lote.quantidade | unidades }}</dd></div>
+      <div><dt>Data de compra</dt><dd>{{ lote.data_compra | data_compra }}</dd></div>
+      <div><dt>Custo unitário (R$/un)</dt><dd>{{ lote.custo_unitario | brl }}</dd></div>
+    </dl>
+    <p class="estoque-resumo-nota">Saldo, data e custo vêm da compra e não mudam aqui.</p>
+  </section>
+  {% endif %}
+
+  <div class="acoes estoque-acoes">
+    <a class="botao botao-secundario" href="/estoque#{{ area.slug }}">Cancelar</a>
+    <button type="submit" class="botao botao-primario">Salvar</button>
+  </div>
+</form>
+</div>
+{% endblock %}

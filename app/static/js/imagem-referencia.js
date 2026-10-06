@@ -1,15 +1,20 @@
-// Tela "Novo pedido": imagem de referência de cada item (opcional: zero ou uma).
+// Imagem de referência de cada item (opcional: zero ou uma): itens do Novo pedido e linhas
+// da janela Registrar Compra do Estoque.
 //
 // Este arquivo só escolhe, valida e mostra a imagem: a miniatura usa uma URL temporária
 // (blob:) e nada é convertido em texto ou guardado no navegador. A falta de imagem nunca é
 // um erro e não impede o salvamento do pedido.
-// Ao salvar, pedido-novo.js envia `window.ImagensReferencia.arquivos()[n]` junto com o
-// formulário; o servidor grava a imagem no Supabase Storage e o banco guarda só o caminho.
+// Ao salvar, pedido-novo.js (ou estoque-compra.js) envia `window.ImagensReferencia.arquivos()[n]`
+// junto com o formulário; o servidor grava a imagem no Supabase Storage e o banco guarda só o
+// caminho.
+// A lista é o elemento com data-imagens-referencia (data-linha: classe das linhas) ou, nos
+// pedidos, #itens com linhas .item.
 (function () {
   "use strict";
 
-  const lista = document.getElementById("itens");
+  const lista = document.querySelector("[data-imagens-referencia]") || document.getElementById("itens");
   if (!lista) return;
+  const LINHA = lista.dataset.linha || "item";
 
   const TIPOS = { "image/png": true, "image/jpeg": true, "image/webp": true };
   const EXTENSOES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
@@ -205,16 +210,17 @@
 
   // Cada linha de item (existente ou adicionada depois) ganha o seu próprio controle.
   function iniciar(linha) {
-    if (linha.nodeType === 1 && linha.classList.contains("item") && !controles.has(linha)) {
+    if (linha.nodeType === 1 && linha.classList.contains(LINHA) && !controles.has(linha)) {
       const controle = criar(linha);
       if (controle) controles.set(linha, controle);
     }
   }
 
   function numerar() {
-    Array.prototype.forEach.call(lista.querySelectorAll(".item"), function (linha, i) {
+    Array.prototype.forEach.call(lista.querySelectorAll("." + LINHA), function (linha, i) {
       const area = linha.querySelector(".upload-item");
-      if (area) area.setAttribute("aria-label", "Imagem de referência do item " + (i + 1));
+      const rotulo = (area && area.dataset.rotulo) || "Imagem de referência do item";
+      if (area) area.setAttribute("aria-label", rotulo + " " + (i + 1));
     });
   }
 
@@ -229,7 +235,7 @@
     numerar();
   }).observe(lista, { childList: true });
 
-  Array.prototype.forEach.call(lista.querySelectorAll(".item"), iniciar);
+  Array.prototype.forEach.call(lista.querySelectorAll("." + LINHA), iniciar);
   numerar();
 
   // Soltar um arquivo fora de uma área não deve abrir a imagem no lugar da página.
@@ -240,7 +246,7 @@
   window.addEventListener("drop", function (evento) { if (foraDeArea(evento)) evento.preventDefault(); });
 
   function todos() {
-    return Array.prototype.map.call(lista.querySelectorAll(".item"), function (linha) {
+    return Array.prototype.map.call(lista.querySelectorAll("." + LINHA), function (linha) {
       return controles.get(linha) || null;
     });
   }
