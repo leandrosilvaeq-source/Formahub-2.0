@@ -17,6 +17,7 @@ from app.auth.rotas import (
     tratar_servico_indisponivel,
 )
 from app.auth.rotas import router as rotas_auth
+from app.custos_rotas import router as rotas_custos
 from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
     ESCOLHA_OBRIGATORIA,
@@ -67,6 +68,7 @@ MENSAGEM_CONSULTA_INDISPONIVEL = (
 app = FastAPI(title="FormaHub 2.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 app.include_router(rotas_auth)
+app.include_router(rotas_custos)
 app.add_exception_handler(NaoAutenticado, tratar_nao_autenticado)
 app.add_exception_handler(ServicoIndisponivel, tratar_servico_indisponivel)
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -93,6 +95,11 @@ MODULOS = [
         "titulo": "Produção",
         "descricao": "Quadro com as etapas de produção dos pedidos.",
         "links": [{"url": "/producao", "texto": "Ver produção", "principal": True}],
+    },
+    {
+        "titulo": "Custos",
+        "descricao": "Custos diretos e indiretos da empresa.",
+        "links": [{"url": "/custos", "texto": "Ver custos", "principal": True}],
     },
 ]
 

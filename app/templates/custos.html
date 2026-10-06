@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}Custos · FormaHub 2.0{% endblock %}
+
+{# Campo de texto de um formulário de custos. `padrao` é o valor salvo; o que foi digitado (numa
+   tentativa recusada) tem prioridade. #}
+{% macro campo(escopo, nome, rotulo, unidade, padrao, modo="decimal", maximo=None, obrigatorio=True, placeholder="", dica="") -%}
+{% set id = escopo ~ "-" ~ nome %}
+{% set mensagem = estado.erro(escopo, nome) %}
+<div class="campo{% if mensagem %} tem-erro{% endif %}">
+  <label for="{{ id }}">{{ rotulo }}{% if unidade %} <span class="custos-unidade">({{ unidade }})</span>{% endif %}</label>
+  <input id="{{ id }}" name="{{ nome }}" type="text" inputmode="{{ modo }}" autocomplete="off"
+    {%- if obrigatorio %} required{% endif %}
+    {%- if maximo %} maxlength="{{ maximo }}"{% endif %}
+    {%- if placeholder %} placeholder="{{ placeholder }}"{% endif %}
+    value="{{ estado.texto(escopo, nome, padrao) }}"
+    {%- if mensagem or dica %} aria-describedby="{% if dica %}{{ id }}-dica{% endif %}{% if dica and mensagem %} {% endif %}{% if mensagem %}{{ id }}-erro{% endif %}"{% endif %}
+    {%- if mensagem %} aria-invalid="true"{% endif %}>
+  {% if dica %}<p class="custos-dica" id="{{ id }}-dica">{{ dica }}</p>{% endif %}
+  {% if mensagem %}<p class="campo-erro" id="{{ id }}-erro">{{ mensagem }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Início e fim de um formulário de edição: CSRF, mensagem geral, Salvar e Cancelar. #}
+{% macro abrir_form(acao, escopo, classe="custos-form") -%}
+<form class="{{ classe }}" method="post" action="{{ acao }}" novalidate>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if estado.falhas.get(escopo) %}
+  <div class="alerta alerta-erro" role="alert">{{ estado.falhas[escopo] }}</div>
+  {% endif %}
+{%- endmacro %}
+
+{% macro botoes(ancora, rotulo_salvar="Salvar") -%}
+  <div class="custos-form-acoes">
+    <button type="submit" class="botao botao-primario">{{ rotulo_salvar }}</button>
+    <a class="botao botao-secundario" href="/custos#{{ ancora }}">Cancelar</a>
+  </div>
+</form>
+{%- endmacro %}
+
+{# Um ou mais valores únicos (uma chave de custos_parametros cada), com Editar/Salvar/Cancelar. #}
+{% macro valores(grupo, ancora, descricao_editar) -%}
+{% set escopo = "valores-" ~ grupo %}
+{% if escopo in estado.abertos %}
+  {{ abrir_form("/custos/valores/" ~ grupo, escopo) }}
+  <div class="custos-form-campos">
+  {% for c in grupos[grupo] %}
+  {{ campo(escopo, c.nome, c.rotulo, c.unidade, valor_do_campo(parametros.get(c.chave), c.formato),
+       obrigatorio=not c.opcional, placeholder="A definir" if c.opcional else "",
+       dica="Deixe em branco para manter “A definir”. Zero é um valor." if c.opcional else "") }}
+  {% endfor %}
+  </div>
+  {{ botoes(ancora) }}
+{% else %}
+  <dl class="custos-valores">
+    {% for c in grupos[grupo] %}
+    <div>
+      <dt>{{ c.rotulo }}</dt>
+      <dd>
+        {%- if c.chave not in parametros %}—
+        {%- elif parametros[c.chave] is none %}<span class="custos-pendente">A definir</span>
+        {%- elif c.formato == "moeda" %}{{ parametros[c.chave] | custo }}{% if "/" in c.unidade %}<span class="custos-unidade">/{{ c.unidade.split("/")[1] }}</span>{% endif %}
+        {%- else %}{{ parametros[c.chave] | numero }}<span class="custos-unidade">{{ "" if c.unidade == "%" else " " }}{{ c.unidade }}</span>{% endif -%}
+      </dd>
+    </div>
+    {% endfor %}
+    {% if caller is defined %}{{ caller() }}{% endif %}
+  </dl>
+  <a class="botao botao-secundario custos-editar" href="/custos?editar=valores-{{ grupo }}#{{ ancora }}"
+    aria-label="Editar {{ descricao_editar }}">Editar</a>
+{% endif %}
+{%- endmacro %}
+
+{# Acessórios ou embalagens: lista, edição de cada item e formulário de cadastro. #}
+{% macro itens_secao(rota, titulo, singular, vazio) -%}
+<section class="secao custos-secao" id="{{ rota }}" aria-labelledby="titulo-{{ rota }}">
+  <h3 id="titulo-{{ rota }}">{{ titulo }}</h3>
+  <p class="custos-dica">Informe o valor total da compra e a quantidade de unidades adquiridas: o custo unitário (R$/un) é calculado.</p>
+  {% if not itens[rota] %}
+  <p class="custos-vazio">{{ vazio }}</p>
+  {% else %}
+  <ul class="custos-lista">
+    {% for i in itens[rota] %}
+    {% set escopo = "item-" ~ i.id %}
+    <li class="custos-item" id="item-{{ i.id }}">
+      {% if escopo in estado.abertos %}
+      {{ abrir_form("/custos/itens/" ~ rota ~ "/" ~ i.id, escopo) }}
+      <div class="custos-form-grade">
+        {{ campo(escopo, "nome", "Nome", "", i.nome, "text", 120) }}
+        {{ campo(escopo, "valor_compra", "Valor total de compra", "R$", valor_do_campo(i.valor_compra, "moeda")) }}
+        {{ campo(escopo, "quantidade", "Quantidade comprada", "un", i.quantidade, "numeric", 9) }}
+      </div>
+      <p class="custos-dica">Custo unitário atual: {{ i.custo_unitario | custo }}/un. Ele é recalculado ao salvar.</p>
+      {{ botoes(rota) }}
+      {% else %}
+      <div class="custos-item-corpo">
+        <strong class="custos-item-nome">{{ i.nome }}</strong>
+        <dl class="custos-item-dados">
+          <div><dt>Valor de compra</dt><dd>{{ i.valor_compra | custo }}</dd></div>
+          <div><dt>Quantidade</dt><dd>{{ i.quantidade }} <span class="custos-unidade">un</span></dd></div>
+          <div class="custos-item-unitario"><dt>Custo unitário</dt><dd>{{ i.custo_unitario | custo }}<span class="custos-unidade">/un</span></dd></div>
+        </dl>
+        <a class="botao botao-secundario custos-editar" href="/custos?editar=item-{{ i.id }}#item-{{ i.id }}"
+          aria-label="Editar {{ i.nome }}">Editar</a>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% set novo = "novo-" ~ rota %}
+  {{ abrir_form("/custos/itens/" ~ rota, novo, "custos-form custos-novo") }}
+  <h4>Cadastrar {{ singular }}</h4>
+  <div class="custos-form-grade">
+    {{ campo(novo, "nome", "Nome", "", "", "text", 120) }}
+    {{ campo(novo, "valor_compra", "Valor total de compra", "R$", "") }}
+    {{ campo(novo, "quantidade", "Quantidade comprada", "un", "", "numeric", 9) }}
+  </div>
+  <div class="custos-form-acoes">
+    <button type="submit" class="botao botao-primario">Cadastrar</button>
+  </div>
+  </form>
+</section>
+{%- endmacro %}
+
+{% block content %}
+<div class="custos">
+
+<div class="pagina-topo">
+  <div>
+    <h1>Custos</h1>
+    <p>Cadastro dos custos da empresa, com edição manual.</p>
+  </div>
+  <div class="pagina-topo-acoes">
+    <a class="botao botao-secundario" href="/">Início</a>
+  </div>
+</div>
+
+{% if estado.aviso %}
+<div class="alerta alerta-sucesso" role="status">{{ estado.aviso }}</div>
+{% endif %}
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+{% if filamentos is not defined %}
+<a class="botao botao-primario" href="/custos">Tentar novamente</a>
+{% endif %}
+{% endif %}
+
+{% if filamentos is defined %}
+
+<h2 class="custos-grupo" id="custos-diretos">Custos Diretos</h2>
+
+<section class="secao custos-secao" id="filamentos" aria-labelledby="titulo-filamentos">
+  <h3 id="titulo-filamentos">Material (Filamento)</h3>
+  <ul class="custos-lista">
+    {% for f in filamentos %}
+    {% set escopo = "filamento-" ~ f.id %}
+    <li class="custos-item" id="filamento-{{ f.id }}">
+      {% if escopo in estado.abertos %}
+      {{ abrir_form("/custos/filamentos/" ~ f.id, escopo) }}
+      <p class="custos-item-nome"><strong>{{ f.nome }}</strong>{% if f.abrange %} <span class="custos-dica">— {{ f.abrange }}</span>{% endif %}</p>
+      {{ campo(escopo, "valor_kg", "Valor", "R$/kg", valor_do_campo(f.valor_kg, "moeda")) }}
+      {{ botoes("filamentos") }}
+      {% else %}
+      <div class="custos-item-corpo">
+        <div class="custos-item-titulo">
+          <strong class="custos-item-nome">{{ f.nome }}</strong>
+          {% if f.abrange %}<span class="custos-dica">{{ f.abrange }}</span>{% endif %}
+        </div>
+        <p class="custos-valor">{{ f.valor_kg | custo }}<span class="custos-unidade">/kg</span></p>
+        <a class="botao botao-secundario custos-editar" href="/custos?editar=filamento-{{ f.id }}#filamento-{{ f.id }}"
+          aria-label="Editar valor de {{ f.nome }}">Editar</a>
+      </div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="secao custos-secao" id="energia" aria-labelledby="titulo-energia">
+  <h3 id="titulo-energia">Energia elétrica</h3>
+  <p class="custos-dica">Impressora Bambu Lab A1. O custo por hora é calculado: tarifa (R$/kWh) × consumo (W) ÷ 1.000.</p>
+  {% call valores("energia", "energia", "tarifa e consumo da energia elétrica") %}
+    <div class="custos-calculado">
+      <dt>Energia por hora (calculado)</dt>
+      <dd>{% if energia_hora is not none %}{{ energia_hora | custo }}<span class="custos-unidade">/h</span>{% else %}—{% endif %}</dd>
+    </div>
+  {% endcall %}
+</section>
+
+<section class="secao custos-secao" id="perdas" aria-labelledby="titulo-perdas">
+  <h3 id="titulo-perdas">Perdas</h3>
+  {{ valores("perdas", "perdas", "o percentual de perdas") }}
+</section>
+
+{{ itens_secao("acessorios", "Acessórios", "acessório", "Nenhum acessório cadastrado.") }}
+
+{{ itens_secao("embalagens", "Embalagens", "embalagem", "Nenhuma embalagem cadastrada.") }}
+
+<h2 class="custos-grupo" id="custos-indiretos">Custos Indiretos</h2>
+
+<div class="custos-par">
+  <section class="secao custos-secao" id="mdo" aria-labelledby="titulo-mdo">
+    <h3 id="titulo-mdo">Mão de Obra (MDO)</h3>
+    <p class="custos-dica">Somada separadamente: não está embutida na manutenção nem na depreciação.</p>
+    {{ valores("mdo", "mdo", "a Mão de Obra") }}
+  </section>
+
+  <section class="secao custos-secao" id="manutencao" aria-labelledby="titulo-manutencao">
+    <h3 id="titulo-manutencao">Manutenção</h3>
+    <p class="custos-dica">Custo de manutenção por hora de impressão. Enquanto estiver “A definir”, ele não entra na soma.</p>
+    {{ valores("manutencao", "manutencao", "a Manutenção") }}
+  </section>
+</div>
+
+<section class="secao custos-secao" id="depreciacao" aria-labelledby="titulo-depreciacao">
+  <h3 id="titulo-depreciacao">Depreciação</h3>
+  <p class="custos-dica">Valor por hora = (valor de aquisição − valor residual) ÷ (vida útil em anos × 12 × dias por mês × horas por dia). Ele é calculado a partir dos critérios abaixo.</p>
+  {% call valores("depreciacao", "depreciacao", "os critérios da depreciação") %}
+    {% if depreciacao is not none %}
+    <div class="custos-calculado"><dt>Horas mensais (dias × horas)</dt><dd>{{ depreciacao.horas_mensais | numero }}<span class="custos-unidade"> h</span></dd></div>
+    <div class="custos-calculado"><dt>Depreciação mensal</dt><dd>{{ depreciacao.mensal | custo_aprox }}<span class="custos-unidade">/mês</span></dd></div>
+    <div class="custos-calculado custos-destaque"><dt>Depreciação por hora (calculado)</dt><dd>{{ depreciacao.por_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
+    {% endif %}
+  {% endcall %}
+</section>
+
+<section class="secao custos-secao custos-resumo" id="resumo" aria-labelledby="titulo-resumo">
+  <h3 id="titulo-resumo">Custo por hora</h3>
+  <p class="custos-dica">Energia + MDO + Depreciação + Manutenção, somadas separadamente.</p>
+  {% if total_hora is not none %}
+  <dl class="custos-valores">
+    <div><dt>Energia elétrica</dt><dd>{{ energia_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
+    <div><dt>Mão de Obra (MDO)</dt><dd>{{ parametros["mdo_hora"] | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
+    <div><dt>Depreciação</dt><dd>{{ depreciacao.por_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
+    <div><dt>Manutenção</dt><dd>{% if parametros["manutencao_hora"] is none %}<span class="custos-pendente">A definir</span>{% else %}{{ parametros["manutencao_hora"] | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
+    <div class="custos-total">
+      <dt>{{ "Total" if total_completo else "Subtotal por hora" }}</dt>
+      <dd>{{ total_hora | custo_aprox }}<span class="custos-unidade">/h</span>{% if not total_completo %}<span class="custos-unidade custos-nowrap"> (≈ {{ total_hora | custo_curto }}/h)</span>{% endif %}</dd>
+    </div>
+  </dl>
+  {% if not total_completo %}
+  <p class="custos-aviso" role="status">Manutenção ainda não definida. Este é apenas um subtotal, não o custo por hora completo.</p>
+  {% endif %}
+  {% else %}
+  <p class="custos-vazio">Indisponível: falta algum dos valores acima.</p>
+  {% endif %}
+</section>
+
+{% endif %}
+
+</div>
+{% endblock %}

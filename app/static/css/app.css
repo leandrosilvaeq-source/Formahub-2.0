@@ -1924,6 +1924,7 @@ main {
 
 .producao-card {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
   min-width: 0;
   padding: 0.75rem;
@@ -2048,6 +2049,7 @@ main {
 .producao-recolher[aria-expanded="false"] svg { transform: rotate(180deg); }
 
 .producao-recolher:focus-visible,
+.producao-comentario-alternar:focus-visible,
 .producao-pagamento:focus-visible {
   outline: 3px solid var(--cor-foco);
   outline-offset: 2px;
@@ -2086,6 +2088,61 @@ main {
   font-weight: 700;
   color: var(--cor-texto-suave);
 }
+
+/* Título e botão de ocultar/mostrar na mesma linha. O botão tem área de toque de 44 px, mas as
+   margens negativas a devolvem à linha (a altura do card não muda); só aparece com o card
+   recolhido (expandido, o comentário sempre fica à vista). */
+.producao-comentario-titulo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.producao-comentario-titulo label { min-width: 0; }
+
+.producao-comentario-conteudo {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.producao-comentario-alternar {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: var(--alvo-toque);
+  margin: calc((1rem - var(--alvo-toque)) / 2) -0.75rem calc((1rem - var(--alvo-toque)) / 2) 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--raio-campo);
+  background: transparent;
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.producao-comentario-alternar:hover {
+  border-color: var(--cor-borda-campo);
+  background: var(--cor-selecao-fundo);
+  color: var(--cor-texto);
+}
+
+.producao-comentario-alternar svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.producao-comentario-alternar[hidden],
+.producao-card:not(.recolhido) .producao-comentario-alternar { display: none; }
 
 .producao-comentario-campo {
   min-height: 4.2rem;
@@ -2186,4 +2243,207 @@ main {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ==========================================================
+   Custos (cadastro dos custos da empresa)
+   ========================================================== */
+.custos-grupo {
+  margin: calc(var(--espaco) * 1.25) 0 0.6rem;
+  font-size: 1.25rem;
+}
+
+.custos-grupo::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 1em;
+  margin-right: 0.6rem;
+  border-radius: 3px;
+  background: var(--gradiente-marca-vertical);
+  vertical-align: -0.12em;
+}
+
+.custos-secao h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.custos-secao h4 {
+  margin: 0;
+  font-family: var(--fonte-titulo);
+  font-size: 0.9rem;
+}
+
+.custos-dica {
+  margin: 0 0 0.6rem;
+  color: var(--cor-texto-suave);
+  font-size: 0.8rem;
+}
+
+.custos-vazio {
+  margin: 0 0 0.75rem;
+  color: var(--cor-texto-suave);
+}
+
+.custos-unidade {
+  margin-left: 0.15rem;
+  color: var(--cor-texto-suave);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.custos-lista {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.custos-item {
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-campo);
+  background: var(--cor-fundo);
+}
+
+.custos-item-corpo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.custos-item-titulo { display: grid; min-width: 0; }
+
+.custos-item-nome {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.custos-item .custos-dica { margin: 0; }
+
+.custos-valor {
+  margin: 0;
+  font-family: var(--fonte-titulo);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.custos-editar { justify-self: start; }
+
+.custos-valores,
+.custos-item-dados {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.6rem;
+}
+
+.custos-item-dados { margin: 0; }
+
+.custos-valores > div,
+.custos-item-dados > div { min-width: 0; }
+
+.custos-valores dt,
+.custos-item-dados dt {
+  color: var(--cor-texto-suave);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.custos-valores dd,
+.custos-item-dados dd {
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.custos-calculado dd,
+.custos-item-unitario dd { color: var(--cor-primaria); }
+
+.custos-total dd {
+  font-family: var(--fonte-titulo);
+  font-size: 1.15rem;
+}
+
+.custos-par {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.custos-bloco {
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-campo);
+  background: var(--cor-fundo);
+}
+
+.custos-par { margin-bottom: 0.75rem; }
+.custos-par > .secao { margin: 0; }
+
+/* Valor ainda não definido: texto, não só cor (e contraste suficiente sobre o fundo claro). */
+.custos-pendente {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border: 1px dashed var(--cor-texto-suave);
+  border-radius: 999px;
+  color: var(--cor-texto);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.custos-nowrap { white-space: nowrap; }
+
+.custos-destaque dd { font-family: var(--fonte-titulo); font-size: 1.05rem; }
+
+.custos-aviso {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--coral-criativo);
+  border-left-width: 6px;
+  border-radius: var(--raio-campo);
+  background: color-mix(in srgb, var(--coral-criativo) 10%, var(--branco));
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.custos-form { display: grid; gap: 0.6rem; min-width: 0; }
+
+.custos-form .alerta { margin-bottom: 0; }
+
+.custos-form-grade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.custos-form-campos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem;
+}
+
+.custos-form-acoes { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.custos-novo {
+  margin-top: 0.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--cor-borda);
+}
+
+@media (min-width: 768px) {
+  .custos-item-corpo { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .custos-item-corpo .custos-item-dados { grid-template-columns: repeat(3, minmax(7rem, auto)); }
+  .custos-editar { justify-self: end; }
+  .custos-par { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .custos-form-campos { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+  .custos-total { grid-column: span 2; }
+  .custos-form-grade { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); }
+  .custos-bloco .custos-editar { justify-self: start; }
 }
