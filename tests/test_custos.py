@@ -1031,7 +1031,8 @@ def sql_deprec():
 def test_nova_migration_e_posterior_e_so_mexe_em_custos_parametros(sql_deprec):
     migrations = sorted(p.name for p in (RAIZ / "supabase" / "migrations").glob("*.sql"))
 
-    assert migrations[-1] == MIGRATION_DEPRECIACAO.name
+    # Outras migrations podem vir depois desta (ex.: Estoque).
+    assert MIGRATION_DEPRECIACAO.name in migrations
     assert MIGRATION_DEPRECIACAO.name > MIGRATION.name
     assert "create table" not in sql_deprec
     for outra in ("custos_filamentos", "custos_itens", "pedidos", "pedido_itens", "usuarios"):
