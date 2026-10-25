@@ -125,10 +125,11 @@ begin
   for v_funcao in
     select * from (values
       ('listar_estoque', '', 'jsonb'),
+      ('listar_compras', '', 'jsonb'),
       ('reservar_id_compra', '', 'bigint'),
       ('registrar_compra',
        'p_id bigint, p_chave_envio uuid, p_data_compra date, p_local_tipo text, '
-       'p_local_nome text, p_itens jsonb, p_usuario_id bigint',
+       'p_local_nome text, p_itens jsonb, p_usuario_id bigint, p_frete numeric',
        'jsonb'),
       ('editar_estoque_filamento',
        'p_id bigint, p_cor text, p_material text, p_tipo text, p_marca text, p_usuario_id bigint',
@@ -173,6 +174,10 @@ begin
   -- ---------- Estoque vazio ----------
   if public.listar_estoque() <> '{"filamentos": [], "itens": []}'::jsonb then
     raise exception 'o estoque deveria começar vazio: %', public.listar_estoque();
+  end if;
+
+  if public.listar_compras() <> '{"total_gasto": "0", "quantidade": 0, "compras": []}'::jsonb then
+    raise exception 'sem compras, listar_compras deveria vir zerada: %', public.listar_compras();
   end if;
 
   -- ---------- Compra com as três categorias e duas linhas de filamento ----------
@@ -267,11 +272,32 @@ begin
      or v_lista -> 'filamentos' -> 1 ->> 'peso_disponivel_g' <> '1501.00'
      or v_lista -> 'filamentos' -> 1 ->> 'peso_rolo_g' <> '750.50'
      or v_lista -> 'filamentos' -> 1 ->> 'valor_unitario' <> '100.00'
+     or v_lista -> 'filamentos' -> 1 ->> 'peso_comprado_g' <> '1501.00'  -- 2 rolos x 750,50 g
      or jsonb_typeof(v_lista -> 'filamentos' -> 1 -> 'peso_disponivel_g') <> 'string'
      or v_lista -> 'itens' -> 0 ->> 'quantidade_comprada' <> '7'
      or v_lista -> 'itens' -> 0 ->> 'valor_total' <> '1.00'
      or jsonb_typeof(v_lista -> 'itens' -> 0 -> 'quantidade_disponivel') <> 'number' then
     raise exception 'formato de listar_estoque inesperado: %', v_lista;
+  end if;
+
+  -- ---------- listar_compras: resumo de todo o histórico e lista da mais recente à mais antiga ----
+  -- Compra 1: 3 x 89,90 + 2 x 100,00 + 14,00 + 10,00 = 493,70 · compra 2: 0,00 + 1,00 = 1,00.
+  v_lista := public.listar_compras();
+  if v_lista ->> 'total_gasto' <> '494.70' or (v_lista ->> 'quantidade')::int <> 2
+     or jsonb_typeof(v_lista -> 'total_gasto') <> 'string'
+     or jsonb_array_length(v_lista -> 'compras') <> 2
+     or v_lista -> 'compras' -> 0 ->> 'id' <> v_c2::text  -- data mais recente primeiro
+     or v_lista -> 'compras' -> 0 ->> 'total' <> '1.00'
+     or v_lista -> 'compras' -> 0 ->> 'local_nome' <> 'Papelaria Centro'
+     or v_lista -> 'compras' -> 1 ->> 'total' <> '493.70'
+     or v_lista -> 'compras' -> 1 ->> 'frete' <> '0.00'
+     or jsonb_array_length(v_lista -> 'compras' -> 1 -> 'itens') <> 4
+     or v_lista -> 'compras' -> 1 -> 'itens' -> 0 ->> 'ordem' <> '1'
+     or v_lista -> 'compras' -> 1 -> 'itens' -> 0 ->> 'imagem_caminho'
+        not like 'compras/' || v_c1 || '/itens/1/%'
+     or v_lista -> 'compras' -> 1 -> 'itens' -> 1 ->> 'peso_rolo_g' <> '750.50'
+     or v_lista -> 'compras' -> 1 -> 'itens' -> 2 ->> 'nome' <> 'Argola Teste' then
+    raise exception 'formato de listar_compras inesperado: %', v_lista;
   end if;
 
   -- ---------- Edição: só a descrição; saldo e compra não mudam ----------
@@ -285,6 +311,31 @@ begin
                                                 v_kassia) then
     raise exception 'edição do filamento errada: %', row_to_json(v_linha);
   end if;
+
+  -- ---------- Frete da compra (guardado na compra; não muda os lotes) ----------
+  if (select frete from public.compras where id = v_c1) <> 0 then
+    raise exception 'sem p_frete, a compra deveria ficar com frete 0';
+  end if;
+  v_c2 := public.reservar_id_compra();
+  perform public.registrar_compra(
+    v_c2, '22222222-2222-4222-8222-222222222222', '2026-09-11', 'shopee', null,
+    jsonb_build_array(pg_temp.item(1, 'acessorio', '{"quantidade": 2, "valor_total": "10.00"}')),
+    v_leandro, 12.50);
+  if (select frete from public.compras where id = v_c2) <> 12.50 then
+    raise exception 'o frete da compra não foi gravado';
+  end if;
+  perform pg_temp.espera_erro(
+    format('select public.registrar_compra(%s, %L, %L, %L, null, %L::jsonb, %s, -1)',
+           v_c2, '33333333-3333-4333-8333-333333333333', '2026-09-11', 'shopee',
+           jsonb_build_array(pg_temp.item(1, 'acessorio', '{"quantidade": 1, "valor_total": "1"}')),
+           v_leandro),
+    '23514', 'frete negativo');
+  perform pg_temp.espera_erro(
+    format('select public.registrar_compra(%s, %L, %L, %L, null, %L::jsonb, %s, 1.005)',
+           v_c2, '44444444-4444-4444-8444-444444444444', '2026-09-11', 'shopee',
+           jsonb_build_array(pg_temp.item(1, 'acessorio', '{"quantidade": 1, "valor_total": "1"}')),
+           v_leandro),
+    '23514', 'frete com três casas');
 
   perform public.editar_estoque_item(v_e1, 'embalagem', 'Caixa Pequena', v_leandro);
   if (select (nome, quantidade_disponivel) from public.estoque_itens where id = v_e1)

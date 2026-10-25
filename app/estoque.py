@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
+from app.custos import custo_medio_kg_lotes, custo_medio_unidade_lotes
 from app.estoque_repositorio import Filamento, ItemEstoque
 
 # Tipos de filamento: código do banco -> texto da tela (na ordem das opções).
@@ -276,3 +277,78 @@ def peso_total(lotes: list[Filamento]) -> Decimal:
 
 def unidades_total(lotes: list[ItemEstoque]) -> int:
     return sum(i.quantidade for i in lotes)
+
+
+# ---------- Tela Estoque: lotes agrupados e médias ----------
+
+CATEGORIAS_TELA = {"filamento": "Filamento", "acessorios": "Acessórios", "embalagens": "Embalagens"}
+
+
+def _chave(texto: str) -> str:
+    return _sem_acento(" ".join(texto.split()))
+
+
+@dataclass(frozen=True)
+class GrupoFilamento:
+    """Lotes com o mesmo material, cor, tipo e peso por rolo."""
+
+    material: str
+    cor: str
+    tipo: str
+    peso_rolo_g: Decimal
+    peso_g: Decimal  # saldo disponível (não o comprado)
+    rolos: Decimal  # saldo disponível em rolos (peso disponível / peso do rolo)
+    custo_kg: Decimal | None
+    imagem_caminho: str | None
+
+
+@dataclass(frozen=True)
+class GrupoItem:
+    """Lotes do mesmo acessório ou embalagem."""
+
+    nome: str
+    quantidade: int  # saldo disponível
+    custo_unitario: Decimal | None
+    imagem_caminho: str | None
+
+
+def _agrupar(lotes: list, chave) -> list[list]:
+    grupos: dict = {}
+    for lote in sorted(lotes, key=_recentes, reverse=True):  # o mais recente dá nome e foto
+        grupos.setdefault(chave(lote), []).append(lote)
+    return list(grupos.values())
+
+
+def _foto(lotes: list) -> str | None:
+    return next((x.imagem_caminho for x in lotes if x.imagem_caminho), None)
+
+
+def agrupar_filamentos(lotes: list[Filamento]) -> list[GrupoFilamento]:
+    grupos = _agrupar(lotes, lambda f: (_chave(f.material), _chave(f.cor), f.tipo, f.peso_rolo_g))
+    resultado = [
+        GrupoFilamento(
+            material=g[0].material,
+            cor=g[0].cor,
+            tipo=g[0].tipo,
+            peso_rolo_g=g[0].peso_rolo_g,
+            peso_g=peso_total(g),
+            rolos=peso_total(g) / g[0].peso_rolo_g,
+            custo_kg=custo_medio_kg_lotes(g),
+            imagem_caminho=_foto(g),
+        )
+        for g in grupos
+    ]
+    return sorted(resultado, key=lambda g: (_sem_acento(g.material), _sem_acento(g.cor), g.tipo))
+
+
+def agrupar_itens(lotes: list[ItemEstoque]) -> list[GrupoItem]:
+    resultado = [
+        GrupoItem(
+            nome=g[0].nome,
+            quantidade=unidades_total(g),
+            custo_unitario=custo_medio_unidade_lotes(g),
+            imagem_caminho=_foto(g),
+        )
+        for g in _agrupar(lotes, lambda i: _chave(i.nome))
+    ]
+    return sorted(resultado, key=lambda g: _sem_acento(g.nome))

@@ -10,7 +10,7 @@
   const modelo = document.getElementById("item-modelo");
   const vazio = document.getElementById("itens-vazio");
 
-  const MAX_DIGITOS = { contato: 11, item_quantidade: 5, item_valor: 11, prazo_entrega: 6 };
+  const MAX_DIGITOS = { contato: 11, item_quantidade: 5, item_valor: 11 };
 
   function digitos(texto) {
     return String(texto).replace(/\D/g, "");
@@ -22,25 +22,6 @@
     if (d.length <= 2) return "(" + d;
     if (d.length <= 7) return "(" + d.slice(0, 2) + ") " + d.slice(2);
     return "(" + d.slice(0, 2) + ") " + d.slice(2, 7) + "-" + d.slice(7);
-  }
-
-  // Prazo: "051026" -> "05/10/26", inserindo as barras enquanto digita (ou ao colar).
-  function mascaraPrazo(d) {
-    if (d.length <= 2) return d;
-    if (d.length <= 4) return d.slice(0, 2) + "/" + d.slice(2);
-    return d.slice(0, 2) + "/" + d.slice(2, 4) + "/" + d.slice(4);
-  }
-
-  // Mesmas regras do servidor: seis números formando uma data real (ano 20aa).
-  function problemaDoPrazo(d) {
-    if (d.length === 0) return "";
-    if (d.length !== 6) return "Use o formato dd/mm/aa.";
-    const dia = Number(d.slice(0, 2));
-    const mes = Number(d.slice(2, 4));
-    const ano = 2000 + Number(d.slice(4));
-    const data = new Date(ano, mes - 1, dia);
-    const real = data.getFullYear() === ano && data.getMonth() === mes - 1 && data.getDate() === dia;
-    return real ? "" : "Data inválida.";
   }
 
   // Centavos (inteiro) -> "R$ 1.234,56".
@@ -59,7 +40,6 @@
     contato: mascaraContato,
     item_quantidade: function (d) { return d; },
     item_valor: mascaraMoeda,
-    prazo_entrega: mascaraPrazo,
   };
 
   function normalizar(nome, d) {
@@ -83,7 +63,7 @@
   }
 
   function prepararCampos(raiz) {
-    raiz.querySelectorAll('[name="contato"], [name="prazo_entrega"], [name="item_quantidade"], [name="item_valor"]').forEach(function (input) {
+    raiz.querySelectorAll('[name="contato"], [name="item_quantidade"], [name="item_valor"]').forEach(function (input) {
       if (input.value) aplicarMascara(input);
     });
   }
@@ -168,11 +148,6 @@
       alvo.dataset.digitos = "1";
       recalcular();
     }
-    // Prazo incompleto ou data inexistente: avisa ao sair do campo (vazio só no envio).
-    if (alvo.name === "prazo_entrega") {
-      const problema = problemaDoPrazo(digitos(alvo.value));
-      if (problema) marcarErro(alvo, problema);
-    }
   });
 
   // Trocar a imagem apaga o aviso de imagem recusada pelo servidor.
@@ -190,6 +165,7 @@
   const MENSAGEM_SESSAO = "Sua sessão expirou. Entre novamente para salvar o pedido.";
   const CAMPOS_DO_ITEM = [".item-produto", ".item-quantidade", ".item-valor", ".item-subtotal"];
   const botaoSalvar = form.querySelector('button[type="submit"]');
+  const ROTULO_SALVAR = botaoSalvar.textContent;
 
   function importar(no) {
     return document.importNode(no, true);
@@ -229,6 +205,11 @@
   }
 
   function aplicarResposta(pagina, status) {
+    // Edição salva: segue para o detalhe do pedido (data-destino só existe na tela de edição).
+    if (status === 200 && form.dataset.destino) {
+      window.location.assign(form.dataset.destino);
+      return;
+    }
     const novoCsrf = pagina.getElementById("csrf-pedido");
     if (novoCsrf) document.getElementById("csrf-pedido").value = novoCsrf.value;
     trocarAlerta(pagina.querySelector(".pedido > .alerta"));
@@ -311,7 +292,7 @@
       .finally(function () {
         form.inert = false;
         form.removeAttribute("aria-busy");
-        botaoSalvar.textContent = "Salvar pedido";
+        botaoSalvar.textContent = ROTULO_SALVAR;
         form.dataset.envio = "concluido";
         window.scrollTo(0, 0);
       });

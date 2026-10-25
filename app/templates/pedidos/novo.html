@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Novo pedido · FormaHub 2.0{% endblock %}
+{% block title %}{% if edicao %}Editar pedido{% else %}Novo pedido{% endif %} · FormaHub 2.0{% endblock %}
 
 {% macro erro(mensagem, id="") -%}
   {% if mensagem %}<p class="campo-erro"{% if id %} id="{{ id }}-erro"{% endif %}>{{ mensagem }}</p>{% endif %}
@@ -95,6 +95,22 @@
       <span class="visualmente-oculto upload-status" role="status" aria-live="polite"></span>
     </div>
     {% if item.erros.imagem %}<p class="campo-erro item-imagem-erro">{{ item.erros.imagem }}</p>{% endif %}
+    {# Edição: cada linha leva a imagem que o item já tem (o servidor confere o caminho) e o que
+       fazer com ela. Uma imagem nova escolhida acima substitui a atual. #}
+    {% if edicao %}
+    <input type="hidden" name="item_imagem_atual" value="{{ item.imagem_atual }}">
+    {% if item.imagem_atual %}
+    <label class="item-imagem-atual">
+      <span>Imagem atual</span>
+      <select name="item_imagem_acao" class="campo-texto" aria-label="O que fazer com a imagem atual do item">
+        <option value="manter">Manter</option>
+        <option value="remover"{% if item.remover_imagem %} selected{% endif %}>Remover</option>
+      </select>
+    </label>
+    {% else %}
+    <input type="hidden" name="item_imagem_acao" value="">
+    {% endif %}
+    {% endif %}
   </div>
   <button type="button" class="botao-icone item-remover" aria-label="Remover item" title="Remover item">&times;</button>
 </div>
@@ -106,20 +122,26 @@
 
 <div class="pagina-topo">
   <div>
-    <h1>Novo pedido</h1>
+    <h1>{% if edicao %}Editar pedido{% else %}Novo pedido{% endif %}</h1>
   </div>
+  {% if edicao %}
+  <a class="botao botao-secundario" href="/pedidos/{{ edicao.id }}">Voltar</a>
+  {% else %}
   <a class="botao botao-secundario" href="/">Voltar</a>
+  {% endif %}
 </div>
 
 {% if sucesso %}
-<div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>
+<div class="alerta alerta-sucesso" role="status">{{ sucesso }}{% if edicao %} <a href="/pedidos/{{ edicao.id }}">Ver pedido</a>{% endif %}</div>
 {% elif erro_geral %}
 <div class="alerta alerta-erro" role="alert">{{ erro_geral }}</div>
 {% elif not pedido.valido %}
 <div class="alerta alerta-erro" role="alert">Não foi possível salvar. Corrija os campos destacados.</div>
 {% endif %}
 
-<form id="form-pedido" method="post" action="/pedidos/novo" novalidate>
+<form id="form-pedido" method="post" novalidate
+  {%- if edicao %} action="/pedidos/{{ edicao.id }}/editar" data-destino="/pedidos/{{ edicao.id }}"
+  {%- else %} action="/pedidos/novo"{% endif %}>
   <input type="hidden" id="csrf-pedido" name="csrf" value="{{ request.state.csrf }}">
 
   <section class="secao">
@@ -138,11 +160,11 @@
           {{- invalido(e.contato, "contato") }}>
         {{ erro(e.contato, "contato") }}
       </div>
-      {# Prazo: o usuário digita só os seis números; a tela insere as barras (dd/mm/aa). #}
+      {# Prazo: escolhido no calendário do navegador (valor aaaa-mm-dd). #}
       <div class="campo{% if e.prazo_entrega %} tem-erro{% endif %}" id="campo-prazo" data-regiao>
-        <label for="prazo_entrega">Prazo de entrega <span class="obrigatorio">*</span><span class="visualmente-oculto"> (dia, mês e ano: dd/mm/aa)</span></label>
-        <input id="prazo_entrega" name="prazo_entrega" type="text" inputmode="numeric" value="{{ pedido.prazo_entrega }}"
-          placeholder="dd/mm/aa" maxlength="8" autocomplete="off"
+        <label for="prazo_entrega">Prazo de entrega <span class="obrigatorio">*</span></label>
+        <input id="prazo_entrega" name="prazo_entrega" type="date" value="{{ pedido.prazo_calendario }}"
+          autocomplete="off"
           {{- invalido(e.prazo_entrega, "prazo_entrega") }}>
         {{ erro(e.prazo_entrega, "prazo_entrega") }}
       </div>
@@ -190,8 +212,8 @@
         </div>
       </dl>
       <div class="acoes">
-        <a class="botao botao-secundario" href="/">Cancelar</a>
-        <button type="submit" class="botao botao-primario">Salvar pedido</button>
+        <a class="botao botao-secundario" href="{% if edicao %}/pedidos/{{ edicao.id }}{% else %}/{% endif %}">Cancelar</a>
+        <button type="submit" class="botao botao-primario">{% if edicao %}Salvar alterações{% else %}Salvar pedido{% endif %}</button>
       </div>
     </div>
   </section>

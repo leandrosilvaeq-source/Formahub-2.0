@@ -11,10 +11,13 @@ from datetime import date
 from decimal import Decimal
 
 from app.estoque_repositorio import (
+    CompraListada,
     CompraParaGravar,
+    Compras,
     Estoque,
     FalhaNoEstoque,
     Filamento,
+    ItemCompraListado,
     ItemEstoque,
     LoteNaoEncontrado,
 )
@@ -24,6 +27,38 @@ from app.estoque_repositorio import (
 class CompraGravada:
     compra: CompraParaGravar
     lotes: list[tuple[str, int]]  # (filamento ou item, id do lote), na ordem dos itens
+
+
+def _listar(compra: CompraParaGravar) -> CompraListada:
+    """A compra como o banco a devolve em listar_compras (total = itens + frete)."""
+    itens = tuple(
+        ItemCompraListado(
+            ordem=i.ordem,
+            categoria=i.categoria,
+            quantidade=i.quantidade,
+            cor=i.cor,
+            material=i.material,
+            tipo=i.tipo,
+            marca=i.marca,
+            peso_rolo_g=i.peso_rolo_g,
+            nome=i.nome,
+            imagem_caminho=i.imagem_caminho,
+        )
+        for i in compra.itens
+    )
+    valor = sum(
+        (i.quantidade * i.valor_unitario if i.categoria == "filamento" else i.valor_total)
+        for i in compra.itens
+    )
+    return CompraListada(
+        compra.id,
+        compra.data_compra,
+        compra.local_tipo,
+        compra.local_nome,
+        compra.frete,
+        valor + compra.frete,
+        itens,
+    )
 
 
 class RepositorioEstoqueMemoria:
@@ -49,6 +84,27 @@ class RepositorioEstoqueMemoria:
         return Estoque(filamentos=list(self.filamentos.values()), itens=list(self.itens.values()))
 
     # ---------- Compra ----------
+
+    def listar_compras(self) -> Compras:
+        if self.falhar:
+            raise FalhaNoEstoque
+        todas = [g.compra for g in self.compras.values()]
+        listadas = [_listar(c) for c in todas]
+        recentes = sorted(listadas, key=lambda c: (c.data_compra, c.id), reverse=True)[:20]
+        return Compras(
+            total_gasto=sum((c.total for c in listadas), Decimal(0)),
+            quantidade=len(listadas),
+            recentes=tuple(recentes),
+        )
+
+    def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
+        if "assinar" in self.falhar_em:
+            raise FalhaNoEstoque
+        return {
+            c: f"https://storage.exemplo/assinada/{c}?token=t"
+            for c in caminhos
+            if c in self.imagens
+        }
 
     def reservar_id_compra(self) -> int:
         if "reservar" in self.falhar_em:
@@ -93,6 +149,8 @@ class RepositorioEstoqueMemoria:
                     data_compra=compra.data_compra,
                     peso_rolo_g=item.peso_rolo_g,
                     valor_unitario=item.valor_unitario,
+                    peso_comprado_g=item.quantidade * item.peso_rolo_g,
+                    imagem_caminho=item.imagem_caminho,
                 )
                 lotes.append(("filamento", lote_id))
             else:
@@ -105,6 +163,7 @@ class RepositorioEstoqueMemoria:
                     data_compra=compra.data_compra,
                     quantidade_comprada=item.quantidade,
                     valor_total=item.valor_total,
+                    imagem_caminho=item.imagem_caminho,
                 )
                 lotes.append(("item", lote_id))
         self.compras[compra.id] = CompraGravada(compra, lotes)
@@ -152,10 +211,20 @@ class RepositorioEstoqueMemoria:
         data_compra=date(2026, 9, 1),
         peso_rolo_g=Decimal("1000"),
         valor_unitario=Decimal("100.00"),
+        peso_comprado_g=None,
     ) -> int:
         lote_id = self._novo("filamento")
         self.filamentos[lote_id] = Filamento(
-            lote_id, cor, material, tipo, marca, peso_g, data_compra, peso_rolo_g, valor_unitario
+            lote_id,
+            cor,
+            material,
+            tipo,
+            marca,
+            peso_g,
+            data_compra,
+            peso_rolo_g,
+            valor_unitario,
+            peso_g if peso_comprado_g is None else peso_comprado_g,
         )
         return lote_id
 

@@ -21,6 +21,7 @@ from typing import Protocol
 from app.core.config import ConfigError, get_supabase_admin_client
 
 BUCKET_IMAGENS = "compra-imagens"
+VALIDADE_URL_IMAGEM_SEGUNDOS = 600  # URL assinada da foto vale 10 minutos
 
 logger = logging.getLogger("formahub.estoque")
 
@@ -63,6 +64,8 @@ class Filamento:
     data_compra: date
     peso_rolo_g: Decimal
     valor_unitario: Decimal  # por rolo
+    peso_comprado_g: Decimal  # rolos comprados x peso do rolo (não diminui com o uso)
+    imagem_caminho: str | None = None  # foto da compra (bucket privado)
 
     @property
     def custo_kg(self) -> Decimal:
@@ -80,6 +83,7 @@ class ItemEstoque:
     data_compra: date
     quantidade_comprada: int
     valor_total: Decimal
+    imagem_caminho: str | None = None  # foto da compra (bucket privado)
 
     @property
     def custo_unitario(self) -> Decimal:
@@ -119,11 +123,54 @@ class CompraParaGravar:
     local_nome: str | None
     usuario_id: int
     itens: tuple[ItemCompraParaGravar, ...]
+    frete: Decimal = Decimal("0")  # fica na compra; não entra no custo dos lotes
+
+
+@dataclass(frozen=True)
+class ItemCompraListado:
+    """Uma linha de uma compra já registrada (filamento usa cor..peso_rolo_g; os outros, nome)."""
+
+    ordem: int
+    categoria: str  # filamento, acessorio ou embalagem
+    quantidade: int  # rolos ou unidades
+    cor: str | None
+    material: str | None
+    tipo: str | None
+    marca: str | None
+    peso_rolo_g: Decimal | None
+    nome: str | None
+    imagem_caminho: str | None
+
+
+@dataclass(frozen=True)
+class CompraListada:
+    id: int
+    data_compra: date
+    local_tipo: str
+    local_nome: str | None
+    frete: Decimal
+    total: Decimal  # itens + frete
+    itens: tuple[ItemCompraListado, ...]
+
+
+@dataclass(frozen=True)
+class Compras:
+    """Resumo de TODO o histórico e as compras mais recentes (data decrescente, depois id)."""
+
+    total_gasto: Decimal  # itens + frete de todas as compras
+    quantidade: int  # número de compras registradas
+    recentes: tuple[CompraListada, ...]
 
 
 class RepositorioEstoque(Protocol):
     def listar_estoque(self) -> Estoque:
         """Todos os lotes (FalhaNoEstoque se o banco não responder)."""
+
+    def listar_compras(self) -> Compras:
+        """Resumo do histórico e últimas compras (FalhaNoEstoque se o banco não responder)."""
+
+    def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
+        """Caminho -> URL assinada temporária, só para os arquivos que existem."""
 
     def reservar_id_compra(self) -> int: ...
 
@@ -191,6 +238,8 @@ class RepositorioEstoqueSupabase:
                         data_compra=date.fromisoformat(f["data_compra"]),
                         peso_rolo_g=Decimal(f["peso_rolo_g"]),
                         valor_unitario=Decimal(f["valor_unitario"]),
+                        peso_comprado_g=Decimal(f["peso_comprado_g"]),
+                        imagem_caminho=f.get("imagem_caminho"),
                     )
                     for f in dados["filamentos"]
                 ],
@@ -203,6 +252,7 @@ class RepositorioEstoqueSupabase:
                         data_compra=date.fromisoformat(i["data_compra"]),
                         quantidade_comprada=int(i["quantidade_comprada"]),
                         valor_total=Decimal(i["valor_total"]),
+                        imagem_caminho=i.get("imagem_caminho"),
                     )
                     for i in dados["itens"]
                 ],
@@ -211,6 +261,61 @@ class RepositorioEstoqueSupabase:
             # Resposta em formato inesperado (ex.: banco ainda sem a migration das compras).
             logger.error("Resposta inesperada de listar_estoque: %s", type(erro).__name__)
             raise FalhaNoEstoque from None
+
+    def listar_compras(self) -> Compras:
+        dados = self._rpc("listar_compras", {})
+        try:
+            return Compras(
+                total_gasto=Decimal(dados["total_gasto"]),
+                quantidade=int(dados["quantidade"]),
+                recentes=tuple(
+                    CompraListada(
+                        id=c["id"],
+                        data_compra=date.fromisoformat(c["data_compra"]),
+                        local_tipo=c["local_tipo"],
+                        local_nome=c["local_nome"],
+                        frete=Decimal(c["frete"]),
+                        total=Decimal(c["total"]),
+                        itens=tuple(
+                            ItemCompraListado(
+                                ordem=i["ordem"],
+                                categoria=i["categoria"],
+                                quantidade=i["quantidade"],
+                                cor=i["cor"],
+                                material=i["material"],
+                                tipo=i["tipo"],
+                                marca=i["marca"],
+                                peso_rolo_g=(
+                                    None if i["peso_rolo_g"] is None else Decimal(i["peso_rolo_g"])
+                                ),
+                                nome=i["nome"],
+                                imagem_caminho=i["imagem_caminho"],
+                            )
+                            for i in c["itens"]
+                        ),
+                    )
+                    for c in dados["compras"]
+                ),
+            )
+        except Exception as erro:
+            # Resposta em formato inesperado (ex.: banco ainda sem a migration listar_compras).
+            logger.error("Resposta inesperada de listar_compras: %s", type(erro).__name__)
+            raise FalhaNoEstoque from None
+
+    def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
+        if not caminhos:
+            return {}
+        bucket = self._c.storage.from_(BUCKET_IMAGENS)
+        assinadas = self._executar(
+            "assinar_imagens",
+            lambda: bucket.create_signed_urls(list(caminhos), VALIDADE_URL_IMAGEM_SEGUNDOS),
+        )
+        # Arquivo inexistente volta com erro e sem URL: fica de fora.
+        return {
+            item["path"]: item["signedURL"]
+            for item in assinadas
+            if item.get("signedURL") and not item.get("error")
+        }
 
     def reservar_id_compra(self) -> int:
         return int(self._rpc("reservar_id_compra", {}))
@@ -249,6 +354,7 @@ class RepositorioEstoqueSupabase:
                 for item in compra.itens
             ],
             "p_usuario_id": compra.usuario_id,
+            "p_frete": _texto(compra.frete),
         }
         resposta = self._rpc("registrar_compra", parametros)
         try:

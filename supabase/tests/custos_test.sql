@@ -663,3 +663,17 @@ select
     where schemaname = 'public' and sequencename = 'custos_itens_id_seq') as sequencia_itens,
   (select last_value from pg_sequences
     where schemaname = 'public' and sequencename = 'custos_filamentos_id_seq') as sequencia_filamentos;
+
+-- Fecha o teste: exige que os clones tenham sumido com o ROLLBACK e devolve a linha `resultado`,
+-- que o executor local (npm run test:sql) usa para dar o teste como concluído.
+do $final$
+begin
+  if to_regclass('public.custos_filamentos_real') is not null
+     or to_regclass('public.custos_parametros_real') is not null
+     or to_regclass('public.custos_itens_real') is not null then
+    raise exception 'custos_test: tabelas temporárias sobraram depois do ROLLBACK';
+  end if;
+end;
+$final$;
+
+select 'custos_test: ok' as resultado;

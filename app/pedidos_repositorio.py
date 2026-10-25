@@ -1,8 +1,8 @@
 """Pedidos no Supabase (banco e Storage), com a chave secreta, só no servidor.
 
 Gravação e leitura passam por funções do banco (reservar_id_pedido, criar_pedido,
-listar_pedidos, consultar_pedido, listar_producao, mover_etapa_producao,
-atualizar_comentario_producao e alterar_status_pagamento); as tabelas não
+listar_pedidos, consultar_pedido, editar_pedido, cancelar_pedido, listar_producao,
+mover_etapa_producao, atualizar_comentario_producao e alterar_status_pagamento); as tabelas não
 têm acesso direto. As imagens ficam no
 bucket privado pedido-imagens, o banco guarda somente o caminho do arquivo e a tela de
 detalhes recebe URLs assinadas temporárias.
@@ -109,6 +109,7 @@ class PedidoResumo:
     # Foto de destaque: item com imagem de maior quantidade (empate: o primeiro pela ordem).
     imagem_caminho: str | None = None
     imagem_produto: str | None = None
+    cancelado: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,17 @@ class PedidoConsultado:
     criado_em: datetime  # horário de Brasília
     criado_por_nome: str
     itens: tuple[ItemConsultado, ...]
+    etapa: str = "fila_producao"
+    cancelado_em: datetime | None = None  # horário de Brasília; None = pedido ativo
+
+    @property
+    def cancelado(self) -> bool:
+        return self.cancelado_em is not None
+
+    @property
+    def editavel(self) -> bool:
+        """Só pedido ainda não entregue e não cancelado pode ser editado ou cancelado."""
+        return not self.cancelado and self.etapa != "entregue"
 
 
 @dataclass(frozen=True)
@@ -176,6 +188,13 @@ class ComentarioAtualizado:
 
 
 @dataclass(frozen=True)
+class PedidoCancelado:
+    id: int
+    cancelado_em: datetime  # horário de Brasília
+    cancelado_por_nome: str
+
+
+@dataclass(frozen=True)
 class PagamentoAtualizado:
     id: int
     status_pagamento: str
@@ -209,6 +228,18 @@ class RepositorioPedidos(Protocol):
 
     def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
         """Caminho -> URL assinada temporária, só para os arquivos que existem."""
+
+    def editar_pedido(self, pedido: PedidoParaGravar) -> list[str]:
+        """Regrava os dados e todos os itens do pedido numa única transação.
+
+        Em `pedido`, criado_por é o usuário que está editando. Devolve os caminhos de imagem que
+        deixaram de ser usados (para remover do Storage). AlteracaoRecusada: "nao_encontrado",
+        "invalido" (entregue ou cancelado) ou "usuario"; FalhaAoAlterar: banco sem resposta.
+        """
+
+    def cancelar_pedido(self, pedido_id: int, usuario_id: int) -> PedidoCancelado:
+        """Marca como cancelado (AlteracaoRecusada: "conflito" se já cancelado, "invalido" se
+        entregue, "nao_encontrado" ou "usuario"; FalhaAoAlterar)."""
 
     def listar_producao(self) -> list[CardProducao]:
         """Cards do quadro: etapas na ordem; em cada etapa, do mais antigo ao mais recente.
@@ -325,6 +356,8 @@ class RepositorioPedidosSupabase:
                     observacoes=linha["observacoes"],
                     imagem_caminho=linha["imagem_caminho"],
                     imagem_produto=linha["imagem_produto"],
+                    # .get: com o banco ainda sem a migration de cancelamento, a lista abre.
+                    cancelado=bool(linha.get("cancelado", False)),
                 )
                 for linha in linhas or []
             ]
@@ -361,6 +394,8 @@ class RepositorioPedidosSupabase:
                 )
                 for item in dados["itens"]
             ),
+            etapa=dados.get("etapa_producao") or "fila_producao",
+            cancelado_em=_data_hora(dados.get("cancelado_em_local")),
         )
 
     def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
@@ -477,6 +512,46 @@ class RepositorioPedidosSupabase:
                 comentario=dados["comentario_producao"],
                 atualizado_em=datetime.fromisoformat(dados["comentario_producao_atualizado_em"]),
                 atualizado_por_nome=dados["comentario_producao_atualizado_por_nome"],
+            ),
+        )
+
+    def editar_pedido(self, pedido: PedidoParaGravar) -> list[str]:
+        # Valores monetários vão como texto para não passar por float.
+        parametros = {
+            "p_pedido_id": pedido.id,
+            "p_usuario_id": pedido.criado_por,
+            "p_cliente_nome": pedido.cliente_nome,
+            "p_contato": pedido.contato,
+            "p_forma_pagamento": pedido.forma_pagamento,
+            "p_status_pagamento": pedido.status_pagamento,
+            "p_tipo_entrega": pedido.tipo_entrega,
+            "p_prazo_entrega": pedido.prazo_entrega.isoformat(),
+            "p_observacoes": pedido.observacoes,
+            "p_valor_total": str(pedido.valor_total),
+            "p_itens": [
+                {
+                    "ordem": item.ordem,
+                    "produto": item.produto,
+                    "quantidade": item.quantidade,
+                    "valor_unitario": str(item.valor_unitario),
+                    "subtotal": str(item.subtotal),
+                    "imagem_caminho": item.imagem_caminho,
+                }
+                for item in pedido.itens
+            ],
+        }
+        return self._alterar(
+            "editar_pedido", parametros, lambda dados: list(dados["imagens_removidas"])
+        )
+
+    def cancelar_pedido(self, pedido_id: int, usuario_id: int) -> PedidoCancelado:
+        return self._alterar(
+            "cancelar_pedido",
+            {"p_pedido_id": pedido_id, "p_usuario_id": usuario_id},
+            lambda dados: PedidoCancelado(
+                id=dados["id"],
+                cancelado_em=datetime.fromisoformat(dados["cancelado_em"]),
+                cancelado_por_nome=dados["cancelado_por_nome"],
             ),
         )
 

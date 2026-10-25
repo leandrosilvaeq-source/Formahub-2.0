@@ -2,14 +2,15 @@
 // (PGlite) e roda os arquivos de teste. Nada se conecta ao banco remoto nem grava em disco.
 //
 // Uso (na raiz do projeto, depois de `npm install`):
-//   npm run test:sql                                    -> supabase/tests/estoque_test.sql
+//   npm run test:sql                                    -> custos_test.sql e estoque_test.sql
 //   node supabase/tests/executar_pglite.mjs <teste.sql> [...]
 //   node supabase/tests/executar_pglite.mjs --chamadas entrada.json --listagem saida.json
 //     Executa as chamadas RPC [{funcao, parametros}] por nome de parâmetro (como o PostgREST)
 //     num estoque vazio (sem compras) e grava o resultado de listar_estoque() em saida.json.
 //
 // Cada arquivo de teste precisa terminar devolvendo uma linha com a coluna `resultado`
-// (ex.: 'estoque_test: ok'); qualquer erro interrompe com código de saída 1.
+// terminada em ': ok' (ex.: 'estoque_test: ok'); qualquer erro, ou outro resultado, interrompe
+// com código de saída 1.
 //
 // O ambiente do Supabase é simulado só no que as migrations usam: os papéis anon,
 // authenticated e service_role, os privilégios padrão que o Supabase concede no schema public
@@ -22,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PADRAO = ["supabase/tests/estoque_test.sql"];
+const PADRAO = ["supabase/tests/custos_test.sql", "supabase/tests/estoque_test.sql"];
 
 function lerArgumentos(argv) {
   const opcoes = { testes: [], chamadas: null, listagem: null };
@@ -69,6 +70,9 @@ async function rodarTeste(db, arquivo) {
   const resultados = await db.exec(fs.readFileSync(path.resolve(RAIZ, arquivo), "utf8"));
   const linha = resultados.flatMap((r) => r.rows).find((l) => l.resultado);
   if (!linha) throw new Error(`${arquivo} não chegou ao fim`);
+  if (!String(linha.resultado).endsWith(": ok")) {
+    throw new Error(`${arquivo} terminou com resultado inesperado: ${linha.resultado}`);
+  }
   console.log(linha.resultado);
 }
 

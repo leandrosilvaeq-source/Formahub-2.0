@@ -1,4 +1,4 @@
-{# Janela Registrar Compra (aberta pelos botões das áreas do Estoque; js/estoque-compra.js).
+{# Janela Registrar Compra (aberta pelo botão Registrar Compra da tela Compras; js/estoque-compra.js).
 
    As linhas dos itens não têm "name": na hora de salvar, o JavaScript envia cada campo como
    item_{posição}_{campo} e a foto como item_{posição}_foto. O servidor valida tudo de novo e
@@ -11,8 +11,19 @@
 </div>
 {%- endmacro %}
 
-{% macro calculo(nome, rotulo) -%}
-<div><dt>{{ rotulo }}</dt><dd data-calculo="{{ nome }}">—</dd></div>
+{# Lista suspensa de uma linha de filamento (quantidade, material, peso). #}
+{% macro lista(nome, rotulo, dica="") -%}
+<div class="campo compra-campo-{{ nome }}">
+  <label data-para="{{ nome }}">{{ rotulo }} <span class="obrigatorio">*</span>{% if dica %}<span class="visualmente-oculto"> {{ dica }}</span>{% endif %}</label>
+  <select data-campo="{{ nome }}">
+    {{- caller() -}}
+  </select>
+</div>
+{%- endmacro %}
+
+{# Resumo no fim de cada seção (sem frete): <dd data-resumo="..."> é atualizado pelo JavaScript. #}
+{% macro resumo_item(nome, rotulo) -%}
+<div><dt>{{ rotulo }}</dt><dd data-resumo="{{ nome }}">—</dd></div>
 {%- endmacro %}
 
 {# Foto opcional: o mesmo controle da imagem de referência dos pedidos (imagem-referencia.js). #}
@@ -25,27 +36,24 @@
     <p class="upload-erro" role="alert" hidden></p>
     <p class="upload-info" hidden><span class="upload-nome"></span><span class="upload-tamanho"></span></p>
     <span class="upload-ou" aria-hidden="true">ou</span>
-    <button type="button" class="botao botao-secundario upload-botao upload-selecionar">Selecionar foto</button>
-    <button type="button" class="botao botao-secundario upload-botao upload-trocar" aria-label="Trocar foto" hidden>Trocar</button>
-    <button type="button" class="botao botao-secundario upload-botao upload-remover" hidden>Remover foto</button>
+    <button type="button" class="botao botao-secundario upload-botao upload-selecionar" aria-label="Selecionar foto" title="Selecionar foto"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 8h3.2l1.6-2.5h6.4L16.8 8H20v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></svg></button>
+    <button type="button" class="botao botao-secundario upload-botao upload-trocar" aria-label="Trocar foto" title="Trocar foto" hidden>Trocar</button>
+    <button type="button" class="botao botao-secundario upload-botao upload-remover" title="Remover foto" hidden>Remover foto</button>
     <input type="file" class="upload-arquivo" accept="image/png,image/jpeg,image/webp" hidden tabindex="-1">
     <span class="visualmente-oculto upload-status" role="status" aria-live="polite"></span>
   </div>
 </div>
 {%- endmacro %}
 
-{% macro linha(categoria) -%}
-<article class="compra-item" data-categoria="{{ categoria }}">
-  <div class="compra-item-topo">
-    <h4 class="compra-item-titulo">{{ categorias[categoria] }}</h4>
-    <button type="button" class="botao botao-secundario compra-item-remover">Remover</button>
-  </div>
-  <input type="hidden" data-campo="categoria" value="{{ categoria }}">
-  <div class="compra-item-campos">
-  {% if categoria == "filamento" %}
-    {{ campo("quantidade", "Quantidade de rolos", ' inputmode="numeric" maxlength="4"') }}
-    {{ campo("cor", "Cor", ' maxlength="60" placeholder="Ex.: Preto"') }}
-    {{ campo("material", "Material", ' maxlength="60" placeholder="Ex.: PLA"') }}
+{# Campos de uma linha, na ordem das colunas do cabeçalho da seção. #}
+{% macro campos_filamento() -%}
+    {% call lista("quantidade", "Quantidade") %}
+      {% for n in range(1, limite_rolos + 1) %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
+    {% endcall %}
+    {% call lista("material", "Material") %}
+      <option value="">Escolha</option>
+      {% for material in materiais_compra %}<option value="{{ material }}">{{ material }}</option>{% endfor %}
+    {% endcall %}
     <div class="campo compra-campo-tipo">
       <label data-para="tipo">Tipo <span class="obrigatorio">*</span></label>
       <select data-campo="tipo">
@@ -55,30 +63,39 @@
         {% endfor %}
       </select>
     </div>
+    {% call lista("peso_rolo", "Peso (g)", "(gramas de cada rolo)") %}
+      <option value="">Escolha</option>
+      {% for peso in pesos_compra %}<option value="{{ peso }}">{{ "{:,}".format(peso | int).replace(",", ".") }} g</option>{% endfor %}
+    {% endcall %}
+    {{ campo("cor", "Cor", ' maxlength="60" list="compra-cores" placeholder="Ex.: Preto"') }}
     {{ campo("marca", "Marca", ' maxlength="60"') }}
-    {{ campo("peso_rolo", "Peso por rolo (g)", ' inputmode="decimal" maxlength="8" placeholder="Ex.: 1000"', "(gramas de cada rolo)") }}
-    {{ campo("valor_unitario", "Valor unitário por rolo (R$)", ' inputmode="numeric" maxlength="14" placeholder="R$ 0,00"') }}
-  {% else %}
-    {{ campo("nome", categorias[categoria] ~ " (nome)", ' maxlength="60"') }}
-    {{ campo("quantidade", "Quantidade (un)", ' inputmode="numeric" maxlength="6"') }}
-    {{ campo("valor_total", "Valor total (R$)", ' inputmode="numeric" maxlength="14" placeholder="R$ 0,00"', "(de todas as unidades)") }}
-  {% endif %}
+    {{ campo("valor_unitario", "Valor unitário", ' inputmode="numeric" maxlength="14" placeholder="R$ 0,00"', "(de cada rolo, em reais)") }}
+{%- endmacro %}
+
+{% macro campos_item(categoria) -%}
+    {{ campo("quantidade", "Quantidade", ' inputmode="numeric" maxlength="6"') }}
+    {{ campo("nome", "Nome", ' maxlength="60"', "(do " ~ categorias[categoria] | lower ~ ")") }}
+    {{ campo("valor_total", "Valor total", ' inputmode="numeric" maxlength="14" placeholder="R$ 0,00"', "(de todas as unidades, em reais)") }}
+{%- endmacro %}
+
+{# Uma linha da lista da seção: campos, foto opcional e Remover, sem cartão nem título próprios.
+   Os rótulos dos campos aparecem no celular; no desktop, o cabeçalho compartilhado da lista. #}
+{% macro linha(categoria) -%}
+<article class="compra-item compra-linha" data-categoria="{{ categoria }}" role="group" aria-label="{{ categorias[categoria] }}">
+  <input type="hidden" data-campo="categoria" value="{{ categoria }}">
+  <div class="compra-item-campos">
+    {{ campos_filamento() if categoria == "filamento" else campos_item(categoria) }}
   </div>
-  <dl class="compra-item-calculos">
-  {% if categoria == "filamento" %}
-    {{ calculo("peso_total", "Peso total recebido (g)") }}
-    {{ calculo("valor_total", "Valor total (R$)") }}
-    {{ calculo("custo", "Custo/kg (R$/kg)") }}
-  {% else %}
-    {{ calculo("custo", "Custo unitário (R$/un)") }}
-  {% endif %}
-  </dl>
   {{ foto() }}
+  <button type="button" class="botao botao-secundario compra-item-remover" aria-label="Remover linha" title="Remover linha"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg></button>
 </article>
 {%- endmacro %}
 
 <dialog id="compra-janela" class="compra-janela" aria-labelledby="compra-titulo">
-  <form id="form-compra" method="post" action="/estoque/compras" novalidate>
+  <datalist id="compra-cores">
+    {%- for cor in cores %}<option value="{{ cor }}">{% endfor -%}
+  </datalist>
+  <form id="form-compra" method="post" action="/compras" novalidate>
     <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
     <input type="hidden" name="chave_envio" value="">
 
@@ -92,19 +109,30 @@
 
       <div class="compra-dados">
         <div class="campo" id="campo-data_compra">
-          <label for="compra-data">Data de compra <span class="obrigatorio">*</span><span class="visualmente-oculto"> (dia, mês e ano: dd/mm/aaaa)</span></label>
-          <input id="compra-data" name="data_compra" type="text" inputmode="numeric" maxlength="10"
-            placeholder="dd/mm/aaaa" autocomplete="off">
+          <label for="compra-data">Data de compra <span class="obrigatorio">*</span></label>
+          <input id="compra-data" name="data_compra" type="date" min="2000-01-01" autocomplete="off">
         </div>
 
         <fieldset class="escolhas compra-locais" id="campo-local">
-          <legend>Local de compra <span class="obrigatorio">*</span></legend>
+          <legend>Local <span class="obrigatorio">*</span></legend>
           <div class="escolhas-opcoes compra-locais-opcoes">
             {% for codigo, rotulo in locais.items() %}
             <label class="escolha">
               <input class="escolha-input" type="radio" name="local" value="{{ codigo }}"
                 {%- if codigo in locais_com_nome %} data-com-nome{% endif %}>
-              <span class="escolha-card"><span class="escolha-titulo">{{ rotulo }}</span></span>
+              <span class="escolha-card compra-local-card">
+                <span class="compra-local-marca compra-local-{{ codigo }}" aria-hidden="true">
+                  {%- if codigo in logos_locais -%}
+                  <img src="{{ url_for('static', path='img/locais/' ~ logos_locais[codigo]) }}" alt="" height="21">
+                  {%- elif codigo == "loja_fisica" -%}
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 4.5 4h15L21 9.5"/><path d="M3 9.5a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0"/><path d="M5 12.5V20h14v-7.5"/><path d="M10 20v-4.5h4V20"/></svg>
+                  {%- else -%}
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                  {%- endif -%}
+                </span>
+                {#- O logotipo do Mercado Livre já traz o nome: o texto fica só para leitores de tela. -#}
+                <span class="escolha-titulo{% if codigo == 'mercado_livre' %} visualmente-oculto{% endif %}">{{ rotulo }}</span>
+              </span>
             </label>
             {% endfor %}
           </div>
@@ -116,16 +144,60 @@
         </div>
       </div>
 
-      <section class="compra-itens-secao" aria-labelledby="compra-itens-titulo">
-        <h3 id="compra-itens-titulo">Itens da compra</h3>
-        <p class="compra-itens-dica">Cada linha de filamento é um conjunto de rolos iguais (mesmas características, peso e valor). Para rolos diferentes, adicione outra linha.</p>
-        <div id="compra-itens" class="compra-itens" data-imagens-referencia data-linha="compra-item"></div>
-        <p id="compra-itens-vazio" class="itens-vazio">Nenhum item adicionado.</p>
-        <div class="compra-adicionar" id="campo-itens">
-          <button type="button" class="botao botao-secundario" data-adicionar="filamento">+ Adicionar Filamento</button>
-          <button type="button" class="botao botao-secundario" data-adicionar="acessorio">+ Adicionar Acessório</button>
-          <button type="button" class="botao botao-secundario" data-adicionar="embalagem">+ Adicionar Embalagem</button>
+      <section class="compra-itens-secao" aria-label="Itens da compra">
+        {# Uma seção por categoria, com as suas linhas. A ordem das linhas no HTML é a ordem enviada
+           ao servidor (item_{posição}_...). #}
+        <div id="campo-itens">
+          <div id="compra-itens" class="compra-itens" data-imagens-referencia data-subarvore data-linha="compra-item">
+            {% for categoria, titulo, vazio in secoes_compra %}
+            <section class="compra-secao" data-secao="{{ categoria }}" aria-labelledby="compra-secao-{{ categoria }}">
+              <div class="compra-secao-topo">
+                <h4 id="compra-secao-{{ categoria }}">{{ titulo }}</h4>
+                <button type="button" class="botao botao-secundario" data-adicionar="{{ categoria }}">+ Adicionar {{ categorias[categoria] | lower }}</button>
+              </div>
+              {#- Um só contêiner por seção, com cabeçalho de colunas compartilhado e o resumo no fim. -#}
+              <div class="compra-lista" data-lista="{{ categoria }}" hidden>
+                <div class="compra-colunas" aria-hidden="true">
+                  <div class="compra-colunas-rotulos">
+                    {% for rotulo in colunas_compra[categoria] %}
+                    <span>{{ rotulo }} <span class="obrigatorio">*</span></span>
+                    {% endfor %}
+                  </div>
+                  <span>Foto</span>
+                  <span class="compra-colunas-acao"></span>
+                </div>
+                <div class="compra-secao-linhas" data-linhas="{{ categoria }}"></div>
+                <dl class="compra-resumo-secao" aria-live="polite">
+                  {% if categoria == "filamento" %}
+                  {{ resumo_item("peso", "Peso total") }}
+                  {% else %}
+                  {{ resumo_item("quantidade", "Quantidade total") }}
+                  {% endif %}
+                  {{ resumo_item("valor", "Valor total") }}
+                </dl>
+              </div>
+              <p class="itens-vazio compra-secao-vazio">{{ vazio }}</p>
+            </section>
+            {% endfor %}
+          </div>
         </div>
+      </section>
+
+      <section class="compra-resumo" aria-labelledby="compra-resumo-titulo">
+        <h3 id="compra-resumo-titulo">Frete e total</h3>
+        <div class="compra-resumo-corpo">
+          <div class="campo compra-campo-frete" id="campo-frete">
+            <label for="compra-frete">Frete (R$)</label>
+            <input id="compra-frete" name="frete" type="text" inputmode="numeric" maxlength="14"
+              placeholder="R$ 0,00" autocomplete="off">
+          </div>
+          <dl class="compra-totais" aria-live="polite">
+            <div><dt>Subtotal dos itens</dt><dd id="compra-subtotal">R$ 0,00</dd></div>
+            <div><dt>Frete</dt><dd id="compra-total-frete">R$ 0,00</dd></div>
+            <div class="compra-total-final"><dt>Total da compra</dt><dd id="compra-total">R$ 0,00</dd></div>
+          </dl>
+        </div>
+        <p class="compra-itens-dica">O frete fica registrado na compra; por enquanto não entra no custo dos lotes.</p>
       </section>
     </div>
 

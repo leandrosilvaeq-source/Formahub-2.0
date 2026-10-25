@@ -12,8 +12,11 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from app.pedidos_repositorio import (
+    AlteracaoRecusada,
+    FalhaAoAlterar,
     FalhaAoGravar,
     ItemParaGravar,
+    PedidoConsultado,
     PedidoParaGravar,
     RepositorioPedidos,
 )
@@ -50,6 +53,15 @@ ETAPAS_PRODUCAO = [
 ]
 ROTULOS_ETAPA = dict(ETAPAS_PRODUCAO)
 
+# Filtro de status da listagem de pedidos: as mesmas etapas da Produção, com nomes curtos.
+FILTROS_STATUS = [
+    ("fila_producao", "Na Fila"),
+    ("em_producao", "Em Produção"),
+    ("aguardando_entrega", "Ag. Entrega"),
+    ("entregue", "Finalizado"),
+    ("cancelado", "Cancelado"),
+]
+
 
 @dataclass(frozen=True)
 class Movimento:
@@ -72,8 +84,18 @@ MOVIMENTOS_ETAPA = {
 }
 
 
+# Na lista de pedidos, o pedido também pode ser finalizado (entregue) de qualquer etapa; o
+# quadro da Produção continua só com os botões de MOVIMENTOS_ETAPA.
+MOVIMENTOS_PEDIDOS = {
+    etapa: [*movimentos, Movimento("entregue", "Finalizar")]
+    if all(m.destino != "entregue" for m in movimentos)
+    else list(movimentos)
+    for etapa, movimentos in MOVIMENTOS_ETAPA.items()
+}
+
+
 def movimento_permitido(atual: str, nova: str) -> bool:
-    return any(m.destino == nova for m in MOVIMENTOS_ETAPA.get(atual, []))
+    return any(m.destino == nova for m in MOVIMENTOS_PEDIDOS.get(atual, []))
 
 
 # Status do pagamento na Produção: alterna entre os dois valores (os mesmos da função
@@ -101,6 +123,8 @@ SO_MASCARA_CONTATO = re.compile(r"^[\d()\s-]*$")
 # Prazo de entrega: dd/mm/aa (as barras são inseridas pela tela; sem JavaScript, só os seis
 # números também valem). O ano é 20aa.
 FORMATO_PRAZO = re.compile(r"(\d{2})/?(\d{2})/?(\d{2})")
+# O calendário da tela envia aaaa-mm-dd.
+FORMATO_PRAZO_ISO = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
 
 def somente_digitos(texto: str) -> str:
@@ -111,12 +135,15 @@ def ler_prazo(texto: str) -> tuple[date | None, str | None]:
     """'05/10/26' -> (date(2026, 10, 5), None); com problema -> (None, mensagem de erro)."""
     if not texto:
         return None, "Informe o prazo de entrega."
-    encontrado = FORMATO_PRAZO.fullmatch(texto)
-    if not encontrado:
+    if iso := FORMATO_PRAZO_ISO.fullmatch(texto):
+        ano, mes, dia = (int(parte) for parte in iso.groups())
+    elif encontrado := FORMATO_PRAZO.fullmatch(texto):
+        dia, mes, ano = (int(parte) for parte in encontrado.groups())
+        ano += 2000
+    else:
         return None, "Use o formato dd/mm/aa."
-    dia, mes, ano = (int(parte) for parte in encontrado.groups())
     try:
-        return date(2000 + ano, mes, dia), None
+        return date(ano, mes, dia), None
     except ValueError:
         return None, "Data inválida."
 
@@ -183,6 +210,10 @@ class Item:
     erros: dict[str, str] = field(default_factory=dict)
     indice: int = 0  # posição da linha no formulário enviado (liga a imagem ao item)
     imagem: Imagem | None = None
+    # Só na edição: caminho da imagem que o item já tem no Storage e se o usuário pediu para
+    # removê-la. Uma imagem nova (`imagem`) substitui a atual.
+    imagem_atual: str = ""
+    remover_imagem: bool = False
 
 
 @dataclass
@@ -192,7 +223,7 @@ class Pedido:
     pagamento: str = ""
     status_pagamento: str = ""
     entrega: str = ""
-    prazo_entrega: str = ""  # como digitado (dd/mm/aa)
+    prazo_entrega: str = ""  # como enviado (aaaa-mm-dd do calendário)
     prazo: date | None = None  # preenchido pela validação
     observacoes: str = ""
     itens: list[Item] = field(default_factory=list)
@@ -203,6 +234,12 @@ class Pedido:
     @property
     def valido(self) -> bool:
         return not self.erros and not any(item.erros for item in self.itens)
+
+    @property
+    def prazo_calendario(self) -> str:
+        """Prazo digitado no formato aaaa-mm-dd do campo de calendário; vazio se inválido."""
+        dia, _ = ler_prazo(self.prazo_entrega.strip())
+        return dia.isoformat() if dia else ""
 
 
 def pedido_vazio() -> Pedido:
@@ -222,6 +259,8 @@ def ler_formulario(dados: dict[str, list[str]], imagens: dict[int, bytes] | None
     produtos = dados.get("item_produto", [])
     quantidades = dados.get("item_quantidade", [])
     valores = dados.get("item_valor", [])
+    atuais = dados.get("item_imagem_atual", [])
+    acoes = dados.get("item_imagem_acao", [])
     linhas = [
         Item(
             produto=produtos[i].strip() if i < len(produtos) else "",
@@ -229,6 +268,8 @@ def ler_formulario(dados: dict[str, list[str]], imagens: dict[int, bytes] | None
             valor_unitario=valores[i].strip() if i < len(valores) else "",
             indice=i,
             imagem=Imagem(imagens[i]) if i in imagens else None,
+            imagem_atual=atuais[i].strip() if i < len(atuais) else "",
+            remover_imagem=i < len(acoes) and acoes[i] == "remover",
         )
         for i in range(max(len(produtos), len(quantidades), len(valores)))
     ]
@@ -241,6 +282,7 @@ def ler_formulario(dados: dict[str, list[str]], imagens: dict[int, bytes] | None
         or item.valor_unitario
         or item.quantidade not in ("", "1")
         or item.imagem is not None
+        or item.imagem_atual
     ] or linhas[:1]
 
     return Pedido(
@@ -343,6 +385,34 @@ def problema_da_imagem(imagem: Imagem) -> str | None:
     return None
 
 
+def pedido_do_banco(consultado: PedidoConsultado) -> Pedido:
+    """Pedido gravado -> o mesmo formato do formulário, para preencher a tela de edição."""
+    itens = [
+        Item(
+            produto=item.produto,
+            quantidade=str(item.quantidade),
+            valor_unitario=formatar_brl(item.valor_unitario),
+            subtotal=item.subtotal,
+            indice=posicao,
+            imagem_atual=item.imagem_caminho or "",
+        )
+        for posicao, item in enumerate(consultado.itens)
+    ]
+    return Pedido(
+        cliente=consultado.cliente_nome,
+        contato=formatar_contato(consultado.contato or ""),
+        pagamento=ROTULOS_PAGAMENTO[consultado.forma_pagamento],
+        status_pagamento=ROTULOS_STATUS[consultado.status_pagamento],
+        entrega=ROTULOS_ENTREGA[consultado.tipo_entrega],
+        prazo_entrega=consultado.prazo_entrega.isoformat(),
+        prazo=consultado.prazo_entrega,
+        observacoes=consultado.observacoes or "",
+        itens=itens,
+        quantidade_total=sum(item.quantidade for item in consultado.itens),
+        total=consultado.valor_total,
+    )
+
+
 # ---------- Gravação ----------
 
 
@@ -421,3 +491,88 @@ def _remover_imagens(repo: RepositorioPedidos, caminhos: list[str]) -> None:
         logger.error(
             "Não foi possível remover %d imagem(ns) de um pedido não salvo.", len(caminhos)
         )
+
+
+class PedidoNaoEditavel(Exception):
+    """O pedido foi entregue, cancelado ou não existe mais: não pode ser editado."""
+
+
+def editar_pedido_gravado(
+    repo: RepositorioPedidos,
+    pedido_id: int,
+    pedido: Pedido,
+    usuario_id: int,
+    caminhos_atuais: set[str],
+    novo_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
+) -> None:
+    """Grava a edição de um pedido já validado.
+
+    `caminhos_atuais`: imagens que o pedido tem hoje; só elas podem ser mantidas (o caminho
+    vindo do formulário nunca é confiado). 1. envia as imagens novas; 2. regrava dados e
+    itens numa única transação; 3. remove do Storage as imagens que deixaram de ser usadas.
+    Levanta PedidoNaoEditavel (banco recusou) ou PedidoNaoSalvo (falhou; nada mudou, ou a
+    resposta se perdeu: nesse caso as imagens novas ficam, pois o pedido pode ter mudado).
+    """
+    enviadas: list[str] = []
+    gravando = False
+    mantidas: set[str] = set()
+    try:
+        itens = []
+        for ordem, item in enumerate(pedido.itens, 1):
+            caminho = None
+            if item.imagem is not None:
+                caminho = f"pedidos/{pedido_id}/itens/{ordem}/{novo_uuid()}.{item.imagem.extensao}"
+                enviadas.append(caminho)  # antes do envio: se a resposta se perder, remove igual
+                repo.enviar_imagem(caminho, item.imagem.conteudo, item.imagem.tipo)
+            elif (
+                item.imagem_atual in caminhos_atuais
+                and not item.remover_imagem
+                and item.imagem_atual not in mantidas
+            ):
+                caminho = item.imagem_atual
+                mantidas.add(caminho)
+            itens.append(
+                ItemParaGravar(
+                    ordem=ordem,
+                    produto=item.produto,
+                    quantidade=int(item.quantidade),
+                    valor_unitario=parse_moeda(item.valor_unitario),
+                    subtotal=item.subtotal,
+                    imagem_caminho=caminho,
+                )
+            )
+        gravando = True
+        removidas = repo.editar_pedido(
+            PedidoParaGravar(
+                id=pedido_id,
+                criado_por=usuario_id,  # na edição: quem está editando
+                cliente_nome=pedido.cliente,
+                contato=pedido.contato or None,
+                forma_pagamento=CODIGOS_PAGAMENTO[pedido.pagamento],
+                status_pagamento=CODIGOS_STATUS[pedido.status_pagamento],
+                tipo_entrega=CODIGOS_ENTREGA[pedido.entrega],
+                prazo_entrega=pedido.prazo,
+                observacoes=pedido.observacoes or None,
+                valor_total=pedido.total,
+                itens=tuple(itens),
+            )
+        )
+    except AlteracaoRecusada:
+        # Recusa definitiva: nada foi gravado, então as imagens novas não servem.
+        if enviadas:
+            _remover_imagens(repo, enviadas)
+        raise PedidoNaoEditavel from None
+    except Exception as erro:
+        if gravando and isinstance(erro, FalhaAoAlterar):
+            logger.error("Edição do pedido sem resposta; %d imagem(ns) mantida(s).", len(enviadas))
+        elif enviadas:
+            _remover_imagens(repo, enviadas)
+        if not isinstance(erro, FalhaAoGravar | FalhaAoAlterar):
+            logger.error("Erro inesperado ao editar pedido: %s", type(erro).__name__)
+        raise PedidoNaoSalvo from None
+
+    if removidas:
+        try:
+            repo.remover_imagens(list(removidas))
+        except Exception:
+            logger.error("Não foi possível remover %d imagem(ns) antiga(s).", len(removidas))

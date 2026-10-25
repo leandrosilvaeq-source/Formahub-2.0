@@ -29,6 +29,53 @@ HORAS_DIA = "depreciacao_horas_dia"
 DIAS_MES = "depreciacao_dias_mes"
 
 
+# Grupos da média ponderada do custo por kg dos filamentos comprados: (título, material, tipos).
+GRUPOS_CUSTO_KG = (
+    ("PETG", "PETG", None),  # None = todos os tipos
+    ("PLA (Sólido, Velvet, Silk)", "PLA", ("solido", "velvet", "silk")),
+    ("PLA Multicolor (Bicolor, Tricolor)", "PLA", ("bicolor", "tricolor")),
+)
+
+
+@dataclass(frozen=True)
+class CustoMedioKg:
+    titulo: str
+    custo_kg: Decimal | None  # None = nenhuma compra do grupo
+    kg_comprados: Decimal
+    compras: int  # lotes (linhas de compra) considerados
+
+
+def custo_medio_kg_lotes(lotes) -> Decimal | None:
+    """Média ponderada pelo peso comprado: total pago nos rolos / total de kg comprados.
+
+    O frete não entra (a compra o guarda à parte, sem distribuí-lo nos lotes). Sem lotes: None.
+    """
+    peso_g = sum((f.peso_comprado_g for f in lotes), Decimal(0))
+    pago = sum((f.valor_unitario * f.peso_comprado_g / f.peso_rolo_g for f in lotes), Decimal(0))
+    return pago * 1000 / peso_g if peso_g else None
+
+
+def custo_medio_unidade_lotes(lotes) -> Decimal | None:
+    """Média ponderada pela quantidade comprada: total pago / total de unidades. Sem lotes: None."""
+    quantidade = sum(i.quantidade_comprada for i in lotes)
+    pago = sum((i.valor_total for i in lotes), Decimal(0))
+    return pago / quantidade if quantidade else None
+
+
+def custo_medio_por_kg(filamentos) -> list[CustoMedioKg]:
+    """Custo médio por kg de cada grupo (PETG, PLA, PLA Multicolor), pela regra acima."""
+    resultado = []
+    for titulo, material, tipos in GRUPOS_CUSTO_KG:
+        lotes = [
+            f for f in filamentos if f.material == material and (tipos is None or f.tipo in tipos)
+        ]
+        peso_g = sum((f.peso_comprado_g for f in lotes), Decimal(0))
+        resultado.append(
+            CustoMedioKg(titulo, custo_medio_kg_lotes(lotes), peso_g / 1000, len(lotes))
+        )
+    return resultado
+
+
 def ler_decimal(texto: str, *, casas: int = CASAS_MAXIMAS, maximo: Decimal | None = None):
     """(valor, erro): 'R$ 1.234,5678', '0,12' ou '0.12' -> Decimal; recusa em vez de arredondar."""
     texto = texto.strip()

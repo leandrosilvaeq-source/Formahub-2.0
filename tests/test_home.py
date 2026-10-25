@@ -13,7 +13,7 @@ def test_home_renderiza_pagina_inicial():
     html = resposta.text
     assert "FormaHub 2.0" in html
     assert "Produtos, estoque e pedidos em um só lugar" in html
-    for titulo in ("Produtos", "Estoque", "Pedidos"):
+    for titulo in ("Produtos", "Compras", "Pedidos"):
         assert f"<h2>{titulo}</h2>" in html
 
 

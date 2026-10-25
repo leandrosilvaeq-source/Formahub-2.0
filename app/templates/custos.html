@@ -178,6 +178,28 @@
   </ul>
 </section>
 
+<section class="secao custos-secao" id="custo-medio-kg" aria-labelledby="titulo-custo-medio-kg">
+  <h3 id="titulo-custo-medio-kg">Custo médio por kg (compras do estoque)</h3>
+  <p class="custos-dica">Média ponderada pelo peso comprado: total pago nos rolos ÷ kg comprados. O frete não entra. Só leitura: muda quando as compras mudam.</p>
+  {% if custo_medio_kg is none %}
+  <p class="custos-aviso" role="status">Não foi possível carregar as compras do estoque agora.</p>
+  {% else %}
+  <ul class="custos-lista">
+    {% for g in custo_medio_kg %}
+    <li class="custos-item">
+      <div class="custos-item-corpo">
+        <div class="custos-item-titulo">
+          <strong class="custos-item-nome">{{ g.titulo }}</strong>
+          <span class="custos-dica">{% if g.compras %}{{ g.kg_comprados | numero }} kg em {{ g.compras }} {{ "compra" if g.compras == 1 else "compras" }}{% else %}Nenhuma compra registrada{% endif %}</span>
+        </div>
+        <p class="custos-valor">{% if g.custo_kg is none %}—{% else %}{{ g.custo_kg | custo_aprox }}<span class="custos-unidade">/kg</span>{% endif %}</p>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
 <section class="secao custos-secao" id="energia" aria-labelledby="titulo-energia">
   <h3 id="titulo-energia">Energia elétrica</h3>
   <p class="custos-dica">Impressora Bambu Lab A1. O custo por hora é calculado: tarifa (R$/kWh) × consumo (W) ÷ 1.000.</p>

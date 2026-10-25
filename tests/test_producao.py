@@ -37,11 +37,14 @@ def mover(pedido_id, esperada, nova, **extra):
     return client.post(f"/producao/{pedido_id}/mover", data=dados)
 
 
-# Os quatro movimentos permitidos (os mesmos da função mover_etapa_producao do banco).
+# Os movimentos permitidos (os mesmos da função mover_etapa_producao do banco); finalizar
+# (entregue) vale de qualquer etapa anterior.
 PERMITIDOS = [
     ("fila_producao", "em_producao"),
+    ("fila_producao", "entregue"),
     ("em_producao", "fila_producao"),
     ("em_producao", "aguardando_entrega"),
+    ("em_producao", "entregue"),
     ("aguardando_entrega", "entregue"),
 ]
 
@@ -348,14 +351,12 @@ PROIBIDOS = [(a, n) for a in ETAPAS_E_LIXO for n in ETAPAS_E_LIXO if (a, n) not 
 def test_lista_de_proibidos_cobre_os_casos_pedidos():
     for caso in [
         ("fila_producao", "aguardando_entrega"),  # pular
-        ("fila_producao", "entregue"),  # pular
         ("aguardando_entrega", "em_producao"),  # voltar
         ("aguardando_entrega", "fila_producao"),  # voltar duas
         ("entregue", "aguardando_entrega"),  # sair de entregue
         ("entregue", "em_producao"),
         ("entregue", "fila_producao"),
         ("entregue", "entregue"),
-        ("em_producao", "entregue"),  # pular
         ("fila_producao", "fila_producao"),  # ficar
     ]:
         assert caso in PROIBIDOS, caso

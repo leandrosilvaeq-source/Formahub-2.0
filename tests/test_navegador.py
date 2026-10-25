@@ -9,6 +9,7 @@ Para indicar outro navegador: variável de ambiente FORMAHUB_NAVEGADOR=<caminho 
 import itertools
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -129,9 +130,23 @@ class Pagina:
         )
 
     def digitar(self, seletor: str, texto: str):
+        if self.js(f"document.querySelector({json.dumps(seletor)}).type") == "date":
+            return self.escolher_data(seletor, texto)
         self.js(f"document.querySelector({json.dumps(seletor)}).focus()")
         for letra in texto:
             self.cmd("Input.insertText", text=letra)
+
+    def escolher_data(self, seletor: str, texto: str):
+        """Campo de calendário: dd mm aa ou dd mm aaaa (só números) vira o valor aaaa-mm-dd."""
+        d = re.sub(r"\D", "", texto)
+        dia, mes, ano = d[:2], d[2:4], d[4:]
+        iso = f"{ano if len(ano) == 4 else '20' + ano}-{mes}-{dia}"
+        self.js(
+            f"(() => {{ const c = document.querySelector({json.dumps(seletor)});"
+            f" c.value = {json.dumps(iso)};"
+            " c.dispatchEvent(new Event('input', {bubbles: true}));"
+            " c.dispatchEvent(new Event('change', {bubbles: true})) })()"
+        )
 
     def apagar(self, vezes=1):
         for _ in range(vezes):
@@ -299,95 +314,11 @@ def test_valor_unitario_nao_aceita_negativo(tela):
     assert tela.valor(campo) == "R$ 5,00"
 
 
-def test_prazo_mascara_enquanto_digita(tela):
-    for digito, esperado in [
-        ("0", "0"),
-        ("5", "05"),
-        ("1", "05/1"),
-        ("0", "05/10"),
-        ("2", "05/10/2"),
-        ("6", "05/10/26"),
-        ("9", "05/10/26"),  # sete números: o excedente é ignorado
-    ]:
-        tela.digitar("#prazo_entrega", digito)
-        assert tela.valor("#prazo_entrega") == esperado
-    assert tela.js("document.getElementById('prazo_entrega').maxLength") == 8
-    assert tela.js("document.getElementById('prazo_entrega').inputMode") == "numeric"
-
-
-def test_prazo_ignora_letras_e_outros_caracteres(tela):
-    tela.digitar("#prazo_entrega", "0a5/b1-0 x2.6")
-    assert tela.valor("#prazo_entrega") == "05/10/26"
-
-
-def test_prazo_apagar_e_corrigir(tela):
-    tela.digitar("#prazo_entrega", "051026")
-    for esperado in ["05/10/2", "05/10", "05/1", "05", "0", ""]:
-        tela.apagar()
-        assert tela.valor("#prazo_entrega") == esperado
-    tela.digitar("#prazo_entrega", "0610")
-    tela.apagar(2)
-    tela.digitar("#prazo_entrega", "1127")
-    assert tela.valor("#prazo_entrega") == "06/11/27"
-
-
-@pytest.mark.parametrize("colado", ["051026", "05/10/26", "05.10.26", " 05-10-26 "])
-def test_prazo_colado_recebe_as_barras(tela, colado):
-    tela.js(
-        "(() => { const c = document.getElementById('prazo_entrega'); c.focus();"
-        f" c.value = {json.dumps(colado)};"
-        " c.dispatchEvent(new InputEvent('input',"
-        " {bubbles: true, inputType: 'insertFromPaste'})) })()"
-    )
-    assert tela.valor("#prazo_entrega") == "05/10/26"
-
-
 def erro_do_prazo(tela):
     return tela.js(
         "(() => { const e = document.getElementById('prazo_entrega-erro');"
         " return e ? e.textContent : null })()"
     )
-
-
-@pytest.mark.parametrize(
-    ("digitado", "erro"),
-    [
-        ("310426", "Data inválida."),  # abril tem 30 dias
-        ("290226", "Data inválida."),  # 2026 não é bissexto
-        ("001026", "Data inválida."),
-        ("051326", "Data inválida."),
-        ("0510", "Use o formato dd/mm/aa."),
-        ("290228", None),  # 2028 é bissexto
-        ("290200", None),  # 2000 é bissexto
-        ("010120", None),  # data passada é aceita
-    ],
-)
-def test_prazo_validado_ao_sair_do_campo(tela, digitado, erro):
-    tela.digitar("#prazo_entrega", digitado)
-    tela.js("document.getElementById('prazo_entrega').blur()")
-
-    assert erro_do_prazo(tela) == erro
-    invalido = tela.js("document.getElementById('prazo_entrega').getAttribute('aria-invalid')")
-    assert invalido == ("true" if erro else None)
-    if erro:
-        assert (
-            tela.js("document.getElementById('prazo_entrega').getAttribute('aria-describedby')")
-            == "prazo_entrega-erro"
-        )
-        assert tela.js("document.getElementById('campo-prazo').classList.contains('tem-erro')")
-
-
-def test_erro_do_prazo_some_ao_corrigir(tela):
-    tela.digitar("#prazo_entrega", "310426")
-    tela.js("document.getElementById('prazo_entrega').blur()")
-    assert erro_do_prazo(tela) == "Data inválida."
-
-    tela.js("document.getElementById('prazo_entrega').focus()")
-    tela.apagar(4)
-    assert erro_do_prazo(tela) is None
-    tela.digitar("#prazo_entrega", "0526")
-    tela.js("document.getElementById('prazo_entrega').blur()")
-    assert tela.valor("#prazo_entrega") == "31/05/26" and erro_do_prazo(tela) is None
 
 
 def test_prazo_vazio_so_e_acusado_no_envio(tela):
@@ -407,7 +338,7 @@ def test_prazo_preservado_no_erro_e_limpo_no_sucesso(tela, repo_pedidos):
     tela.enviar()
 
     assert tela.js("!!document.getElementById('cliente-erro')")
-    assert tela.valor("#prazo_entrega") == "05/10/26"
+    assert tela.valor("#prazo_entrega") == "2026-10-05"
     assert erro_do_prazo(tela) is None
 
     tela.digitar("#cliente", "Maria Souza")
@@ -416,19 +347,6 @@ def test_prazo_preservado_no_erro_e_limpo_no_sucesso(tela, repo_pedidos):
     assert tela.texto(".alerta-sucesso").startswith("Pedido de Maria Souza salvo com sucesso")
     assert next(iter(repo_pedidos.pedidos.values())).prazo_entrega == date(2026, 10, 5)
     assert tela.valor("#prazo_entrega") == ""
-    # O campo novo (vindo do servidor) continua com a máscara.
-    tela.digitar("#prazo_entrega", "311226")
-    assert tela.valor("#prazo_entrega") == "31/12/26"
-
-
-def test_prazo_invalido_recusado_pelo_servidor_fica_no_campo(tela, repo_pedidos):
-    preencher_dois_itens(tela)
-    tela.js("document.getElementById('prazo_entrega').value = '31/04/26'")
-    tela.enviar()
-
-    assert repo_pedidos.pedidos == {}
-    assert tela.valor("#prazo_entrega") == "31/04/26"
-    assert erro_do_prazo(tela) == "Data inválida."
 
 
 @pytest.mark.parametrize("largura", [768, 1024, 1280])
@@ -1515,9 +1433,9 @@ def test_listagem_sem_rolagem_horizontal_nem_cortes(pagina, servidor, repo_pedid
     pagina.tela(largura, 800)
     pagina.abrir("/pedidos")
 
-    assert pagina.js("document.querySelectorAll('.pedido-card').length") == 2
+    assert pagina.js("document.querySelectorAll('#tabela-pedidos tbody tr').length") == 2
+    # A tabela rola dentro do próprio quadro; a página não rola na horizontal.
     assert pagina.js("document.documentElement.scrollWidth") <= largura
-    assert pagina.js(CORTES.replace("LIMITE_VERTICAL", "false")) == []
     # Botões com alvo de toque confortável.
     alturas = pagina.js(
         "[...document.querySelectorAll('main .botao')].map(b => b.getBoundingClientRect().height)"
@@ -1736,26 +1654,21 @@ def test_foto_do_card_compacta_quadrada_e_sem_deformar(pagina, servidor, repo_pe
     pedidos_de_exemplo(repo_pedidos, servidor)
     pagina.tela(largura, 800)
     pagina.abrir("/pedidos")
-    pagina.js("document.querySelector('.pedido-card-foto').scrollIntoView({block: 'center'})")
-    esperar(lambda: pagina.js("document.querySelector('.pedido-card-foto').naturalWidth > 0"))
+    pagina.js("document.querySelector('.pedido-tabela-foto').scrollIntoView({block: 'center'})")
+    esperar(lambda: pagina.js("document.querySelector('.pedido-tabela-foto').naturalWidth > 0"))
 
     foto = pagina.js(
-        "(() => { const i = document.querySelector('.pedido-card-foto');"
+        "(() => { const i = document.querySelector('.pedido-tabela-foto');"
         " const r = i.getBoundingClientRect();"
         " return [r.width, r.height, getComputedStyle(i).objectFit, i.alt] })()"
     )
     largura_foto, altura_foto, ajuste, alternativo = foto
     assert ajuste == "cover"
     assert abs(largura_foto - altura_foto) < 1  # quadrada, recorte sem distorção
-    assert 60 <= largura_foto <= 120  # compacta
+    assert 48 <= largura_foto <= 120  # compacta
     assert alternativo.startswith("Foto de referência: ")
-    # Só o card com imagem tem foto; o outro não tem espaço reservado.
-    assert pagina.js("document.querySelectorAll('.pedido-card-foto').length") == 1
-    assert pagina.js(
-        "[...document.querySelectorAll('.pedido-card')].filter(c => !c.querySelector('img'))"
-        ".every(c => c.querySelector('.pedido-card-corpo').getBoundingClientRect().left"
-        " - c.getBoundingClientRect().left < 20)"
-    )
+    # Só o pedido com imagem tem foto.
+    assert pagina.js("document.querySelectorAll('.pedido-tabela-foto').length") == 1
     assert pagina.js("document.documentElement.scrollWidth") <= largura
 
 
@@ -3784,4 +3697,4 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
             "[...document.querySelectorAll('main h2')].map(h => h.textContent.trim())"
         )
         assert titulos == ["Custos Diretos", "Custos Indiretos"], contexto
-        assert pagina.js("document.querySelectorAll('main section.secao').length") == 9, contexto
+        assert pagina.js("document.querySelectorAll('main section.secao').length") == 10, contexto

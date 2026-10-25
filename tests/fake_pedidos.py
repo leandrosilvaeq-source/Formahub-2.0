@@ -15,10 +15,12 @@ from app.pedidos_repositorio import (
     ComentarioAtualizado,
     ConflitoDeEtapa,
     EtapaAtualizada,
+    FalhaAoAlterar,
     FalhaAoGravar,
     ItemConsultado,
     MovimentoInvalido,
     PagamentoAtualizado,
+    PedidoCancelado,
     PedidoConsultado,
     PedidoParaGravar,
     PedidoResumo,
@@ -47,6 +49,9 @@ class RepositorioPedidosMemoria:
         # Cada alteração feita: (pedido, de, para, usuário).
         self.alteracoes_comentario: list[tuple[int, str | None, str | None, int]] = []
         self.alteracoes_pagamento: list[tuple[int, str, str, int]] = []
+        # Cancelamento: pedido -> (quando, usuário). Edições feitas: (pedido, usuário).
+        self.cancelados: dict[int, tuple[datetime, int]] = {}
+        self.edicoes: list[tuple[int, int]] = []
         self._envios = 0
 
     def _talvez_falhar(self, etapa: str) -> None:
@@ -120,6 +125,7 @@ class RepositorioPedidosMemoria:
                     observacoes=p.observacoes,
                     imagem_caminho=destaque.imagem_caminho if destaque else None,
                     imagem_produto=destaque.produto if destaque else None,
+                    cancelado=p.id in self.cancelados,
                 )
             )
         return resumos
@@ -152,6 +158,8 @@ class RepositorioPedidosMemoria:
                 )
                 for i in sorted(p.itens, key=lambda i: i.ordem)
             ),
+            etapa=self.etapas[p.id],
+            cancelado_em=self.cancelados[p.id][0] if p.id in self.cancelados else None,
         )
 
     def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
@@ -177,7 +185,8 @@ class RepositorioPedidosMemoria:
             (
                 p
                 for p in self.pedidos.values()
-                if not (self.etapas[p.id] == "entregue" and p.status_pagamento == "pago")
+                if p.id not in self.cancelados
+                and not (self.etapas[p.id] == "entregue" and p.status_pagamento == "pago")
             ),
             key=lambda p: (ordem_etapa.index(self.etapas[p.id]), self.criado_em[p.id], p.id),
         )
@@ -219,7 +228,7 @@ class RepositorioPedidosMemoria:
     ) -> EtapaAtualizada:
         """Mesmas regras da função mover_etapa_producao do banco."""
         self._talvez_falhar("mover_etapa")
-        if pedido_id not in self.pedidos:
+        if pedido_id not in self.pedidos or pedido_id in self.cancelados:
             raise MovimentoInvalido
         atual = self.etapas[pedido_id]
         if atual != etapa_esperada:
@@ -237,6 +246,8 @@ class RepositorioPedidosMemoria:
             raise AlteracaoRecusada("usuario")
         if pedido_id not in self.pedidos:
             raise AlteracaoRecusada("nao_encontrado")
+        if pedido_id in self.cancelados:
+            raise AlteracaoRecusada("invalido")  # trigger do banco
 
     def salvar_comentario_producao(
         self,
@@ -271,3 +282,37 @@ class RepositorioPedidosMemoria:
         self.pedidos[pedido_id] = replace(pedido, status_pagamento=novo_status)
         self.alteracoes_pagamento.append((pedido_id, status_esperado, novo_status, usuario_id))
         return PagamentoAtualizado(pedido_id, novo_status, self.relogio, USUARIOS[usuario_id])
+
+    # ---------- Editar e cancelar (mesmas regras das funções do banco) ----------
+
+    def editar_pedido(self, pedido: PedidoParaGravar) -> list[str]:
+        self.escritas += 1
+        self._talvez_falhar("editar_pedido")
+        self._conferir(pedido.id, pedido.criado_por)
+        if self.etapas[pedido.id] == "entregue":
+            raise AlteracaoRecusada("invalido")
+        ordens = [item.ordem for item in pedido.itens]
+        if not pedido.itens or len(set(ordens)) != len(ordens):
+            raise FalhaAoAlterar
+        if sum(item.subtotal for item in pedido.itens) != pedido.valor_total:
+            raise FalhaAoAlterar
+        antigos = {i.imagem_caminho for i in self.pedidos[pedido.id].itens if i.imagem_caminho}
+        novos = {i.imagem_caminho for i in pedido.itens if i.imagem_caminho}
+        self.pedidos[pedido.id] = replace(pedido, criado_por=self.pedidos[pedido.id].criado_por)
+        self.edicoes.append((pedido.id, pedido.criado_por))
+        return sorted(antigos - novos)
+
+    def cancelar_pedido(self, pedido_id: int, usuario_id: int) -> PedidoCancelado:
+        self.escritas += 1
+        self._talvez_falhar("cancelar_pedido")
+        if usuario_id not in USUARIOS:
+            raise AlteracaoRecusada("usuario")
+        if pedido_id not in self.pedidos:
+            raise AlteracaoRecusada("nao_encontrado")
+        if pedido_id in self.cancelados:
+            raise AlteracaoRecusada("conflito")
+        if self.etapas[pedido_id] == "entregue":
+            raise AlteracaoRecusada("invalido")
+        quando = self.relogio
+        self.cancelados[pedido_id] = (quando, usuario_id)
+        return PedidoCancelado(pedido_id, quando, USUARIOS[usuario_id])

@@ -41,6 +41,7 @@ def campo_prazo(html):
         ("29/02/00", date(2000, 2, 29)),  # 2000 é bissexto
         ("31/01/26", date(2026, 1, 31)),
         ("30/04/26", date(2026, 4, 30)),
+        ("2026-10-05", date(2026, 10, 5)),  # valor enviado pelo calendário da tela
         ("01/01/20", date(2020, 1, 1)),  # data passada é aceita (não há regra de data futura)
     ],
 )
@@ -58,6 +59,7 @@ def test_prazo_valido_vira_data(texto, esperado):
         ("05/10", "Use o formato dd/mm/aa."),
         ("aa/bb/cc", "Use o formato dd/mm/aa."),
         ("05/1O/26", "Use o formato dd/mm/aa."),
+        ("2026-02-30", "Data inválida."),
         ("29/02/26", "Data inválida."),  # 2026 não é bissexto
         ("29/02/00", None),
         ("31/04/26", "Data inválida."),
@@ -82,9 +84,7 @@ def test_tela_tem_o_campo_prazo_obrigatorio_e_acessivel():
 
     assert "data-regiao" in c
     assert '<label for="prazo_entrega">Prazo de entrega <span class="obrigatorio">*</span>' in c
-    assert "(dia, mês e ano: dd/mm/aa)" in c  # formato anunciado pelo leitor de tela
-    assert 'name="prazo_entrega" type="text" inputmode="numeric"' in c
-    assert 'placeholder="dd/mm/aa" maxlength="8"' in c
+    assert 'name="prazo_entrega" type="date"' in c  # calendário do navegador
     assert 'value=""' in c
 
 
@@ -96,12 +96,10 @@ def test_prazo_fica_na_linha_dos_dados_do_cliente():
     assert grade.index('id="campo-contato"') < grade.index('id="campo-prazo"')
 
 
-def test_javascript_tem_a_mascara_e_a_validacao_do_prazo():
+def test_javascript_nao_tem_mais_a_mascara_do_prazo():
     js = client.get("/static/js/pedido-novo.js").text
 
-    assert "prazo_entrega: mascaraPrazo" in js
-    assert "prazo_entrega: 6" in js  # no máximo seis números
-    assert "problemaDoPrazo" in js
+    assert "mascaraPrazo" not in js and "problemaDoPrazo" not in js
 
 
 # ---------- Envio ----------
@@ -132,7 +130,9 @@ def test_prazo_invalido_e_recusado_e_preservado(repo_pedidos, prazo):
 
     assert resposta.status_code == 422
     c = campo_prazo(resposta.text)
-    assert f'value="{prazo}"' in c and 'id="prazo_entrega-erro"' in c
+    assert (
+        'value=""' in c and 'id="prazo_entrega-erro"' in c
+    )  # o calendário não guarda texto inválido
     assert repo_pedidos.pedidos == {}
 
 
@@ -150,11 +150,11 @@ def test_prazo_bissexto_e_gravado(repo_pedidos):
 
 
 def test_prazo_valido_e_preservado_quando_outro_campo_tem_erro(repo_pedidos):
-    resposta = enviar(formulario(cliente="", prazo_entrega="051026"))
+    resposta = enviar(formulario(cliente="", prazo_entrega="2026-10-05"))
 
     assert resposta.status_code == 422
     c = campo_prazo(resposta.text)
-    assert 'value="05/10/26"' in c  # já normalizado com as barras
+    assert 'value="2026-10-05"' in c  # no formato do campo de calendário
     assert "tem-erro" not in c
     assert repo_pedidos.pedidos == {}
 
@@ -175,14 +175,14 @@ def test_falha_ao_gravar_preserva_o_prazo(repo_pedidos):
     resposta = enviar(formulario(prazo_entrega="05/10/26"))
 
     assert resposta.status_code == 503
-    assert 'value="05/10/26"' in campo_prazo(resposta.text)
+    assert 'value="2026-10-05"' in campo_prazo(resposta.text)
 
 
 def test_csrf_invalido_preserva_o_prazo(repo_pedidos):
     resposta = enviar(formulario(csrf="outro", prazo_entrega="05/10/26"))
 
     assert resposta.status_code == 403
-    assert 'value="05/10/26"' in campo_prazo(resposta.text)
+    assert 'value="2026-10-05"' in campo_prazo(resposta.text)
     assert repo_pedidos.pedidos == {}
 
 

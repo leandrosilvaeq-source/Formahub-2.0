@@ -10,9 +10,17 @@
   <h1>Pedido de {{ pedido.cliente_nome }}</h1>
   <div class="pagina-topo-acoes">
     <a class="botao botao-secundario" href="/pedidos">Voltar para pedidos</a>
+    {% if pedido.editavel %}
+    <a class="botao botao-secundario" href="/pedidos/{{ pedido.id }}/editar">Editar</a>
+    <a class="botao botao-secundario" href="/pedidos/{{ pedido.id }}/cancelar">Cancelar pedido</a>
+    {% endif %}
     <a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>
   </div>
 </div>
+
+{% if pedido.cancelado %}
+<div class="alerta alerta-erro" role="status">Pedido cancelado em <time datetime="{{ pedido.cancelado_em.isoformat(timespec='minutes') }}">{{ pedido.cancelado_em | data_hora }}</time>. Ele não aparece mais na Produção e não pode ser alterado.</div>
+{% endif %}
 
 {% if imagens_indisponiveis %}
 <div class="alerta alerta-erro" role="alert">Não foi possível carregar as imagens agora. Os demais dados do pedido estão abaixo.</div>

@@ -233,7 +233,7 @@
       Array.prototype.forEach.call(mudanca.addedNodes, iniciar);
     });
     numerar();
-  }).observe(lista, { childList: true });
+  }).observe(lista, { childList: true, subtree: lista.hasAttribute("data-subarvore") });
 
   Array.prototype.forEach.call(lista.querySelectorAll("." + LINHA), iniciar);
   numerar();

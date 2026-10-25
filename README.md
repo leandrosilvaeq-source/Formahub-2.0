@@ -58,8 +58,9 @@ O banco só é alterado por migrations em `supabase/migrations/`, criadas com o 
 ### Testes SQL locais (PGlite)
 
 `npm run test:sql` aplica todas as migrations deste checkout num PostgreSQL em memória (PGlite,
-versão fixa no `package.json`) e roda `supabase/tests/estoque_test.sql` (Estoque e Registrar
-Compra, com as migrations 20261009 e 20261010). Nada se conecta ao
+versão fixa no `package.json`) e roda `supabase/tests/custos_test.sql` (Custos) e
+`supabase/tests/estoque_test.sql` (Estoque e Registrar Compra). Cada teste precisa terminar com
+`resultado` em `': ok'`; qualquer falha SQL encerra o comando com erro. Nada se conecta ao
 Supabase nem grava em disco. Outros arquivos de teste podem ser passados ao executor:
 
 ```powershell

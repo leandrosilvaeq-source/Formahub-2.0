@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Cancelar pedido · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="consulta">
+
+<div class="pagina-topo">
+  <h1>Cancelar pedido</h1>
+  <a class="botao botao-secundario" href="/pedidos/{{ pedido.id }}">Voltar ao pedido</a>
+</div>
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+{% endif %}
+
+<section class="secao">
+  <h2>Pedido de {{ pedido.cliente_nome }}</h2>
+  <p>
+    {{ pedido.itens | length }} {{ "item" if pedido.itens | length == 1 else "itens" }},
+    total {{ pedido.valor_total | brl }}. Ao cancelar, o pedido sai da Produção e não poderá mais
+    ser editado. Ele continua guardado e pode ser consultado no filtro "Cancelado" da lista.
+  </p>
+  <form method="post" action="/pedidos/{{ pedido.id }}/cancelar" class="acoes">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <a class="botao botao-secundario" href="/pedidos/{{ pedido.id }}">Manter pedido</a>
+    <button type="submit" class="botao botao-primario">Cancelar pedido</button>
+  </form>
+</section>
+
+</div>
+{% endblock %}

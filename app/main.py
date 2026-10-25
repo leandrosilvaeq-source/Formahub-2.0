@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.datastructures import UploadFile
@@ -23,18 +23,22 @@ from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
     ESCOLHA_OBRIGATORIA,
     ETAPAS_PRODUCAO,
+    FILTROS_STATUS,
     FORMAS_ENTREGA,
     FORMAS_PAGAMENTO,
     LIMITE_COMENTARIO,
     LIMITE_IMAGEM_BYTES,
     MOVIMENTOS_ETAPA,
+    MOVIMENTOS_PEDIDOS,
     ROTULOS_ENTREGA,
     ROTULOS_ETAPA,
     ROTULOS_PAGAMENTO,
     ROTULOS_STATUS,
     STATUS_PAGAMENTO,
     Item,
+    PedidoNaoEditavel,
     PedidoNaoSalvo,
+    editar_pedido_gravado,
     formatar_brl,
     formatar_contato,
     formatar_data_curta,
@@ -42,6 +46,7 @@ from app.pedidos import (
     ler_formulario,
     movimento_permitido,
     normalizar_comentario,
+    pedido_do_banco,
     pedido_vazio,
     validar,
 )
@@ -85,8 +90,13 @@ templates.env.filters["status_pagamento"] = lambda codigo: ROTULOS_STATUS.get(co
 MODULOS = [
     {"titulo": "Produtos", "descricao": "Cadastro e consulta dos produtos."},
     {
+        "titulo": "Compras",
+        "descricao": "Histórico de compras de insumos e registro de novas compras.",
+        "links": [{"url": "/compras", "texto": "Ver compras", "principal": True}],
+    },
+    {
         "titulo": "Estoque",
-        "descricao": "Saldos disponíveis de filamentos, acessórios e embalagens.",
+        "descricao": "Saldo de filamentos, acessórios e embalagens, com o custo médio.",
         "links": [{"url": "/estoque", "texto": "Ver estoque", "principal": True}],
     },
     {
@@ -121,13 +131,20 @@ def home(request: Request):
 
 
 def _tela_pedido(
-    request: Request, pedido, sucesso: str = "", erro_geral: str = "", status_code: int = 200
+    request: Request,
+    pedido,
+    sucesso: str = "",
+    erro_geral: str = "",
+    status_code: int = 200,
+    edicao=None,
 ):
+    """Tela do formulário. `edicao`: o pedido gravado, quando é a tela de Editar pedido."""
     return templates.TemplateResponse(
         request,
         "pedidos/novo.html",
         {
             "pedido": pedido,
+            "edicao": edicao,
             "novo_item": Item(),
             "sucesso": sucesso,
             "erro_geral": erro_geral,
@@ -215,15 +232,40 @@ def _pagina_sem_cache(request: Request, modelo: str, contexto: dict, status_code
 
 @app.get("/pedidos", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
 def listar_pedidos(
-    request: Request, repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos)
+    request: Request,
+    status: str = "",
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
 ):
+    filtros = dict(FILTROS_STATUS)
+    base = {"filtros": FILTROS_STATUS, "status": status if status in filtros else ""}
     try:
         if repo is None:
             raise FalhaAoConsultar
-        pedidos = repo.listar_pedidos()
+        todos = repo.listar_pedidos()
+        # A etapa de cada pedido vem do quadro de produção (mesma fonte da aba Produção). O
+        # quadro deixa de fora o pedido concluído (entregue e pago): ele conta como finalizado.
+        # Pedido cancelado também fica fora do quadro: aparece só no filtro "Cancelado".
+        no_quadro = {c.id: c.etapa for c in repo.listar_producao()}
+        etapas = {
+            p.id: "cancelado" if p.cancelado else no_quadro.get(p.id, "entregue") for p in todos
+        }
     except FalhaAoConsultar:
-        contexto = {"pedidos": [], "imagens": {}, "erro": MENSAGEM_CONSULTA_INDISPONIVEL}
+        contexto = {
+            **base,
+            "pedidos": [],
+            "imagens": {},
+            "total": 0,
+            "contagens": {},
+            "erro": MENSAGEM_CONSULTA_INDISPONIVEL,
+        }
         return _pagina_sem_cache(request, "pedidos/lista.html", contexto, status_code=503)
+
+    contagens = {codigo: 0 for codigo in filtros}
+    for p in todos:
+        if etapas.get(p.id) in contagens:
+            contagens[etapas[p.id]] += 1
+    ativos = [p for p in todos if not p.cancelado]
+    pedidos = [p for p in todos if etapas.get(p.id) == status] if base["status"] else ativos
 
     # No máximo uma foto por card (a de destaque, escolhida no banco), assinadas num só pedido
     # ao Storage. Se falhar, os cards aparecem sem foto, com um aviso discreto.
@@ -232,7 +274,18 @@ def listar_pedidos(
         imagens = repo.assinar_imagens(caminhos) if caminhos else {}
     except FalhaAoConsultar:
         imagens = {}
-    contexto = {"pedidos": pedidos, "imagens": imagens, "erro": ""}
+    contexto = {
+        **base,
+        "pedidos": pedidos,
+        "imagens": imagens,
+        "total": len(ativos),
+        "contagens": contagens,
+        "etapas": etapas,
+        "rotulos_etapa": filtros,
+        "movimentos": MOVIMENTOS_PEDIDOS,
+        "alternancia_pagamento": ALTERNANCIA_PAGAMENTO,
+        "erro": "",
+    }
     return _pagina_sem_cache(request, "pedidos/lista.html", contexto)
 
 
@@ -265,9 +318,167 @@ def ver_pedido(
         "pedido": pedido,
         "imagens": imagens,
         "imagens_indisponiveis": imagens_indisponiveis,
+        "csrf": request.state.csrf,
         "quantidade_total": sum(item.quantidade for item in pedido.itens),
     }
     return _pagina_sem_cache(request, "pedidos/detalhe.html", contexto)
+
+
+# ---------- Editar e cancelar ----------
+
+NAO_EDITAVEL = {
+    "entregue": "Este pedido já foi entregue e não pode mais ser editado nem cancelado.",
+    "cancelado": "Este pedido foi cancelado e não pode mais ser alterado.",
+}
+
+
+def _pedido_para_alterar(request: Request, repo: RepositorioPedidos | None, pedido_id: str):
+    """(pedido, None) se existe e pode ser alterado; senão (None, página de resposta)."""
+    try:
+        if repo is None:
+            raise FalhaAoConsultar
+        pedido = repo.consultar_pedido(int(pedido_id)) if ID_PEDIDO.fullmatch(pedido_id) else None
+    except FalhaAoConsultar:
+        contexto = {"erro": MENSAGEM_CONSULTA_INDISPONIVEL}
+        return None, _pagina_sem_cache(request, "pedidos/indisponivel.html", contexto, 503)
+    if pedido is None:
+        return None, _pagina_sem_cache(request, "pedidos/nao_encontrado.html", {}, 404)
+    if not pedido.editavel:
+        motivo = "cancelado" if pedido.cancelado else "entregue"
+        contexto = {"erro": NAO_EDITAVEL[motivo]}
+        return None, _pagina_sem_cache(request, "pedidos/indisponivel.html", contexto, 409)
+    return pedido, None
+
+
+@app.get(
+    "/pedidos/{pedido_id}/editar",
+    response_class=HTMLResponse,
+    dependencies=[Depends(exigir_usuario)],
+)
+def editar_pedido_tela(
+    request: Request,
+    pedido_id: str,
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    consultado, resposta = _pedido_para_alterar(request, repo, pedido_id)
+    if resposta is not None:
+        return resposta
+    return _tela_pedido(request, pedido_do_banco(consultado), edicao=consultado)
+
+
+@app.post("/pedidos/{pedido_id}/editar", response_class=HTMLResponse)
+async def editar_pedido(
+    request: Request,
+    pedido_id: str,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    consultado, resposta = _pedido_para_alterar(request, repo, pedido_id)
+    if resposta is not None:
+        return resposta
+
+    async with request.form() as formulario:
+        textos: dict[str, list[str]] = {}
+        for chave, valor in formulario.multi_items():
+            if isinstance(valor, str):
+                textos.setdefault(chave, []).append(valor)
+
+        csrf = textos.get("csrf", [""])[0]
+        if not origem_confiavel(request) or not sessoes.csrf_valido(request.state.csrf, csrf):
+            return _tela_pedido(
+                request,
+                ler_formulario(textos),
+                erro_geral="A página expirou. Confira os dados e salve de novo.",
+                status_code=403,
+                edicao=consultado,
+            )
+
+        pedido = validar(ler_formulario(textos, await _ler_imagens(formulario)))
+
+    if not pedido.valido:
+        return _tela_pedido(request, pedido, status_code=422, edicao=consultado)
+
+    atuais = {item.imagem_caminho for item in consultado.itens if item.imagem_caminho}
+    try:
+        editar_pedido_gravado(repo, consultado.id, pedido, usuario.id, atuais)
+    except PedidoNaoEditavel:
+        contexto = {
+            "erro": "Este pedido foi alterado por outro usuário e não pode mais ser editado."
+        }
+        return _pagina_sem_cache(request, "pedidos/indisponivel.html", contexto, 409)
+    except PedidoNaoSalvo:
+        return _tela_pedido(
+            request,
+            pedido,
+            erro_geral="Não foi possível salvar o pedido agora. Tente novamente em instantes.",
+            status_code=503,
+            edicao=consultado,
+        )
+
+    # Mostra o que ficou gravado (imagens mantidas e novas); o JavaScript segue para o detalhe.
+    try:
+        gravado = repo.consultar_pedido(consultado.id) or consultado
+    except FalhaAoConsultar:
+        gravado = consultado
+    sucesso = f"Pedido de {pedido.cliente} atualizado — total {formatar_brl(pedido.total)}."
+    tela = pedido_do_banco(gravado) if gravado is not consultado else pedido
+    return _tela_pedido(request, tela, sucesso=sucesso, edicao=gravado)
+
+
+@app.get(
+    "/pedidos/{pedido_id}/cancelar",
+    response_class=HTMLResponse,
+    dependencies=[Depends(exigir_usuario)],
+)
+def confirmar_cancelamento(
+    request: Request,
+    pedido_id: str,
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    pedido, resposta = _pedido_para_alterar(request, repo, pedido_id)
+    if resposta is not None:
+        return resposta
+    return _pagina_sem_cache(
+        request,
+        "pedidos/cancelar.html",
+        {"pedido": pedido, "csrf": request.state.csrf, "erro": ""},
+    )
+
+
+@app.post("/pedidos/{pedido_id}/cancelar", response_class=HTMLResponse)
+async def cancelar_pedido(
+    request: Request,
+    pedido_id: str,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
+):
+    pedido, resposta = _pedido_para_alterar(request, repo, pedido_id)
+    if resposta is not None:
+        return resposta
+
+    async with request.form() as formulario:
+        csrf = str(formulario.get("csrf", ""))
+    if not origem_confiavel(request) or not sessoes.csrf_valido(request.state.csrf, csrf):
+        contexto = {
+            "pedido": pedido,
+            "csrf": request.state.csrf,
+            "erro": "A página expirou. Confirme o cancelamento de novo.",
+        }
+        return _pagina_sem_cache(request, "pedidos/cancelar.html", contexto, status_code=403)
+
+    try:
+        repo.cancelar_pedido(pedido.id, usuario.id)
+    except AlteracaoRecusada:
+        contexto = {"erro": "Este pedido foi alterado por outro usuário. Recarregue a lista."}
+        return _pagina_sem_cache(request, "pedidos/indisponivel.html", contexto, 409)
+    except FalhaAoAlterar:
+        contexto = {
+            "pedido": pedido,
+            "csrf": request.state.csrf,
+            "erro": "Não foi possível cancelar o pedido agora. Tente novamente em instantes.",
+        }
+        return _pagina_sem_cache(request, "pedidos/cancelar.html", contexto, status_code=503)
+    return RedirectResponse(f"/pedidos/{pedido.id}", status_code=303)
 
 
 # ---------- Produção ----------

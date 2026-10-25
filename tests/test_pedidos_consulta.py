@@ -3,6 +3,7 @@
 Nenhum teste acessa o Supabase; os pedidos são criados só no repositório em memória.
 """
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -51,12 +52,43 @@ def com_imagem(repo, pedido_id, ordem):
 
 
 def card(html, cliente):
-    """HTML do card do cliente (do <li> até o fim do item)."""
-    inicio = html.index(f"<h2>{cliente}</h2>")
-    return html[html.rindex("<li", 0, inicio) : html.index("</li>", inicio)]
+    """HTML da linha da tabela do cliente (do <tr> até o fim da linha)."""
+    inicio = html.index(f'data-cliente="{cliente}"')
+    return html[html.rindex("<tr", 0, inicio) : html.index("</tr>", inicio)]
 
 
-def test_card_mostra_os_dados_aprovados(repo_pedidos):
+def celulas(html, cliente):
+    """Conteúdo de cada coluna da linha, na ordem da tabela."""
+    return re.findall(r"<td[^>]*>(.*?)</td>", card(html, cliente), flags=re.S)
+
+
+def _clientes(html):
+    return re.findall(r'<tr data-pedido="\d+" data-cliente="([^"]*)"', html)
+
+
+def test_tabela_tem_as_colunas_na_ordem_pedida(repo_pedidos):
+    novo_pedido(repo_pedidos)
+
+    html = client.get("/pedidos").text
+
+    # Cada título (exceto a foto) traz um botão de filtro; o texto do título fica no 1º <span>.
+    cabecalho = re.findall(
+        r'<th scope="col">\s*(?:<span class="th-conteudo">\s*<span>)?([^<]*)', html
+    )
+    assert cabecalho == [
+        "Foto",
+        "Produto",
+        "Cliente",
+        "Pagamento",
+        "Status Pagamento",
+        "Status Produção",
+        "Observações",
+        "Ações",
+    ]
+    assert "lista-pedidos" not in html
+
+
+def test_linha_mostra_os_dados_do_pedido(repo_pedidos):
     pedido = novo_pedido(
         repo_pedidos,
         itens=[item(1, "Caneca", 11, "12.00"), item(2, "Camiseta", 2, "30.00")],
@@ -72,45 +104,77 @@ def test_card_mostra_os_dados_aprovados(repo_pedidos):
     html = resposta.text
     assert "<h1>Pedidos</h1>" in html
     assert '<a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>' in html
-    c = card(html, "Cliente Teste")
-    assert (
-        '<dd class="pedido-card-pagamento">Cartão <span class="selo-status selo-status-pago">' in c
+    _foto, produto, cliente, pagamento, status_pag, status_prod, obs, _acoes = celulas(
+        html, "Cliente Teste"
     )
-    assert "Pago</span>" in c
-    assert "<dt>Cadastrado por</dt><dd>Marise</dd>" in c
-    assert '<span class="pedido-card-produtos">Caneca, Camiseta</span>' in c
-    assert '<span class="pedido-card-unidades">13 unidades</span>' in c
-    assert '<dd class="pedido-card-obs">Embalar para presente</dd>' in c
-    assert f'href="/pedidos/{pedido.id}"' in c and ">Ver pedido</a>" in c
+    assert '<span class="pedido-card-produtos">Caneca, Camiseta</span>' in produto
+    assert '<span class="pedido-card-unidades">13 unidades</span>' in produto
+    assert f'href="/pedidos/{pedido.id}"' in cliente and "Cliente Teste" in cliente
+    assert pagamento.strip() == "Cartão"
+    assert 'data-status="pago"' in status_pag and "Pago" in status_pag
+    assert "Na Fila" in status_prod
+    assert "Embalar para presente" in obs
+    assert "Marise" not in card(html, "Cliente Teste")  # "Cadastrado por" saiu da lista
 
 
-def test_card_nao_mostra_contato_data_entrega_nem_total(repo_pedidos):
+def test_linha_nao_mostra_contato_data_entrega_nem_total(repo_pedidos):
     novo_pedido(repo_pedidos, tipo_entrega="retirada")
 
     c = card(client.get("/pedidos").text, "Cliente Teste")
 
-    for removido in (
-        "(11) 98765-4321",
-        "Contato",
-        "01/10/2026",
-        "Cadastrado em",
-        "Retirada",
-        "Entrega",
-        "R$ 132,00",
-        "Total",
-    ):
+    for removido in ("(11) 98765-4321", "Contato", "01/10/2026", "Retirada", "R$ 132,00"):
         assert removido not in c, removido
 
 
 @pytest.mark.parametrize(("status", "rotulo"), [("pendente", "Pendente"), ("pago", "Pago")])
-def test_card_mostra_o_status_com_icone_e_texto(repo_pedidos, status, rotulo):
+def test_status_do_pagamento_e_botao_com_icone_e_texto(repo_pedidos, status, rotulo):
     novo_pedido(repo_pedidos, status_pagamento=status)
 
     c = card(client.get("/pedidos").text, "Cliente Teste")
 
-    assert f'<span class="selo-status selo-status-{status}">' in c
-    selo = c.split(f"selo-status-{status}")[1].split("</span>")[0]
-    assert "<svg" in selo and selo.rstrip().endswith(rotulo)
+    assert f'class="selo-status selo-status-{status} producao-pagamento"' in c
+    assert f'data-status="{status}"' in c and "<svg" in c and "<button" in c
+    assert f'<span class="producao-pagamento-texto">{rotulo}</span>' in c
+
+
+@pytest.mark.parametrize(
+    ("etapa", "opcoes"),
+    [
+        ("fila_producao", ["Na Fila", "Em Produção", "Finalizado"]),
+        ("em_producao", ["Em Produção", "Na Fila", "Ag. Entrega", "Finalizado"]),
+        ("aguardando_entrega", ["Ag. Entrega", "Finalizado"]),
+    ],
+)
+def test_status_da_producao_e_selecao_com_a_etapa_atual_e_destinos_permitidos(
+    repo_pedidos, etapa, opcoes
+):
+    pedido = novo_pedido(repo_pedidos)
+    repo_pedidos.etapas[pedido.id] = etapa
+
+    c = card(client.get("/pedidos").text, "Cliente Teste")
+
+    assert f'<select class="campo-texto pedidos-etapa" data-etapa="{etapa}"' in c
+    assert re.findall(r"<option[^>]*>(.*?)</option>", c) == opcoes
+    assert f'<option value="{etapa}" selected>' in c
+
+
+def test_pedido_finalizado_nao_tem_selecao(repo_pedidos):
+    pedido = novo_pedido(repo_pedidos)
+    repo_pedidos.etapas[pedido.id] = "entregue"
+
+    c = card(client.get("/pedidos").text, "Cliente Teste")
+
+    assert "<select" not in c
+    assert "Finalizado" in c
+
+
+def test_pagina_carrega_o_script_e_o_token_da_tabela(repo_pedidos):
+    novo_pedido(repo_pedidos)
+
+    html = client.get("/pedidos").text
+
+    assert "js/pedidos-lista.js" in html
+    assert re.search(r'<table class="tabela-pedidos" id="tabela-pedidos" data-csrf="[^"]+"', html)
 
 
 def test_listagem_vazia_convida_a_cadastrar(repo_pedidos):
@@ -120,24 +184,61 @@ def test_listagem_vazia_convida_a_cadastrar(repo_pedidos):
     assert (
         '<a class="botao botao-primario" href="/pedidos/novo">Cadastrar primeiro pedido</a>' in html
     )
-    assert "lista-pedidos" not in html
+    assert "tabela-pedidos" not in html
+
+
+def test_total_de_pedidos_e_filtro_por_status(repo_pedidos):
+    novo_pedido(repo_pedidos, cliente="Ana")
+    bia = novo_pedido(repo_pedidos, cliente="Bia")
+    cris = novo_pedido(repo_pedidos, cliente="Cris")
+    dani = novo_pedido(repo_pedidos, cliente="Dani", status_pagamento="pago")
+    repo_pedidos.etapas[bia.id] = "em_producao"
+    repo_pedidos.etapas[cris.id] = "aguardando_entrega"
+    repo_pedidos.etapas[dani.id] = "entregue"  # entregue e pago: fora do quadro
+
+    html = client.get("/pedidos").text
+    assert "Total de Pedidos" in html
+    assert '<strong class="pedidos-total-valor">4</strong>' in html
+    assert sorted(_clientes(html)) == ["Ana", "Bia", "Cris", "Dani"]
+    for rotulo in ("Na Fila", "Em Produção", "Ag. Entrega", "Finalizado"):
+        assert rotulo in html
+
+    esperado = {
+        "fila_producao": ["Ana"],
+        "em_producao": ["Bia"],
+        "aguardando_entrega": ["Cris"],
+        "entregue": ["Dani"],
+    }
+    for etapa, clientes in esperado.items():
+        filtrado = client.get(f"/pedidos?status={etapa}").text
+        assert _clientes(filtrado) == clientes
+        assert '<strong class="pedidos-total-valor">4</strong>' in filtrado
+
+
+def test_filtro_com_status_desconhecido_mostra_todos(repo_pedidos):
+    novo_pedido(repo_pedidos, cliente="Ana")
+    html = client.get("/pedidos?status=qualquer").text
+    assert _clientes(html) == ["Ana"]
+
+
+def test_filtro_sem_pedidos_no_status(repo_pedidos):
+    novo_pedido(repo_pedidos, cliente="Ana")
+    html = client.get("/pedidos?status=entregue").text
+    assert "Nenhum pedido neste status" in html
 
 
 def test_listagem_do_mais_recente_para_o_mais_antigo(repo_pedidos):
     for nome in ("Primeira", "Segunda", "Terceira"):
         novo_pedido(repo_pedidos, cliente=nome)
 
-    html = client.get("/pedidos").text
-
-    posicoes = [html.index(f"<h2>{nome}</h2>") for nome in ("Terceira", "Segunda", "Primeira")]
-    assert posicoes == sorted(posicoes)
+    assert _clientes(client.get("/pedidos").text) == ["Terceira", "Segunda", "Primeira"]
 
 
 @pytest.mark.parametrize(
     ("quantidades", "texto"),
     [([11], "11 unidades"), ([1, 2, 3], "6 unidades"), ([1], "1 unidade")],
 )
-def test_card_soma_as_quantidades_e_lista_todos_os_produtos(repo_pedidos, quantidades, texto):
+def test_linha_soma_as_quantidades_e_lista_todos_os_produtos(repo_pedidos, quantidades, texto):
     itens = [item(n, f"Produto {n}", q, "1.00") for n, q in enumerate(quantidades, 1)]
     novo_pedido(repo_pedidos, itens=itens)
 
@@ -148,12 +249,12 @@ def test_card_soma_as_quantidades_e_lista_todos_os_produtos(repo_pedidos, quanti
     assert f'<span class="pedido-card-produtos">{nomes}</span>' in c
 
 
-def test_card_sem_observacoes(repo_pedidos):
+def test_linha_sem_observacoes(repo_pedidos):
     novo_pedido(repo_pedidos, observacoes=None)
 
     c = card(client.get("/pedidos").text, "Cliente Teste")
 
-    assert '<dd class="pedido-card-vazio">Sem observações</dd>' in c
+    assert '<span class="pedido-card-vazio">Sem observações</span>' in c
 
 
 def caminho_de(pedido_id, ordem):
@@ -189,21 +290,19 @@ def test_foto_de_destaque_segue_a_regra(repo_pedidos, especificacao, ordem_escol
     escolhido = caminho_de(pedido.id, ordem_escolhida)
     assert repo_pedidos.assinaturas == [[escolhido]]
     url = "https://armazenamento.exemplo/assinada/0.img?token=falso"
-    c = card(html, "Cliente Teste")
-    assert 'class="pedido-card tem-foto"' in c
-    assert f'<img class="pedido-card-foto" src="{url}"' in c
-    assert f'alt="Foto de referência: Produto {ordem_escolhida}"' in c
+    foto = celulas(html, "Cliente Teste")[0]
+    assert f'<img class="pedido-tabela-foto" src="{url}"' in foto
+    assert f'alt="Foto de referência: Produto {ordem_escolhida}"' in foto
     assert escolhido not in html  # o caminho interno não vai para a tela
 
 
-def test_pedido_sem_imagem_nao_tem_foto_nem_espaco(repo_pedidos):
+def test_pedido_sem_imagem_nao_tem_foto(repo_pedidos):
     pedido_com_fotos(repo_pedidos, [(2, False), (3, False)])
 
     html = client.get("/pedidos").text
 
-    c = card(html, "Cliente Teste")
-    assert 'class="pedido-card"' in c and "tem-foto" not in c
-    assert "<img" not in c and "pedido-card-aviso" not in c
+    foto = celulas(html, "Cliente Teste")[0]
+    assert "<img" not in foto and "pedido-card-aviso" not in foto
     assert repo_pedidos.assinaturas == []  # nada para assinar
 
 
@@ -217,10 +316,10 @@ def test_no_maximo_uma_url_assinada_por_pedido_em_uma_chamada(repo_pedidos):
     assert len(repo_pedidos.assinaturas) == 1  # um único pedido ao Storage
     (caminhos,) = repo_pedidos.assinaturas
     assert caminhos == [caminho_de(3, 1), caminho_de(1, 3)]  # Caio (mais recente) e Ana
-    assert html.count('class="pedido-card-foto"') == 2
+    assert html.count('class="pedido-tabela-foto"') == 2
 
 
-def test_falha_ao_assinar_mostra_os_cards_sem_foto_com_aviso(repo_pedidos):
+def test_falha_ao_assinar_mostra_a_tabela_sem_foto_com_aviso(repo_pedidos):
     pedido_com_fotos(repo_pedidos, [(1, True)], cliente="Com foto")
     pedido_com_fotos(repo_pedidos, [(1, False)], cliente="Sem foto")
     repo_pedidos.falhar_em["assinar_imagens"] = FalhaAoConsultar()
@@ -230,18 +329,18 @@ def test_falha_ao_assinar_mostra_os_cards_sem_foto_com_aviso(repo_pedidos):
     assert resposta.status_code == 200
     html = resposta.text
     assert "<img" not in html.split("<main")[1]
-    assert "Foto indisponível no momento." in card(html, "Com foto")
-    assert "Foto indisponível" not in card(html, "Sem foto")
+    assert "Indisponível" in celulas(html, "Com foto")[0]
+    assert "Indisponível" not in celulas(html, "Sem foto")[0]
 
 
 def test_foto_que_nao_existe_no_bucket_vira_aviso(repo_pedidos):
     pedido = pedido_com_fotos(repo_pedidos, [(1, True)])
     del repo_pedidos.arquivos[caminho_de(pedido.id, 1)]
 
-    c = card(client.get("/pedidos").text, "Cliente Teste")
+    foto = celulas(client.get("/pedidos").text, "Cliente Teste")[0]
 
-    assert "<img" not in c
-    assert "Foto indisponível no momento." in c
+    assert "<img" not in foto
+    assert "Indisponível" in foto
 
 
 def test_falha_na_listagem_mostra_mensagem_simples(repo_pedidos):

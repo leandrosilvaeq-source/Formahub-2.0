@@ -224,14 +224,12 @@ begin
     pg_temp.mover(-1, 'entregue', 'aguardando_entrega', v_leandro), 'PT422');
   perform pg_temp.deve_falhar('pular etapa',
     pg_temp.mover(-2, 'fila_producao', 'aguardando_entrega', v_leandro), 'PT422');
-  perform pg_temp.deve_falhar('pular até entregue',
-    pg_temp.mover(-2, 'fila_producao', 'entregue', v_leandro), 'PT422');
   perform pg_temp.deve_falhar('ficar na mesma etapa',
     pg_temp.mover(-2, 'fila_producao', 'fila_producao', v_leandro), 'PT422');
 
   perform public.mover_etapa_producao(-2, 'fila_producao', 'em_producao', v_leandro);
-  perform pg_temp.deve_falhar('pular de em_producao para entregue',
-    pg_temp.mover(-2, 'em_producao', 'entregue', v_leandro), 'PT422');
+  perform pg_temp.deve_falhar('ficar em em_producao',
+    pg_temp.mover(-2, 'em_producao', 'em_producao', v_leandro), 'PT422');
 
   perform pg_temp.deve_falhar('etapa esperada desatualizada (outro usuário já moveu)',
     pg_temp.mover(-2, 'fila_producao', 'em_producao', v_leandro), 'PT409');

@@ -35,6 +35,7 @@ from app.custos import (
     TITULOS_ITEM,
     VIDA_UTIL,
     conferir_depreciacao,
+    custo_medio_por_kg,
     custo_por_hora,
     depreciacao,
     energia_por_hora,
@@ -56,12 +57,25 @@ from app.custos_repositorio import (
     RepositorioCustos,
     get_repositorio_custos,
 )
+from app.estoque_repositorio import (
+    FalhaNoEstoque,
+    RepositorioEstoque,
+    get_repositorio_estoque,
+)
 
 TAMANHO_MAXIMO_FORMULARIO = 8192
 ID_REGISTRO = re.compile(r"[0-9]{1,18}")
 EDITAR = re.compile(rf"(?:filamento|item)-[0-9]{{1,18}}|valores-(?:{'|'.join(GRUPOS)})")
 
-router = APIRouter()
+
+def _guardar_estoque(
+    request: Request, estoque: RepositorioEstoque | None = Depends(get_repositorio_estoque)
+):
+    """Deixa o estoque à mão de qualquer página de Custos (inclusive as que recusam um envio)."""
+    request.state.estoque = estoque
+
+
+router = APIRouter(dependencies=[Depends(_guardar_estoque)])
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent / "templates")
 templates.env.filters["custo"] = formatar_custo
 templates.env.filters["custo_aprox"] = formatar_custo_aprox
@@ -145,7 +159,18 @@ def _pagina(request: Request, repo: RepositorioCustos | None, estado: Estado, st
     contexto = {"estado": estado, "erro": erro, "csrf": request.state.csrf}
     if custos is not None:
         contexto.update(_montar(custos))
+        contexto["custo_medio_kg"] = _custo_medio_kg(request.state.estoque)
     return _sem_cache(request, contexto, status)
+
+
+def _custo_medio_kg(estoque: RepositorioEstoque | None):
+    """Médias por grupo a partir das compras do estoque; None se o estoque não puder ser lido."""
+    try:
+        if estoque is None:
+            raise FalhaNoEstoque
+        return custo_medio_por_kg(estoque.listar_estoque().filamentos)
+    except FalhaNoEstoque:
+        return None
 
 
 def _montar(custos: Custos) -> dict:

@@ -1,10 +1,31 @@
 {% extends "base.html" %}
-{% from "pedidos/_status.html" import selo_status %}
 
 {% block title %}Pedidos · FormaHub 2.0{% endblock %}
 
+{# Ícones do selo do pagamento (os mesmos da Produção): SVG inline. #}
+{% macro icone_pagamento(codigo) -%}
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  {%- if codigo == "pago" %}<circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>
+  {%- else %}<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.2 2"/>{% endif -%}
+</svg>
+{%- endmacro %}
+
+{# Título de coluna com botão de filtro estilo Excel (lista de valores com caixas de seleção). #}
+{% macro cabecalho(titulo, chave, opcoes=None) -%}
+<th scope="col">
+  <span class="th-conteudo">
+    <span>{{ titulo }}</span>
+    <button type="button" class="filtro-botao" data-filtro="{{ chave }}" data-titulo="{{ titulo }}"
+      {%- if opcoes %} data-opcoes='{{ opcoes | tojson }}'{% endif %}
+      aria-haspopup="dialog" aria-expanded="false" aria-label="Filtrar por {{ titulo }}" title="Filtrar">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5h16l-6.2 7.4V19l-3.6-1.8v-4.8z"/></svg>
+    </button>
+  </span>
+</th>
+{%- endmacro %}
+
 {% block content %}
-<div class="consulta">
+<div class="consulta consulta-larga">
 
 <div class="pagina-topo">
   <h1>Pedidos</h1>
@@ -16,6 +37,33 @@
 
 {% if erro %}
 <div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+{% else %}
+<div class="pedidos-resumo">
+  <div class="pedidos-total">
+    <span class="pedidos-total-rotulo">Total de Pedidos</span>
+    <strong class="pedidos-total-valor">{{ total }}</strong>
+  </div>
+  <nav class="pedidos-filtro" aria-label="Filtrar por status">
+    <a class="pedidos-filtro-item{% if not status %} ativo{% endif %}" href="/pedidos"
+      {% if not status %}aria-current="true"{% endif %}>Todos <span>{{ total }}</span></a>
+    {% for codigo, rotulo in filtros %}
+    <a class="pedidos-filtro-item{% if status == codigo %} ativo{% endif %}" href="/pedidos?status={{ codigo }}"
+      {% if status == codigo %}aria-current="true"{% endif %}>{{ rotulo }} <span>{{ contagens[codigo] }}</span></a>
+    {% endfor %}
+  </nav>
+</div>
+
+{# Mensagens das alterações feitas na tabela: visíveis e anunciadas por leitor de tela. #}
+<div id="pedidos-mensagem" class="producao-mensagem" aria-live="polite"></div>
+{% endif %}
+
+{% if erro %}
+{% elif not pedidos and status %}
+<section class="secao lista-vazia">
+  <h2>Nenhum pedido neste status</h2>
+  <p>Escolha outro status ou volte para ver todos os pedidos.</p>
+  <a class="botao botao-secundario" href="/pedidos">Ver todos</a>
+</section>
 {% elif not pedidos %}
 <section class="secao lista-vazia">
   <h2>Nenhum pedido cadastrado</h2>
@@ -23,48 +71,89 @@
   <a class="botao botao-primario" href="/pedidos/novo">Cadastrar primeiro pedido</a>
 </section>
 {% else %}
-<ul class="lista-pedidos">
-  {% for p in pedidos %}
-  {% set foto = imagens.get(p.imagem_caminho) if p.imagem_caminho else None %}
-  <li class="pedido-card{% if foto %} tem-foto{% endif %}">
-    {% if foto %}
-    <img class="pedido-card-foto" src="{{ foto }}" alt="Foto de referência: {{ p.imagem_produto }}"
-      width="112" height="112" loading="lazy" referrerpolicy="no-referrer">
-    {% endif %}
-    <div class="pedido-card-corpo">
-      <h2>{{ p.cliente_nome }}</h2>
-      <dl class="pedido-card-dados">
-        <div>
-          <dt>Pagamento</dt>
-          <dd class="pedido-card-pagamento">{{ p.forma_pagamento | pagamento }} {{ selo_status(p.status_pagamento) }}</dd>
-        </div>
-        <div><dt>Cadastrado por</dt><dd>{{ p.criado_por_nome }}</dd></div>
-        <div class="pedido-card-largo">
-          <dt>Produtos</dt>
-          <dd>
-            <span class="pedido-card-produtos">{{ p.produtos | join(", ") }}</span>
-            <span class="pedido-card-unidades">{{ p.quantidade_total }} {{ "unidade" if p.quantidade_total == 1 else "unidades" }}</span>
-          </dd>
-        </div>
-        <div class="pedido-card-largo">
-          <dt>Observações</dt>
-          {% if p.observacoes %}
-          <dd class="pedido-card-obs">{{ p.observacoes }}</dd>
+<div class="tabela-rolagem">
+  <table class="tabela-pedidos" id="tabela-pedidos" data-csrf="{{ request.state.csrf }}">
+    <thead>
+      <tr>
+        <th scope="col">Foto</th>
+        {{ cabecalho("Produto", "produto") }}
+        {{ cabecalho("Cliente", "cliente") }}
+        {{ cabecalho("Pagamento", "pagamento") }}
+        {{ cabecalho("Status Pagamento", "status_pagamento", [["pendente", "Pendente"], ["pago", "Pago"]]) }}
+        {{ cabecalho("Status Produção", "etapa", filtros) }}
+        {{ cabecalho("Observações", "observacoes") }}
+        <th scope="col">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pedidos %}
+      {% set foto = imagens.get(p.imagem_caminho) if p.imagem_caminho else None %}
+      {% set etapa = etapas[p.id] %}
+      {% set acao = alternancia_pagamento[p.status_pagamento][1] %}
+      <tr data-pedido="{{ p.id }}" data-cliente="{{ p.cliente_nome }}" data-etapa="{{ etapa }}">
+        <td class="tabela-pedidos-foto">
+          {% if foto %}
+          <img class="pedido-tabela-foto" src="{{ foto }}" alt="Foto de referência: {{ p.imagem_produto }}"
+            width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
+          {% elif p.imagem_caminho %}
+          <span class="pedido-card-aviso">Indisponível</span>
           {% else %}
-          <dd class="pedido-card-vazio">Sem observações</dd>
+          <span class="pedido-card-vazio">—</span>
           {% endif %}
-        </div>
-      </dl>
-      {% if p.imagem_caminho and not foto %}
-      <p class="pedido-card-aviso">Foto indisponível no momento.</p>
-      {% endif %}
-    </div>
-    <a class="botao botao-secundario pedido-card-ver" href="/pedidos/{{ p.id }}"
-      aria-label="Ver pedido de {{ p.cliente_nome }}">Ver pedido</a>
-  </li>
-  {% endfor %}
-</ul>
+        </td>
+        <td>
+          <span class="pedido-card-produtos">{{ p.produtos | join(", ") }}</span>
+          <span class="pedido-card-unidades">{{ p.quantidade_total }} {{ "unidade" if p.quantidade_total == 1 else "unidades" }}</span>
+        </td>
+        <td><a href="/pedidos/{{ p.id }}" aria-label="Ver pedido de {{ p.cliente_nome }}">{{ p.cliente_nome }}</a></td>
+        <td>{{ p.forma_pagamento | pagamento }}</td>
+        <td>
+          <button type="button" class="selo-status selo-status-{{ p.status_pagamento }} producao-pagamento"
+            data-status="{{ p.status_pagamento }}" title="{{ acao }}"{% if etapa == "cancelado" %} disabled{% endif %}
+            aria-label="{{ p.status_pagamento | status_pagamento }}. {{ acao }}: pedido de {{ p.cliente_nome }}">
+            {{- icone_pagamento(p.status_pagamento) -}}
+            <span class="producao-pagamento-texto">{{ p.status_pagamento | status_pagamento }}</span>
+          </button>
+        </td>
+        <td>
+          {% if movimentos.get(etapa) %}
+          <select class="campo-texto pedidos-etapa" data-etapa="{{ etapa }}"
+            aria-label="Status da produção: pedido de {{ p.cliente_nome }}">
+            <option value="{{ etapa }}" selected>{{ rotulos_etapa[etapa] }}</option>
+            {% for m in movimentos[etapa] %}
+            <option value="{{ m.destino }}">{{ rotulos_etapa[m.destino] }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <span class="pedidos-etapa-final">{{ rotulos_etapa[etapa] }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if p.observacoes %}
+          <span class="pedido-card-obs">{{ p.observacoes }}</span>
+          {% else %}
+          <span class="pedido-card-vazio">Sem observações</span>
+          {% endif %}
+        </td>
+        <td class="tabela-pedidos-acoes">
+          {% if etapa in ("entregue", "cancelado") %}
+          <span class="pedido-card-vazio">—</span>
+          {% else %}
+          <a href="/pedidos/{{ p.id }}/editar" aria-label="Editar pedido de {{ p.cliente_nome }}">Editar</a>
+          <a class="acao-perigo" href="/pedidos/{{ p.id }}/cancelar" aria-label="Cancelar pedido de {{ p.cliente_nome }}">Cancelar</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p id="tabela-sem-resultado" class="pedido-card-vazio" role="status" hidden>Nenhum pedido corresponde aos filtros.</p>
 {% endif %}
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/pedidos-lista.js') }}"></script>
 {% endblock %}

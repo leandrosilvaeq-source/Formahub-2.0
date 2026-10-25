@@ -1438,6 +1438,221 @@ main {
   justify-content: center;
 }
 
+/* Tabela de pedidos: uma linha por pedido; rola na horizontal só em telas estreitas */
+.consulta.consulta-larga { max-width: none; }
+
+/* Aparência de planilha: grade em todas as células, cabeçalho cinza fixo e linhas zebradas. */
+.tabela-rolagem {
+  overflow: auto;
+  max-height: 75vh;
+  border: 1px solid var(--cor-borda-campo);
+  background: var(--cor-superficie);
+}
+
+.tabela-pedidos {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+}
+
+.tabela-pedidos th,
+.tabela-pedidos td {
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  vertical-align: middle;
+  border-right: 1px solid var(--cor-borda);
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.tabela-pedidos th:last-child,
+.tabela-pedidos td:last-child { border-right: 0; }
+
+.tabela-pedidos thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 2rem;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--azul-marinho) 9%, var(--branco));
+  border-bottom: 1px solid var(--cor-borda-campo);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--cor-texto);
+  white-space: nowrap;
+}
+
+.tabela-pedidos tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--azul-marinho) 3%, var(--branco));
+}
+
+.tabela-pedidos tbody tr:hover td {
+  background: color-mix(in srgb, var(--azul-ciano) 14%, var(--branco));
+}
+
+.tabela-pedidos tbody tr:last-child td { border-bottom: 0; }
+
+.tabela-pedidos tbody tr[hidden] { display: none; }
+
+.th-conteudo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+/* Botão de filtro do título (estilo Excel) e a lista de valores que ele abre */
+.filtro-botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: 2px;
+  background: var(--cor-superficie);
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+}
+.filtro-botao svg { width: 0.85rem; height: 0.85rem; fill: currentColor; }
+.filtro-botao:hover { background: color-mix(in srgb, var(--azul-ciano) 14%, var(--branco)); }
+.filtro-botao.ativo {
+  background: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+  border-color: var(--cor-primaria);
+}
+
+.filtro-painel {
+  position: fixed;
+  z-index: 50;
+  width: 16rem;
+  max-width: calc(100vw - 16px);
+  padding: 0.5rem;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda-campo);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--azul-marinho) 25%, transparent);
+  font-size: 0.875rem;
+}
+.filtro-busca { width: 100%; margin-bottom: 0.4rem; padding: 0.3rem 0.5rem; min-height: 0; }
+.filtro-lista {
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--cor-borda);
+  padding: 0.2rem 0;
+}
+.filtro-opcao {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+.filtro-opcao[hidden] { display: none; }
+.filtro-opcao:hover { background: color-mix(in srgb, var(--azul-ciano) 14%, var(--branco)); }
+.filtro-opcao span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filtro-todos { border-bottom: 1px solid var(--cor-borda); font-weight: 600; }
+.filtro-limpar {
+  margin-top: 0.4rem;
+  padding: 0.2rem 0;
+  border: 0;
+  background: none;
+  color: var(--cor-texto);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.tabela-pedidos-foto { width: 64px; padding: 0.2rem; }
+
+.pedido-tabela-foto {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 2px;
+}
+
+.tabela-pedidos .pedido-card-obs {
+  display: block;
+  max-width: 28rem;
+  overflow-wrap: anywhere;
+}
+
+.pedidos-etapa {
+  min-height: var(--alvo-toque);
+  width: auto;
+}
+
+.pedidos-etapa:disabled { cursor: progress; opacity: 0.6; }
+
+.pedidos-etapa-final { font-weight: 600; }
+
+/* Total de pedidos + filtro de status (mesmas etapas da Produção) */
+.pedidos-resumo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--espaco);
+  margin-bottom: var(--espaco);
+}
+
+.pedidos-total {
+  display: flex;
+  flex-direction: column;
+  min-width: 9rem;
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+}
+
+.pedidos-total-rotulo {
+  font-size: 0.85rem;
+  color: var(--cor-texto-suave);
+}
+
+.pedidos-total-valor {
+  font-family: var(--fonte-titulo);
+  font-size: 1.6rem;
+  line-height: 1.2;
+}
+
+.pedidos-filtro {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.pedidos-filtro-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: var(--alvo-toque);
+  padding: 0 0.9rem;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: 999px;
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pedidos-filtro-item span {
+  font-size: 0.85rem;
+  color: var(--cor-texto-suave);
+}
+
+.pedidos-filtro-item.ativo {
+  background: var(--cor-primaria);
+  border-color: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+}
+
+.pedidos-filtro-item.ativo span {
+  color: var(--cor-primaria-texto);
+}
+
 .lista-pedidos {
   display: grid;
   gap: 0.75rem;
@@ -2769,7 +2984,7 @@ main {
   margin-bottom: var(--espaco);
 }
 
-/* Local de compra: os mesmos botões de seleção única do Novo pedido, sem ícone */
+/* Local de compra: os mesmos botões de seleção única do Novo pedido, com logo ou ícone */
 .compra-locais {
   min-width: 0;
   margin: 0;
@@ -2786,14 +3001,26 @@ main {
 
 .compra-locais-opcoes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
-.compra-locais .escolha-card { min-height: var(--alvo-toque); padding: 0.45rem 1.6rem; }
+.compra-locais .escolha-card { min-height: 84px; padding: 0.5rem 1.2rem; }
 
-.compra-locais.tem-erro .escolha-card { border-color: var(--cor-erro); }
-
-.compra-itens-secao h3 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
+/* Ícones e fontes do Local 25% menores que o padrão dos botões de escolha (a área clicável, o
+   card de 84 px, fica como era); a fonte não passa de 11 px para baixo. */
+.compra-local-marca {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 21px;
+  max-width: 100%;
+  color: var(--cor-primaria);
 }
+
+.compra-local-marca img { display: block; width: auto; height: auto; max-width: 100%; max-height: 21px; }
+.compra-local-marca svg { display: block; width: 21px; height: 21px; }
+
+.compra-locais .escolha-titulo { font-size: 11px; }
+/* Mercado Livre: só o logotipo (o nome fica para leitores de tela), um pouco maior */
+.compra-local-mercado_livre { height: 27px; }
+.compra-local-mercado_livre img { max-height: 27px; }
 
 .compra-itens-dica {
   margin: 0 0 0.75rem;
@@ -2803,32 +3030,42 @@ main {
 
 .compra-itens {
   display: grid;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 
-.compra-itens:not(:empty) { margin-bottom: 0.75rem; }
+/* Seção de uma categoria: título e "+ Adicionar", e abaixo as suas linhas */
+.compra-secao { min-width: 0; }
 
+.compra-secao-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.compra-secao-topo h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+.compra-secao-topo .botao { flex: 1 1 100%; }
+
+.compra-secao-linhas { display: grid; gap: 0.75rem; }
+.compra-secao-linhas:empty { display: none; }
+.compra-secao-vazio { margin: 0; }
+
+@media (min-width: 640px) {
+  .compra-secao-topo .botao { flex: 0 0 auto; }
+}
+
+/* Linha de uma lista (filamento, acessório ou embalagem): campos, foto opcional e Remover */
 .compra-item {
   display: grid;
   gap: 0.75rem;
   min-width: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--cor-borda);
-  border-radius: var(--raio);
-  background: var(--cor-superficie);
-}
-
-.compra-item-topo {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.compra-item-titulo {
-  margin: 0;
-  font-family: var(--fonte-titulo);
-  font-size: 0.95rem;
 }
 
 .compra-item-campos {
@@ -2839,30 +3076,93 @@ main {
 
 .compra-item-campos.tem-erro > .campo-erro { grid-column: 1 / -1; }
 
-.compra-item-calculos {
+/* Uma lista por categoria: um só contêiner com cabeçalho de colunas compartilhado (desktop),
+   as linhas e, no fim, o resumo da seção (sem frete). */
+.compra-lista {
+  min-width: 0;
+  padding: 0 0.75rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+}
+
+.compra-lista[hidden] { display: none; }
+
+.compra-lista > .compra-secao-linhas { gap: 0; }
+
+.compra-linha { padding: 0.9rem 0; }
+
+/* Remover linha (lixeira) e Selecionar foto (câmera): só o ícone, com área de toque de 44 px */
+.compra-janela .compra-item-remover,
+.compra-janela .upload-selecionar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--alvo-toque);
+  min-height: var(--alvo-toque);
+  padding: 0;
+}
+
+.compra-janela .compra-item-remover { justify-self: end; }
+.compra-janela .upload-selecionar { flex: none; }
+
+.compra-linha + .compra-linha { border-top: 1px solid var(--cor-borda); }
+
+.compra-colunas { display: none; }
+
+.compra-resumo-secao {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.5rem;
+  margin: 0;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--cor-borda);
+}
+
+.compra-resumo-secao div { display: flex; gap: 0.5rem; align-items: baseline; }
+.compra-resumo-secao dt { color: var(--cor-texto-suave); font-size: 0.85rem; font-weight: 700; }
+
+.compra-resumo-secao dd {
+  margin: 0;
+  font-family: var(--fonte-titulo);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Frete e totais da compra */
+.compra-resumo { margin-top: var(--espaco); }
+
+.compra-resumo h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.compra-resumo-corpo {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0.35rem 1rem;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.compra-totais {
+  display: grid;
+  gap: 0.35rem;
   margin: 0;
   padding: 0.6rem 0.75rem;
   border-radius: var(--raio-campo);
   background: var(--cor-selecao-fundo);
 }
 
-.compra-item-calculos div {
+.compra-totais div {
   display: flex;
   justify-content: space-between;
   gap: 0.75rem;
   min-width: 0;
 }
 
-.compra-item-calculos dt {
-  color: var(--cor-texto-suave);
-  font-size: 0.8rem;
-  font-weight: 700;
-}
+.compra-totais dt { color: var(--cor-texto-suave); font-size: 0.9rem; font-weight: 700; }
 
-.compra-item-calculos dd {
+.compra-totais dd {
   margin: 0;
   font-family: var(--fonte-titulo);
   font-weight: 700;
@@ -2871,23 +3171,21 @@ main {
   overflow-wrap: anywhere;
 }
 
-.compra-adicionar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.5rem;
+.compra-total-final {
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--cor-borda);
 }
 
-.compra-adicionar > .campo-erro { order: -1; margin: 0; }
+.compra-total-final dt { color: var(--cor-texto); }
+.compra-total-final dd { font-size: 1.2rem; }
 
 @media (min-width: 480px) {
   .compra-locais-opcoes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .compra-adicionar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .compra-adicionar > .campo-erro { grid-column: 1 / -1; }
 }
 
 @media (min-width: 640px) {
   .compra-janela {
-    width: min(100% - 2rem, 960px);
+    width: min(100% - 2rem, 1104px);
     height: auto;
     max-height: calc(100% - 2rem);
     margin: auto;
@@ -2901,17 +3199,377 @@ main {
   .compra-locais { grid-column: 1 / -1; }
 
   .compra-item-campos { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .compra-item-calculos { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .compra-item-calculos div { flex-direction: column; justify-content: flex-start; gap: 0.1rem; }
-  .compra-item-calculos dd { text-align: left; }
+  .compra-lista[data-lista="acessorio"] .compra-item-campos,
+  .compra-lista[data-lista="embalagem"] .compra-item-campos {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 2fr) minmax(0, 1fr);
+  }
 }
 
 @media (min-width: 900px) {
   .compra-locais-opcoes { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .compra-item-campos { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .compra-item[data-categoria="filamento"] .compra-campo-valor_unitario { grid-column: span 2; }
-  .compra-item:not([data-categoria="filamento"]) .compra-campo-nome { grid-column: span 2; }
+  .compra-lista[data-lista="filamento"] .compra-item-campos {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Desktop: cada linha da lista fica numa linha só (campos, foto e Remover), com os rótulos no
+   cabeçalho compartilhado da lista; os rótulos de cada campo ficam só para leitores de tela. */
+.compra-lista[data-lista="filamento"] {
+  --colunas:
+    minmax(0, 1.1fr) minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1.2fr)
+    minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr);
+}
+
+.compra-lista[data-lista="acessorio"],
+.compra-lista[data-lista="embalagem"] {
+  --colunas: minmax(0, 0.8fr) minmax(0, 3fr) minmax(0, 1.4fr);
+}
+
+.compra-lista { --coluna-foto: 6.5rem; --coluna-remover: var(--alvo-toque); }
+
+@media (min-width: 960px) {
+  .compra-janela { width: min(100% - 2rem, 1288px); }
+
+  .compra-colunas,
+  .compra-linha {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--coluna-foto) var(--coluna-remover);
+    column-gap: 0.75rem;
+    align-items: start;
+  }
+
+  .compra-colunas {
+    padding: 0.75rem 0 0.1rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .compra-colunas-rotulos > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+  .compra-colunas-rotulos,
+  .compra-lista[data-lista] .compra-item-campos {
+    grid-template-columns: var(--colunas);
+    column-gap: 0.75rem;
+  }
+
+  .compra-colunas-rotulos { display: grid; }
+
+  .compra-lista .compra-item-campos { align-items: start; }
+
+  .compra-linha .compra-item-campos .campo > label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Foto compacta na mesma linha: só o botão (ou a prévia com Trocar e Remover foto); o
+     texto de arrastar, o "ou" e o nome do arquivo ficam de fora. */
+  .compra-linha .compra-item-foto .item-rotulo,
+  .compra-linha .upload-dica,
+  .compra-linha .upload-ou,
+  .compra-linha .upload-info { display: none; }
+
+  /* Colunas apertadas (960 a 1099 px): campos com menos espaço lateral interno. */
+  .compra-linha .compra-item-campos input,
+  .compra-linha .compra-item-campos select { padding-inline: 0.5rem; }
+
+  .compra-linha .upload-item { flex-wrap: wrap; gap: 0.3rem; }
+  .compra-linha .upload-miniatura { width: 44px; height: 44px; }
+  .compra-linha .upload-botao { flex: 1 1 auto; padding: 0.3rem 0.5rem; }
+  .compra-linha .upload-selecionar { flex: none; padding: 0; }
+  .compra-linha .upload-erro { flex: 1 1 100%; }
+
+  .compra-linha > .compra-item-remover { align-self: start; }
+
+  .compra-resumo-corpo { grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); align-items: end; }
+
+  /* Data de compra e Local lado a lado (rótulos e controles começam na mesma altura); o nome
+     do local (Outro / Loja Física) aparece abaixo do Local. */
+  .compra-dados {
+    grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+    column-gap: var(--espaco);
+    align-items: start;
+  }
+
+  .compra-dados > #campo-data_compra { grid-column: 1; grid-row: 1; }
+  .compra-dados > .compra-locais { grid-column: 2; grid-row: 1; }
+  .compra-dados > #campo-local_nome { grid-column: 2; grid-row: 2; }
+}
+
+@media (min-width: 1100px) {
+  .compra-lista { --coluna-foto: 8.5rem; }
+}
+
+@media (min-width: 1280px) {
+  .compra-lista { --coluna-foto: 10rem; }
 }
 
 /* A foto da linha de compra sempre tem rótulo visível (a tabela do Novo pedido esconde o seu) */
 .compra-item-foto .item-rotulo { display: block; }
+
+/* ==========================================================
+   Compras (/compras): cards de resumo e últimas compras.
+   Celular: um card por linha e compras empilhadas; a partir de
+   640 px os cards ficam lado a lado.
+   ========================================================== */
+.compras { padding-bottom: calc(var(--espaco) * 2); }
+
+.compras-resumo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-bottom: var(--espaco);
+}
+
+.compras-card {
+  padding: var(--espaco);
+  padding-top: calc(var(--espaco) + 3px);
+  background: var(--gradiente-marca) top / 100% 3px no-repeat, var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 7%, transparent);
+}
+
+.compras-card p { margin: 0; }
+
+.compras-card-rotulo {
+  color: var(--cor-texto-suave);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.compras-card-valor {
+  margin-top: 0.25rem;
+  font-family: var(--fonte-titulo);
+  font-size: 1.75rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.compras-card-dica {
+  margin-top: 0.25rem;
+  color: var(--cor-texto-suave);
+  font-size: 0.8125rem;
+}
+
+.compras-vazio {
+  margin: 0;
+  color: var(--cor-texto-suave);
+}
+
+.compras-lista,
+.compra-registro-itens,
+.compra-registro-fotos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compras-lista {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.compra-registro {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem var(--espaco);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+}
+
+.compra-registro p { margin: 0; }
+
+.compra-registro-cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+
+.compra-registro-data { font-weight: 700; }
+
+.compra-registro-local {
+  color: var(--cor-texto-suave);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.compra-registro-total {
+  font-family: var(--fonte-titulo);
+  font-size: 1.1rem;
+}
+
+.compra-registro-frete {
+  display: block;
+  color: var(--cor-texto-suave);
+  font-family: var(--fonte);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.compra-registro-itens {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.compra-registro-itens li { overflow-wrap: anywhere; }
+
+.compra-registro-fotos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.compra-registro-fotos img {
+  display: block;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  background: var(--cor-fundo);
+}
+
+.compra-registro-fotos a:focus-visible {
+  outline: 3px solid var(--cor-foco-halo);
+  outline-offset: 2px;
+  border-radius: var(--raio-campo);
+}
+
+.compra-registro-sem-foto {
+  color: var(--cor-texto-suave);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+@media (min-width: 640px) {
+  .compras-resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ==========================================================
+   Estoque (/estoque): seletor de categoria, fotos e lista.
+   A lista reaproveita .estoque-tabela (cartões com rótulos no celular).
+   ========================================================== */
+.estoque-categorias {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: var(--espaco);
+}
+
+.estoque-categoria {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: var(--alvo-toque);
+  padding: 0.5rem 0.25rem;
+  color: var(--cor-texto);
+  font-weight: 700;
+  font-size: 0.875rem;
+  text-align: center;
+  text-decoration: none;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+}
+
+.estoque-categoria[aria-current="true"] {
+  color: var(--cor-primaria-texto);
+  background: var(--cor-primaria);
+  border-color: var(--cor-primaria);
+}
+
+.estoque-categoria:focus-visible {
+  outline: 3px solid var(--cor-foco);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px var(--cor-foco-halo);
+}
+
+.estoque-categoria-icone {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.estoque-foto {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--raio-campo);
+  border: 1px solid var(--cor-borda);
+}
+
+.estoque-sem-foto {
+  color: var(--cor-texto-suave);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.estoque-tela .estoque-foto-celula { padding-bottom: 0.4rem; }
+.estoque-tela td small { display: block; color: var(--cor-texto-suave); }
+
+@media (min-width: 640px) {
+  .estoque-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .estoque-categorias { max-width: 32rem; }
+  .estoque-categoria { flex-direction: row; gap: 0.5rem; font-size: 1rem; }
+}
+
+@media (min-width: 1024px) {
+  .estoque-cards { grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr)); }
+}
+
+/* Cards do resumo de filamentos: título 25% maior (0,875rem -> 1,09375rem) */
+.estoque-cards .compras-card-rotulo { font-size: 1.09375rem; }
+
+/* Custo acima do definido em Custos: vermelho neon; abaixo: valor verde */
+.compras-card-alerta {
+  --neon: #e8002b;
+  background: var(--neon);
+  border-color: var(--neon);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--neon) 55%, transparent);
+}
+
+.compras-card-alerta .compras-card-rotulo,
+.compras-card-alerta .compras-card-valor,
+.compras-card-alerta .compras-card-dica {
+  color: var(--branco);
+}
+
+.compras-card-alerta .compras-card-dica { font-weight: 700; }
+
+.compras-card-ok .compras-card-valor,
+.compras-card-ok .compras-card-dica {
+  color: var(--cor-sucesso);
+}
+
+.compras-card-ok .compras-card-dica { font-weight: 700; }
+
+/* Editar pedido: imagem atual do item e ações da lista */
+.item-imagem-atual {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+}
+.item-imagem-atual .campo-texto { width: auto; min-height: 0; padding: 0.2rem 0.4rem; }
+
+.tabela-pedidos-acoes { white-space: nowrap; }
+.tabela-pedidos-acoes a + a { margin-left: 0.6rem; }
+.acao-perigo { color: var(--cor-erro); }

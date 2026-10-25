@@ -7,6 +7,7 @@ um lote só corrige a descrição: o saldo, a data e o custo vêm da compra.
 """
 
 import re
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
@@ -17,38 +18,49 @@ from starlette.datastructures import UploadFile
 from app.auth import sessoes
 from app.auth.repositorio import Usuario
 from app.auth.rotas import exigir_usuario, origem_confiavel
+from app.custos import GRUPOS_CUSTO_KG, custo_medio_por_kg, formatar_custo_aprox
+from app.custos_repositorio import (
+    FalhaAoConsultarCustos,
+    RepositorioCustos,
+    get_repositorio_custos,
+)
 from app.estoque import (
     AREAS_ITENS,
-    ORDENS_FILAMENTO,
-    ORDENS_ITEM,
+    CATEGORIAS_TELA,
     TIPOS_FILAMENTO,
     Area,
     FormFilamento,
     FormItem,
-    consulta_filamentos,
-    consulta_itens,
-    filtrar_filamentos,
-    filtrar_itens,
+    agrupar_filamentos,
+    agrupar_itens,
     form_de_filamento,
     form_de_item,
     formatar_data,
+    formatar_numero,
     formatar_peso,
     formatar_unidades,
     ler_filamento,
     ler_item,
-    materiais,
     peso_total,
-    unidades_total,
     validar_filamento,
     validar_item,
 )
 from app.estoque_compra import (
     CATEGORIAS,
+    COLUNAS_COMPRA,
     LIMITE_ITENS,
+    LIMITE_ROLOS,
     LOCAIS,
     LOCAIS_COM_NOME,
+    LOGOS_LOCAIS,
+    MATERIAIS,
+    PESOS_ROLO_G,
+    SECOES_COMPRA,
     CompraNaoSalva,
+    cores_conhecidas,
+    descrever_item,
     gravar_compra,
+    local_da_compra,
     validar_compra,
 )
 from app.estoque_repositorio import (
@@ -65,6 +77,9 @@ templates.env.filters["brl"] = formatar_brl
 templates.env.filters["peso"] = formatar_peso
 templates.env.filters["unidades"] = formatar_unidades
 templates.env.filters["data_compra"] = formatar_data
+templates.env.filters["numero"] = formatar_numero
+templates.env.filters["custo"] = lambda v: "—" if v is None else formatar_custo_aprox(v)
+templates.env.filters["tipo_filamento"] = lambda c: TIPOS_FILAMENTO.get(c, c)
 
 # Id do lote na URL: só dígitos, dentro do limite de um bigint.
 ID_LOTE = re.compile(r"[0-9]{1,18}")
@@ -76,7 +91,10 @@ PARAMETROS_CONSULTA = ("f_busca", "f_material", "f_tipo", "f_ordem") + tuple(
     f"{p}_{campo}" for p in ("a", "e") for campo in ("busca", "ordem")
 )
 
-MENSAGEM_INDISPONIVEL = "Não foi possível carregar o estoque agora. Tente novamente em instantes."
+MENSAGEM_INDISPONIVEL = "Não foi possível carregar as compras agora. Tente novamente em instantes."
+MENSAGEM_LOTE_INDISPONIVEL = (
+    "Não foi possível carregar o estoque agora. Tente novamente em instantes."
+)
 MENSAGEM_NAO_SALVO = "Não foi possível salvar agora. Tente novamente em instantes."
 MENSAGEM_EXPIRADA = "A página expirou. Confira os dados e salve de novo."
 MENSAGEM_CORRIGIR = "Não foi possível salvar. Corrija os campos destacados."
@@ -101,64 +119,162 @@ def _nao_encontrado(request: Request):
 
 
 def _indisponivel(request: Request):
-    return _pagina(request, "estoque/aviso.html", {"erro": MENSAGEM_INDISPONIVEL}, status_code=503)
+    return _pagina(
+        request, "estoque/aviso.html", {"erro": MENSAGEM_LOTE_INDISPONIVEL}, status_code=503
+    )
 
 
 # ---------- Consulta ----------
 
 
 @router.get("/estoque", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
-def estoque(request: Request, repo: RepositorioEstoque | None = Depends(get_repositorio_estoque)):
-    parametros = request.query_params
-    # Valores atuais de todas as áreas: cada formulário de busca repete os das outras.
-    atuais = {nome: parametros.get(nome, "") for nome in PARAMETROS_CONSULTA}
+def estoque(
+    request: Request,
+    categoria: str = "filamento",
+    repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+    repo_custos: RepositorioCustos | None = Depends(get_repositorio_custos),
+):
+    """Saldo atual por categoria (uma por vez), agrupado a partir dos lotes das compras."""
+    if categoria not in CATEGORIAS_TELA:
+        categoria = "filamento"
+    contexto = {"erro": "", "categoria": categoria, "categorias": CATEGORIAS_TELA}
+    try:
+        if repo is None:
+            raise FalhaNoEstoque
+        lotes = repo.listar_estoque()
+    except FalhaNoEstoque:
+        contexto["erro"] = MENSAGEM_LOTE_INDISPONIVEL
+        return _pagina(request, "estoque/estoque.html", contexto, status_code=503)
+
+    if categoria == "filamento":
+        grupos = agrupar_filamentos(lotes.filamentos)
+        contexto["cards"] = {
+            "peso_total": peso_total(lotes.filamentos),
+            "rolos_total": sum((g.rolos for g in grupos), Decimal(0)),
+            "rolos_por_material": _rolos_por_material(grupos),
+            "medias": _medias(lotes.filamentos, _custos_de_referencia(repo_custos)),
+        }
+    else:
+        area = AREAS_ITENS[categoria]
+        grupos = agrupar_itens([i for i in lotes.itens if i.categoria == area.categoria])
+    contexto["grupos"] = grupos
+    contexto["fotos"] = _fotos_dos_grupos(repo, grupos)
+    return _pagina(request, "estoque/estoque.html", contexto)
+
+
+def _custos_de_referencia(repo: RepositorioCustos | None) -> dict[str, Decimal]:
+    """R$/kg de cada filamento na tela Custos; sem o banco, os cards ficam sem o alerta."""
+    try:
+        if repo is None:
+            raise FalhaAoConsultarCustos
+        return {f.nome: f.valor_kg for f in repo.listar().filamentos}
+    except FalhaAoConsultarCustos:
+        return {}
+
+
+def _rolos_por_material(grupos) -> list[tuple[str, Decimal]]:
+    """Rolos disponíveis de PLA, PETG e PLA Multicolor (mesmos grupos de Custos); sem os zerados."""
+    ordem = {"PLA": 0, "PETG": 1, "PLA Multicolor": 2}
+    resultado = []
+    for titulo, material, tipos in GRUPOS_CUSTO_KG:
+        rolos = sum(
+            (
+                g.rolos
+                for g in grupos
+                if g.material == material and (tipos is None or g.tipo in tipos)
+            ),
+            Decimal(0),
+        )
+        if rolos:
+            resultado.append((titulo.split(" (")[0], rolos))
+    return sorted(resultado, key=lambda r: ordem[r[0]])
+
+
+def _medias(filamentos, referencias: dict[str, Decimal]) -> list[dict]:
+    """Custo médio/kg de PLA, PLA Multicolor e PETG (a regra da tela Custos).
+
+    Cada card diz quanto a média está acima ou abaixo do R$/kg definido em Custos para o mesmo
+    material (situacao "acima" ou "abaixo"; sem diferença ou sem referência, None).
+    """
+    ordem = {"PLA": 0, "PLA Multicolor": 1, "PETG": 2}
+    cards = []
+    for r in custo_medio_por_kg(filamentos):
+        nome = r.titulo.split(" (")[0]
+        referencia = referencias.get(nome)
+        diferenca, situacao = Decimal(0), None
+        if r.custo_kg is not None and referencia is not None and r.custo_kg != referencia:
+            diferenca = abs(r.custo_kg - referencia)
+            situacao = "acima" if r.custo_kg > referencia else "abaixo"
+        cards.append(
+            {"nome": nome, "custo": r.custo_kg, "situacao": situacao, "diferenca": diferenca}
+        )
+    return sorted(cards, key=lambda c: ordem[c["nome"]])
+
+
+def _fotos_dos_grupos(repo: RepositorioEstoque, grupos) -> dict[str, str]:
+    """Caminho -> URL assinada (privada, temporária); sem as fotos a lista continua útil."""
+    try:
+        return repo.assinar_imagens([g.imagem_caminho for g in grupos if g.imagem_caminho])
+    except FalhaNoEstoque:
+        return {}
+
+
+@router.get("/compras", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
+def compras(request: Request, repo: RepositorioEstoque | None = Depends(get_repositorio_estoque)):
     contexto = {
         "erro": "",
-        "sucesso": SUCESSO.get(parametros.get("salvo", ""), ""),
-        "atuais": atuais,
+        "sucesso": SUCESSO.get(request.query_params.get("salvo", ""), ""),
         "tipos": TIPOS_FILAMENTO,
-        "ordens_filamento": ORDENS_FILAMENTO,
-        "ordens_item": ORDENS_ITEM,
         # Janela Registrar Compra
         "locais": LOCAIS,
         "locais_com_nome": LOCAIS_COM_NOME,
+        "logos_locais": LOGOS_LOCAIS,
         "categorias": CATEGORIAS,
+        "secoes_compra": SECOES_COMPRA,
+        "colunas_compra": COLUNAS_COMPRA,
         "limite_itens": LIMITE_ITENS,
         "limite_imagem_mb": LIMITE_IMAGEM_MB,
+        "materiais_compra": MATERIAIS,
+        "pesos_compra": PESOS_ROLO_G,
+        "limite_rolos": LIMITE_ROLOS,
+        "cores": [],
     }
     try:
         if repo is None:
             raise FalhaNoEstoque
-        dados = repo.listar_estoque()
+        historico = repo.listar_compras()
     except FalhaNoEstoque:
         contexto["erro"] = MENSAGEM_INDISPONIVEL
-        return _pagina(request, "estoque/lista.html", contexto, status_code=503)
+        return _pagina(request, "estoque/compras.html", contexto, status_code=503)
 
-    consulta = consulta_filamentos(parametros)
-    filamentos = filtrar_filamentos(dados.filamentos, consulta)
-    contexto["filamentos"] = {
-        "consulta": consulta,
-        "lotes": filamentos,
-        "cadastrados": len(dados.filamentos),
-        "total": peso_total(filamentos),
-        "materiais": materiais(dados.filamentos),
-    }
-    contexto["areas"] = []
-    for area in AREAS_ITENS.values():
-        todos = [i for i in dados.itens if i.categoria == area.categoria]
-        consulta = consulta_itens(parametros, PREFIXOS[area.slug])
-        lotes = filtrar_itens(todos, consulta)
-        contexto["areas"].append(
-            {
-                "area": area,
-                "prefixo": PREFIXOS[area.slug],
-                "consulta": consulta,
-                "lotes": lotes,
-                "cadastrados": len(todos),
-                "total": unidades_total(lotes),
-            }
-        )
-    return _pagina(request, "estoque/lista.html", contexto)
+    contexto["cores"] = cores_conhecidas(_cores_salvas(repo))
+    contexto["resumo"] = historico
+    contexto["ultimas"] = _ultimas_compras(repo, historico.recentes)
+    return _pagina(request, "estoque/compras.html", contexto)
+
+
+def _ultimas_compras(repo: RepositorioEstoque, recentes) -> list[dict]:
+    """Cada compra pronta para a tela: local, itens descritos e fotos (URLs assinadas)."""
+    caminhos = [i.imagem_caminho for c in recentes for i in c.itens if i.imagem_caminho]
+    try:
+        urls = repo.assinar_imagens(caminhos)
+    except FalhaNoEstoque:
+        urls = {}  # sem as miniaturas a lista continua útil
+    return [
+        {
+            "data": c.data_compra,
+            "local": local_da_compra(c.local_tipo, c.local_nome),
+            "total": c.total,
+            "frete": c.frete,
+            "itens": [descrever_item(i) for i in c.itens],
+            "fotos": [
+                {"url": urls[i.imagem_caminho], "descricao": descrever_item(i)}
+                for i in c.itens
+                if i.imagem_caminho in urls
+            ],
+        }
+        for c in recentes
+    ]
 
 
 # ---------- Registrar Compra ----------
@@ -168,6 +284,15 @@ def _json(conteudo: dict, status_code: int = 200) -> JSONResponse:
     return JSONResponse(conteudo, status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
+def _cores_salvas(repo: RepositorioEstoque | None) -> list[str]:
+    """Cores já gravadas (para reaproveitar a grafia); sem o banco, a compra segue sem isso."""
+    try:
+        return [] if repo is None else [f.cor for f in repo.listar_estoque().filamentos]
+    except FalhaNoEstoque:
+        return []
+
+
+@router.post("/compras")
 @router.post("/estoque/compras")
 async def registrar_compra(
     request: Request,
@@ -189,7 +314,7 @@ async def registrar_compra(
             if encontrado and isinstance(valor, UploadFile):
                 # Lê no máximo 1 byte além do limite: o excesso basta para recusar.
                 imagens[int(encontrado.group(1))] = await valor.read(LIMITE_IMAGEM_BYTES + 1)
-        compra = validar_compra(textos, imagens)
+        compra = validar_compra(textos, imagens, _cores_salvas(repo))
 
     if compra.chave_envio is None:
         # Sem a chave da submissão não há proteção contra duplicação: a janela é antiga.
@@ -203,7 +328,7 @@ async def registrar_compra(
         gravar_compra(repo, compra, usuario.id)
     except CompraNaoSalva:
         return _json({"erro": MENSAGEM_NAO_SALVO}, status_code=503)
-    return _json({"destino": "/estoque?salvo=compra"})
+    return _json({"destino": "/compras?salvo=compra"})
 
 
 # ---------- Edição da descrição do lote ----------
@@ -220,7 +345,7 @@ async def _ler_post(request: Request) -> tuple[dict[str, str], bool]:
 
 
 def _voltar(codigo: str, ancora: str) -> RedirectResponse:
-    return RedirectResponse(f"/estoque?salvo={codigo}#{ancora}", status_code=303)
+    return RedirectResponse(f"/compras?salvo={codigo}#{ancora}", status_code=303)
 
 
 def _lote_da_url(lote_id: str) -> int | None:

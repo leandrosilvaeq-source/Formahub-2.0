@@ -14,9 +14,13 @@ from fastapi.testclient import TestClient
 
 from app.estoque_compra import (
     LIMITE_ITENS,
+    LOCAIS,
+    cores_conhecidas,
     custo,
     gravar_compra,
     peso_recebido,
+    subtotal_itens,
+    total_da_compra,
     validar_compra,
     valor_total,
 )
@@ -151,7 +155,7 @@ def test_compra_com_as_tres_categorias_e_varias_linhas(estoque):
             quantidade="2",
             cor="Branco",
             tipo="solido",
-            peso_rolo="750,5",
+            peso_rolo="500",
             valor_unitario="R$ 100,00",
         ),
         item(2, "acessorio", quantidade="40", valor_total="R$ 14,00"),
@@ -161,7 +165,7 @@ def test_compra_com_as_tres_categorias_e_varias_linhas(estoque):
     resposta = enviar(dados)
 
     assert resposta.status_code == 200
-    assert resposta.json() == {"destino": "/estoque?salvo=compra"}
+    assert resposta.json() == {"destino": "/compras?salvo=compra"}
     (gravada,) = estoque.compras.values()
     c = gravada.compra
     assert (c.data_compra, c.local_tipo, c.local_nome) == (date(2026, 9, 10), "mercado_livre", None)
@@ -179,15 +183,13 @@ def test_compra_com_as_tres_categorias_e_varias_linhas(estoque):
     assert len(estoque.filamentos) == 2 and len(estoque.itens) == 3
     preto, branco = estoque.filamentos.values()
     assert preto.peso_g == Decimal("3000")
-    assert branco.peso_g == Decimal("1501.0")
-    assert branco.custo_kg == Decimal("100.00") * 1000 / Decimal("750.5")
+    assert branco.peso_g == Decimal("1000")
+    assert branco.custo_kg == Decimal("100.00") * 1000 / Decimal("500")
 
     html = client.get(resposta.json()["destino"]).text
     assert "Compra registrada. Os itens já estão no estoque." in html
-    assert "4.501 g" in html  # peso disponível total dos filamentos
-    assert "R$ 89,90" in html and "R$ 133,24" in html  # custo/kg de cada lote
-    assert "R$ 0,35" in html and "R$ 3,33" in html and "R$ 3,50" in html  # custo unitário
-    assert "10/09/2026" in html
+    assert "10/09/2026" in html and 'id="compras-quantidade"' in html
+    assert "rolos" in html and "un · " in html  # a compra aparece na lista de Compras
 
 
 def test_texto_sem_espacos_extras_e_data_iso(estoque):
@@ -278,30 +280,28 @@ def test_validacao_da_data(estoque, campo, valor, mensagem):
 @pytest.mark.parametrize(
     ("campo", "valor", "mensagem"),
     [
-        ("quantidade", "", "Informe a quantidade de rolos."),
+        ("quantidade", "", "Informe a quantidade."),
         ("quantidade", "0", "A quantidade deve ser maior que zero."),
         ("quantidade", "-1", "Use um número inteiro."),
         ("quantidade", "1,5", "Use um número inteiro."),
         ("quantidade", "²", "Use um número inteiro."),
-        ("quantidade", "10000", "Quantidade alta demais."),
+        ("quantidade", "6", "Escolha de 1 a 5 rolos"),
+        ("quantidade", "10000", "Escolha de 1 a 5 rolos"),
         ("cor", "", "Informe a cor."),
         ("cor", "x" * 61, "Use no máximo 60 caracteres."),
-        ("material", "  ", "Informe o material."),
+        ("material", "", "Escolha o material."),
+        ("material", "ABS", "Escolha o material."),
+        ("material", "pla", "Escolha o material."),
         ("tipo", "", "Escolha o tipo."),
         ("tipo", "Sólido", "Escolha o tipo."),
         ("marca", "", "Informe a marca."),
-        ("peso_rolo", "", "Informe o peso por rolo."),
-        ("peso_rolo", "0", "O peso deve ser maior que zero."),
-        ("peso_rolo", "0,00", "O peso deve ser maior que zero."),
-        ("peso_rolo", "-5", "O peso deve ser maior que zero."),
-        ("peso_rolo", "1,555", "Use só números, com até 2 casas decimais"),
-        ("peso_rolo", "1.000,5", "Use só números, com até 2 casas decimais"),
-        ("peso_rolo", "123456", "Use só números, com até 2 casas decimais"),
-        ("valor_unitario", "", "Informe o valor unitário por rolo."),
-        ("valor_unitario", "R$ -0,01", "O valor não pode ser negativo."),
-        ("valor_unitario", "dez reais", "Valor inválido."),
-        ("valor_unitario", "10000000", "Valor alto demais."),
-        ("valor_unitario", "1.234", "Use no máximo 2 casas decimais."),
+        ("peso_rolo", "", "Escolha o peso."),
+        ("peso_rolo", "0", "Escolha um dos pesos da lista."),
+        ("peso_rolo", "-5", "Escolha um dos pesos da lista."),
+        ("peso_rolo", "750", "Escolha um dos pesos da lista."),
+        ("peso_rolo", "1.000", "Escolha um dos pesos da lista."),
+        ("peso_rolo", "500,5", "Escolha um dos pesos da lista."),
+        ("peso_rolo", "2000", "Escolha um dos pesos da lista."),
     ],
 )
 def test_validacao_do_filamento(estoque, campo, valor, mensagem):
@@ -411,11 +411,11 @@ def test_custo_por_kg_com_peso_decimal():
 
 
 def test_validar_compra_monta_os_itens_em_decimal():
-    dados = compra(filamento(0, peso_rolo="1000,25", valor_unitario="R$ 1.234,56"))
+    dados = compra(filamento(0, peso_rolo="500", valor_unitario="R$ 1.234,56"))
     resultado = validar_compra(dados)
     ((linha, foto),) = resultado.itens
     assert not resultado.erros and foto is None
-    assert linha.peso_rolo_g == Decimal("1000.25")
+    assert linha.peso_rolo_g == Decimal("500")
     assert linha.valor_unitario == Decimal("1234.56")
     assert isinstance(linha.quantidade, int)
 
@@ -584,6 +584,7 @@ def test_repositorio_converte_a_listagem():
                 "peso_disponivel_g": "2251.50",
                 "data_compra": "2026-09-01",
                 "peso_rolo_g": "750.50",
+                "peso_comprado_g": "1501.00",
                 "valor_unitario": "100.00",
             }
         ],
@@ -606,6 +607,55 @@ def test_repositorio_converte_a_listagem():
     assert f.custo_kg == Decimal("100.00") * 1000 / Decimal("750.50")
     (i,) = estoque.itens
     assert i.custo_unitario == Decimal("10.00") / 3
+
+
+def test_repositorio_converte_listar_compras():
+    dados = {
+        "total_gasto": "493.70",
+        "quantidade": 2,
+        "compras": [
+            {
+                "id": 2,
+                "data_compra": "2026-09-20",
+                "local_tipo": "loja_fisica",
+                "local_nome": "Papelaria",
+                "frete": "12.50",
+                "total": "13.50",
+                "itens": [
+                    {
+                        "ordem": 1,
+                        "categoria": "acessorio",
+                        "quantidade": 7,
+                        "cor": None,
+                        "material": None,
+                        "tipo": None,
+                        "marca": None,
+                        "peso_rolo_g": None,
+                        "nome": "Argola",
+                        "imagem_caminho": None,
+                    }
+                ],
+            }
+        ],
+    }
+    cliente = _ClienteFalso(dados)
+
+    compras = RepositorioEstoqueSupabase(cliente).listar_compras()
+
+    assert cliente.chamadas == [("listar_compras", {})]
+    assert (compras.total_gasto, compras.quantidade) == (Decimal("493.70"), 2)
+    (c,) = compras.recentes
+    assert (c.data_compra, c.frete, c.total) == (
+        date(2026, 9, 20),
+        Decimal("12.50"),
+        Decimal("13.50"),
+    )
+    assert (c.itens[0].nome, c.itens[0].peso_rolo_g) == ("Argola", None)
+
+
+def test_repositorio_listar_compras_com_resposta_inesperada_falha():
+    with pytest.raises(FalhaNoEstoque):
+        RepositorioEstoqueSupabase(_ClienteFalso({"filamentos": []})).listar_compras()
 
 
 def test_repositorio_envia_a_compra_com_numeros_como_texto():
@@ -650,6 +700,7 @@ def test_repositorio_envia_a_compra_com_numeros_como_texto():
         "Papelaria",
         2,
     )
+    assert p["p_frete"] == "0"  # sem frete informado
     fil, ace = p["p_itens"]
     assert (fil["peso_rolo_g"], fil["valor_unitario"], fil["valor_total"]) == (
         "750.5",
@@ -757,3 +808,175 @@ def test_repositorio_envia_fotos_ao_bucket_privado_sem_sobrescrever():
     with pytest.raises(FalhaNoEstoque) as erro:
         recusado.enviar_imagem("compras/1/itens/1/x.png", PNG, "image/png")
     assert erro.value.incerta is False
+
+
+# ---------- Local de compra, frete e totais ----------
+
+
+def test_locais_na_ordem_pedida():
+    assert list(LOCAIS.values()) == [
+        "Mercado Livre",
+        "Shopee",
+        "AliExpress",
+        "Loja Física",
+        "Outro",
+    ]
+
+
+def test_frete_vazio_vale_zero_e_e_gravado_na_compra(estoque):
+    resposta = enviar(compra(item(0, "embalagem")))
+
+    assert resposta.status_code == 200
+    (gravada,) = estoque.compras.values()
+    assert gravada.compra.frete == Decimal("0")
+
+
+@pytest.mark.parametrize(
+    ("texto", "esperado"),
+    [("R$ 12,50", "12.50"), ("0", "0"), ("R$ 0,00", "0"), ("1.234,56", "1234.56")],
+)
+def test_frete_valido_vai_para_a_compra(estoque, texto, esperado):
+    resposta = enviar(compra(item(0, "embalagem"), frete=texto))
+
+    assert resposta.status_code == 200
+    (gravada,) = estoque.compras.values()
+    assert gravada.compra.frete == Decimal(esperado)
+
+
+@pytest.mark.parametrize(
+    ("texto", "mensagem"),
+    [
+        ("-1", "O valor não pode ser negativo."),
+        ("R$ -5,00", "O valor não pode ser negativo."),
+        ("abc", "Valor inválido."),
+        ("1,005", "Use no máximo 2 casas decimais."),
+        ("99999999,00", "Valor alto demais."),
+    ],
+)
+def test_frete_invalido_e_recusado_sem_gravar(estoque, texto, mensagem):
+    resposta = enviar(compra(item(0, "embalagem"), frete=texto))
+
+    assert resposta.status_code == 422
+    assert resposta.json()["campos"]["frete"] == mensagem
+    assert nada_gravado(estoque)
+
+
+def test_subtotal_e_total_com_decimal_sem_arredondar_etapas():
+    c = validar_compra(
+        compra(
+            filamento(0, quantidade="3", valor_unitario="R$ 0,10"),
+            item(1, "acessorio", valor_total="R$ 0,20"),
+            frete="R$ 0,05",
+        )
+    )
+
+    assert not c.erros
+    subtotal = subtotal_itens([i for i, _ in c.itens])
+    assert subtotal == Decimal("0.50")  # 3 x 0,10 + 0,20, sem erro de ponto flutuante
+    assert c.frete == Decimal("0.05")
+    assert total_da_compra(subtotal, c.frete) == Decimal("0.55")
+
+
+def test_frete_nao_muda_o_custo_dos_lotes(estoque):
+    enviar(
+        compra(
+            filamento(0, quantidade="2", peso_rolo="1000", valor_unitario="R$ 100,00"),
+            frete="R$ 50,00",
+        )
+    )
+
+    (lote,) = estoque.filamentos.values()
+    assert lote.valor_unitario == Decimal("100.00")  # o frete não é distribuído nos lotes
+
+
+# ---------- Listas do filamento e cores já salvas ----------
+
+
+@pytest.mark.parametrize("quantidade", ["1", "2", "3", "4", "5"])
+@pytest.mark.parametrize("material", ["PLA", "PETG", "TPU"])
+@pytest.mark.parametrize("peso", ["250", "500", "1000"])
+def test_opcoes_validas_do_filamento(estoque, quantidade, material, peso):
+    resposta = enviar(
+        compra(filamento(0, quantidade=quantidade, material=material, peso_rolo=peso))
+    )
+
+    assert resposta.status_code == 200
+    (lote,) = estoque.filamentos.values()
+    assert lote.peso_g == int(quantidade) * Decimal(peso) and lote.material == material
+
+
+def test_acessorios_e_embalagens_nao_tem_limite_de_quantidade_de_filamento(estoque):
+    resposta = enviar(
+        compra(
+            item(0, "acessorio", quantidade="999999"),
+            item(1, "embalagem", quantidade="500"),
+        )
+    )
+
+    assert resposta.status_code == 200
+
+
+def test_varias_linhas_de_filamento_sao_independentes(estoque):
+    resposta = enviar(
+        compra(
+            filamento(0, quantidade="5", cor="Preto", peso_rolo="1000"),
+            filamento(1, quantidade="5", cor="Preto", peso_rolo="250"),
+            filamento(2, quantidade="1", cor="Azul", material="TPU", peso_rolo="500"),
+        ),
+        fotos={0: ("a.png", PNG), 2: ("c.png", PNG)},
+    )
+
+    assert resposta.status_code == 200
+    pesos = sorted(f.peso_g for f in estoque.filamentos.values())
+    assert pesos == [500, 1250, 5000]
+    assert sorted(estoque.imagens) and len(estoque.imagens) == 2  # só as linhas com foto
+
+
+def test_cores_conhecidas_sem_repeticao_por_espaco_ou_caixa():
+    cores = ["Preto", "preto", " PRETO ", "Azul  Petróleo", "azul petróleo", ""]
+
+    assert cores_conhecidas(cores) == ["Azul Petróleo", "Preto"]
+
+
+def test_cores_conhecidas_usa_a_grafia_mais_frequente():
+    assert cores_conhecidas(["preto", "Preto", "Preto", "Branco"]) == ["Branco", "Preto"]
+
+
+def test_cor_digitada_reaproveita_a_grafia_ja_salva():
+    c = validar_compra(compra(filamento(0, cor="  preto ")), cores=["Preto"])
+
+    assert not c.erros
+    assert c.itens[0][0].cor == "Preto"
+
+
+def test_cor_nova_e_aceita_como_digitada():
+    c = validar_compra(compra(filamento(0, cor="Verde Musgo")), cores=["Preto"])
+
+    assert c.itens[0][0].cor == "Verde Musgo"
+
+
+def test_rota_usa_as_cores_gravadas_e_cor_nova_so_existe_depois_de_salvar(estoque):
+    enviar(compra(filamento(0, cor="Preto")))
+    html = client.get("/compras").text
+    assert '<option value="Preto">' in html and html.count('<option value="Preto">') == 1
+
+    enviar(compra(filamento(0, cor="  PRETO "), filamento(1, cor="Verde")))
+    assert sorted(f.cor for f in estoque.filamentos.values()) == ["Preto", "Preto", "Verde"]
+    assert html.count('<option value="Verde">') == 0  # ainda não estava salva
+
+
+def test_compra_com_erro_nao_salva_cores_novas(estoque):
+    resposta = enviar(compra(filamento(0, cor="Rosa Choque", material="ABS")))
+
+    assert resposta.status_code == 422
+    assert nada_gravado(estoque)
+    assert "Rosa Choque" not in client.get("/compras").text
+
+
+def test_sugestoes_de_cor_vem_do_banco_e_nao_do_navegador(estoque):
+    enviar(compra(filamento(0, cor="Azul Petróleo"), filamento(1, cor="azul  petróleo")))
+
+    html = client.get("/compras").text
+    assert html.count('<datalist id="compra-cores">') == 1
+    assert html.count('<option value="Azul Petróleo">') == 1
+    assert 'list="compra-cores"' in html

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Estoque · FormaHub 2.0{% endblock %}
+
+{% macro foto(g, fotos) %}
+{% if g.imagem_caminho and g.imagem_caminho in fotos %}
+<a href="{{ fotos[g.imagem_caminho] }}" target="_blank" rel="noopener noreferrer"><img class="estoque-foto" src="{{ fotos[g.imagem_caminho] }}" alt="Foto de referência" width="56" height="56" loading="lazy"></a>
+{% else %}
+<span class="estoque-sem-foto">Sem foto</span>
+{% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="estoque estoque-tela">
+
+<div class="pagina-topo">
+  <div>
+    <h1>Estoque</h1>
+    <p>Saldo atual dos insumos. As entradas vêm das compras registradas em <a href="/compras">Compras</a>.</p>
+  </div>
+</div>
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+<a class="botao botao-secundario" href="/estoque">Tentar novamente</a>
+{% else %}
+
+<nav class="estoque-categorias" aria-label="Categoria do estoque">
+  {% for codigo, nome in categorias.items() %}
+  <a class="estoque-categoria" href="/estoque?categoria={{ codigo }}"{% if codigo == categoria %} aria-current="true"{% endif %}>
+    <svg class="estoque-categoria-icone" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {% if codigo == "filamento" %}<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>
+      {% elif codigo == "acessorios" %}<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.4 2.4-2.6-.6-.6-2.6Z"/>
+      {% else %}<path d="M12 3 3 7.5v9L12 21l9-4.5v-9Z M3 7.5l9 4.5 9-4.5 M12 12v9"/>{% endif %}
+    </svg>
+    <span>{{ nome }}</span>
+  </a>
+  {% endfor %}
+</nav>
+
+{% if categoria == "filamento" %}
+<section class="compras-resumo estoque-cards" aria-label="Resumo de filamentos">
+  <div class="compras-card">
+    <p class="compras-card-rotulo">Peso total</p>
+    <p class="compras-card-valor">{{ cards.peso_total | peso }}</p>
+    <p class="compras-card-dica">Todos os filamentos, inclusive TPU</p>
+  </div>
+  <div class="compras-card">
+    <p class="compras-card-rotulo">Rolos disponíveis</p>
+    <p class="compras-card-valor">{{ cards.rolos_total | numero }}</p>
+    {% if cards.rolos_por_material %}<p class="compras-card-dica">{% for nome, rolos in cards.rolos_por_material %}{{ nome }}: {{ rolos | numero }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  </div>
+  {% for m in cards.medias %}
+  <div class="compras-card{% if m.situacao == "acima" %} compras-card-alerta{% elif m.situacao == "abaixo" %} compras-card-ok{% endif %}">
+    <p class="compras-card-rotulo">Custo/kg {{ m.nome | replace("PLA Multicolor", "Multicolor") }}</p>
+    <p class="compras-card-valor">{{ m.custo | custo }}</p>
+    {% if m.situacao %}<p class="compras-card-dica" role="status">{{ m.diferenca | custo }} {{ m.situacao }} do custo/kg em Custos</p>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="secao" aria-labelledby="titulo-lista">
+  <h2 id="titulo-lista">{{ categorias[categoria] }}</h2>
+  {% if not grupos %}
+  <p class="compras-vazio">Nada em estoque. Registre uma compra para dar entrada.</p>
+  {% elif categoria == "filamento" %}
+  <table class="estoque-tabela estoque-tabela-itens">
+    <thead><tr><th scope="col">Foto</th><th scope="col">Quantidade (rolos)</th><th scope="col">Material</th><th scope="col">Cor</th><th scope="col">Tipo</th><th scope="col">Peso (g)</th><th scope="col">Custo médio por kg</th></tr></thead>
+    <tbody>
+      {% for g in grupos %}
+      <tr>
+        <td class="estoque-foto-celula">{{ foto(g, fotos) }}</td>
+        <td data-rotulo="Quantidade (rolos)" class="numero">{{ g.rolos | numero }} {{ "rolo" if g.rolos <= 1 else "rolos" }}</td>
+        <td data-rotulo="Material">{{ g.material }}</td>
+        <td data-rotulo="Cor">{{ g.cor }}</td>
+        <td data-rotulo="Tipo">{{ g.tipo | tipo_filamento }}</td>
+        <td data-rotulo="Peso (g)" class="numero">{{ g.peso_g | peso }} <small>(rolo de {{ g.peso_rolo_g | peso }})</small></td>
+        <td data-rotulo="Custo médio por kg" class="numero">{{ g.custo_kg | custo }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <table class="estoque-tabela estoque-tabela-itens">
+    <thead><tr><th scope="col">Foto</th><th scope="col">Item</th><th scope="col">Quantidade</th><th scope="col">Custo médio por unidade</th></tr></thead>
+    <tbody>
+      {% for g in grupos %}
+      <tr>
+        <td class="estoque-foto-celula">{{ foto(g, fotos) }}</td>
+        <td data-rotulo="Item">{{ g.nome }}</td>
+        <td data-rotulo="Quantidade" class="numero">{{ g.quantidade | unidades }}</td>
+        <td data-rotulo="Custo médio por unidade" class="numero">{{ g.custo_unitario | custo }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endif %}
+</div>
+{% endblock %}

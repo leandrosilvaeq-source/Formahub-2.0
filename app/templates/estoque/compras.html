@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Compras · FormaHub 2.0{% endblock %}
+
+{% block content %}
+<div class="estoque compras">
+
+<div class="pagina-topo">
+  <div>
+    <h1>Compras</h1>
+    <p>Histórico das compras de insumos. Toda entrada no estoque é feita por uma compra.</p>
+  </div>
+  {% if not erro %}
+  <div class="pagina-topo-acoes">
+    <button type="button" class="botao botao-primario" data-abrir-compra="filamento" aria-haspopup="dialog">Registrar Compra</button>
+  </div>
+  {% endif %}
+</div>
+
+{% if sucesso %}
+<div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>
+{% endif %}
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+<a class="botao botao-secundario" href="/compras">Tentar novamente</a>
+{% else %}
+
+<section class="compras-resumo" aria-label="Resumo das compras">
+  <div class="compras-card">
+    <p class="compras-card-rotulo">Valor total gasto</p>
+    <p class="compras-card-valor" id="compras-total">{{ resumo.total_gasto | brl }}</p>
+    <p class="compras-card-dica">Itens + frete de todas as compras</p>
+  </div>
+  <div class="compras-card">
+    <p class="compras-card-rotulo">Número de compras</p>
+    <p class="compras-card-valor" id="compras-quantidade">{{ resumo.quantidade }}</p>
+    <p class="compras-card-dica">Desde o início</p>
+  </div>
+</section>
+
+<section class="secao" id="ultimas-compras" aria-labelledby="titulo-ultimas-compras">
+  <h2 id="titulo-ultimas-compras">Últimas compras</h2>
+  {% if not ultimas %}
+  <p class="compras-vazio">Nenhuma compra registrada</p>
+  {% else %}
+  <ul class="compras-lista">
+    {% for c in ultimas %}
+    <li class="compra-registro">
+      <div class="compra-registro-cabecalho">
+        <div>
+          <p class="compra-registro-data"><time datetime="{{ c.data.isoformat() }}">{{ c.data | data_compra }}</time></p>
+          <p class="compra-registro-local">{{ c.local }}</p>
+        </div>
+        <p class="compra-registro-total">{{ c.total | brl }}{% if c.frete %}<span class="compra-registro-frete">inclui frete de {{ c.frete | brl }}</span>{% endif %}</p>
+      </div>
+      <ul class="compra-registro-itens">
+        {% for descricao in c.itens %}<li>{{ descricao }}</li>{% endfor %}
+      </ul>
+      {% if c.fotos %}
+      <ul class="compra-registro-fotos" aria-label="Fotos de referência">
+        {% for foto in c.fotos %}
+        <li><a href="{{ foto.url }}" target="_blank" rel="noopener noreferrer"><img src="{{ foto.url }}" alt="Foto de referência: {{ foto.descricao }}" width="64" height="64" loading="lazy"></a></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="compra-registro-sem-foto">Sem foto de referência</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% include "estoque/_compra.html" %}
+{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if not erro %}
+<script src="{{ url_for('static', path='js/imagem-referencia.js') }}"></script>
+<script src="{{ url_for('static', path='js/estoque-compra.js') }}"></script>
+{% endif %}
+{% endblock %}

@@ -1,4 +1,4 @@
-// Tela Estoque: janela Registrar Compra (abrir, linhas dinâmicas, máscaras, cálculos e envio).
+// Tela Compras: janela Registrar Compra (abrir, linhas dinâmicas, máscaras, cálculos e envio).
 //
 // Os cálculos da tela são só uma prévia (valores inteiros em centavos e centigramas, para não
 // acumular erro); o servidor valida e calcula tudo de novo com Decimal.
@@ -13,12 +13,15 @@
 
   const form = document.getElementById("form-compra");
   const lista = document.getElementById("compra-itens");
-  const vazio = document.getElementById("compra-itens-vazio");
   const alerta = document.getElementById("compra-alerta");
   const corpo = janela.querySelector(".compra-corpo");
   const campoData = document.getElementById("compra-data");
   const caixaNome = document.getElementById("campo-local_nome");
   const campoNome = document.getElementById("compra-local-nome");
+  const campoFrete = document.getElementById("compra-frete");
+  const saidaSubtotal = document.getElementById("compra-subtotal");
+  const saidaFrete = document.getElementById("compra-total-frete");
+  const saidaTotal = document.getElementById("compra-total");
   const botaoSalvar = form.querySelector('button[type="submit"]');
   const TEXTO_SALVAR = botaoSalvar.textContent;
 
@@ -45,14 +48,6 @@
 
   function digitos(texto) {
     return String(texto).replace(/\D/g, "");
-  }
-
-  // "01102026" -> "01/10/2026", inserindo as barras enquanto digita (ou ao colar).
-  function mascaraData(texto) {
-    const d = digitos(texto).slice(0, 8);
-    if (d.length <= 2) return d;
-    if (d.length <= 4) return d.slice(0, 2) + "/" + d.slice(2);
-    return d.slice(0, 2) + "/" + d.slice(2, 4) + "/" + d.slice(4);
   }
 
   // Centavos (inteiro) -> "R$ 1.234,56".
@@ -105,44 +100,79 @@
     return el ? el.value : "";
   }
 
-  function mostrar(linha, calculo, texto) {
-    const el = linha.querySelector('[data-calculo="' + calculo + '"]');
-    if (el) el.textContent = texto;
-  }
-
-  function recalcular(linha) {
-    const qtd = Number(digitos(valorDe(linha, "quantidade"))) || 0;
-    if (linha.dataset.categoria === "filamento") {
-      const peso = centigramas(valorDe(linha, "peso_rolo"));
-      const valor = centavos(valorDe(linha, "valor_unitario"));
-      mostrar(linha, "peso_total", qtd && peso ? gramas(qtd * peso) : "—");
-      mostrar(linha, "valor_total", qtd && valor !== null ? formatarCentavos(qtd * valor) : "—");
-      // custo/kg = valor unitário x 1000 / peso por rolo (em centavos e centigramas)
-      mostrar(linha, "custo", peso && valor !== null ? formatarCentavos((valor * 100000) / peso) : "—");
-    } else {
-      const total = centavos(valorDe(linha, "valor_total"));
-      mostrar(linha, "custo", qtd && total !== null ? formatarCentavos(total / qtd) : "—");
-    }
+  // Resumos das seções (sem frete) e totais da compra. Subtotal = soma dos valores das linhas;
+  // total = subtotal + frete (frete vazio vale zero). Linhas incompletas contam o que já tem valor.
+  function atualizarTotais() {
+    const secoes = {
+      filamento: { pesoCg: 0, valor: 0 },
+      acessorio: { quantidade: 0, valor: 0 },
+      embalagem: { quantidade: 0, valor: 0 },
+    };
+    linhas().forEach(function (linha) {
+      const resumo = secoes[linha.dataset.categoria];
+      const qtd = Number(digitos(valorDe(linha, "quantidade"))) || 0;
+      if (linha.dataset.categoria === "filamento") {
+        resumo.pesoCg += qtd * (centigramas(valorDe(linha, "peso_rolo")) || 0);
+        resumo.valor += qtd * (centavos(valorDe(linha, "valor_unitario")) || 0);
+      } else {
+        resumo.quantidade += qtd;
+        resumo.valor += centavos(valorDe(linha, "valor_total")) || 0;
+      }
+    });
+    Object.keys(secoes).forEach(function (categoria) {
+      const caixa = lista.querySelector('[data-lista="' + categoria + '"]');
+      const resumo = secoes[categoria];
+      const preencher = function (nome, texto) {
+        const el = caixa.querySelector('[data-resumo="' + nome + '"]');
+        if (el) el.textContent = texto;
+      };
+      if (categoria === "filamento") preencher("peso", gramas(resumo.pesoCg));
+      else preencher("quantidade", resumo.quantidade.toLocaleString("pt-BR") + " un");
+      preencher("valor", formatarCentavos(resumo.valor));
+    });
+    const subtotal = secoes.filamento.valor + secoes.acessorio.valor + secoes.embalagem.valor;
+    const frete = centavos(campoFrete.value) || 0;
+    saidaSubtotal.textContent = formatarCentavos(subtotal);
+    saidaFrete.textContent = formatarCentavos(frete);
+    saidaTotal.textContent = formatarCentavos(subtotal + frete);
   }
 
   // ---------- Linhas ----------
 
   function linhas() {
-    return Array.prototype.slice.call(lista.children);
+    // Na ordem da tela (Filamentos, Acessórios, Embalagens): é a posição enviada ao servidor.
+    return Array.prototype.slice.call(lista.querySelectorAll(".compra-item"));
   }
 
+  // Cada linha é numerada dentro da sua seção (só no aria-label: as linhas não têm título);
+  // data-pos é a posição na tela.
   function numerar() {
+    const contagem = {};
     linhas().forEach(function (linha, i) {
-      const nome = NOMES[linha.dataset.categoria];
-      linha.querySelector(".compra-item-titulo").textContent = (i + 1) + ". " + nome;
-      linha.querySelector(".compra-item-remover").setAttribute("aria-label", "Remover item " + (i + 1) + " (" + nome + ")");
+      const categoria = linha.dataset.categoria;
+      const n = (contagem[categoria] = (contagem[categoria] || 0) + 1);
+      const nome = NOMES[categoria];
+      linha.dataset.pos = String(i + 1);
+      linha.setAttribute("aria-label", nome + " " + n);
+      const remover = linha.querySelector(".compra-item-remover");
+      remover.setAttribute("aria-label", "Remover " + nome.toLowerCase() + " " + n);
+      remover.title = "Remover " + nome.toLowerCase() + " " + n;
     });
-    vazio.hidden = lista.children.length > 0;
+    // Seção sem linhas mostra o aviso; a lista (cabeçalho, linhas e resumo) só aparece com linhas.
+    lista.querySelectorAll(".compra-secao").forEach(function (secao) {
+      const vazia = !secao.querySelector(".compra-item");
+      secao.querySelector(".compra-secao-vazio").hidden = !vazia;
+      const caixa = secao.querySelector(".compra-lista");
+      if (caixa) caixa.hidden = vazia;
+    });
+    atualizarTotais();
   }
 
+  // `categoria`: seção que recebe a nova linha (sempre dentro da seção existente, no fim dela).
   function adicionar(categoria, focar) {
     const modelo = document.getElementById("modelo-" + categoria);
-    if (!modelo) return;
+    const destino = lista.querySelector('[data-linhas="' + categoria + '"]');
+    if (!modelo || !destino) return;
     const fragmento = modelo.content.cloneNode(true);
     const linha = fragmento.querySelector(".compra-item");
     const n = ++sequencia;
@@ -152,10 +182,9 @@
     linha.querySelectorAll("label[data-para]").forEach(function (rotulo) {
       rotulo.htmlFor = "compra-" + n + "-" + rotulo.dataset.para;
     });
-    lista.appendChild(fragmento);
+    destino.appendChild(fragmento);
     limparErro(document.getElementById("campo-itens"));
     numerar();
-    recalcular(linha);
     if (focar) linha.querySelector('[data-campo]:not([type="hidden"])').focus();
   }
 
@@ -163,16 +192,17 @@
     botao.addEventListener("click", function () { adicionar(botao.dataset.adicionar, true); });
   });
 
-  // Remover uma linha ainda não salva; o foco vai para a linha vizinha (ou para "Adicionar").
+  // Remover uma linha ainda não salva; o foco vai para a vizinha da mesma seção (ou para o
+  // "+ Adicionar" da seção).
   lista.addEventListener("click", function (evento) {
     const botao = evento.target.closest(".compra-item-remover");
     if (!botao) return;
     const linha = botao.closest(".compra-item");
     const vizinha = linha.nextElementSibling || linha.previousElementSibling;
+    const adicionarDaSecao = linha.closest(".compra-secao").querySelector("[data-adicionar]");
     linha.remove();
     numerar();
-    const destino = vizinha ? vizinha.querySelector(".compra-item-remover") : form.querySelector("[data-adicionar]");
-    destino.focus();
+    (vizinha ? vizinha.querySelector(".compra-item-remover") : adicionarDaSecao).focus();
   });
 
   // ---------- Local de compra ----------
@@ -228,7 +258,7 @@
   function localizar(chave) {
     const doItem = /^item_(\d+)_([a-z_]+)$/.exec(chave);
     if (doItem) {
-      const linha = lista.children[Number(doItem[1])];
+      const linha = linhas()[Number(doItem[1])];
       if (!linha) return [null, null];
       if (doItem[2] === "foto") {
         const caixa = linha.querySelector(".compra-item-foto");
@@ -272,15 +302,17 @@
 
   form.addEventListener("input", function (evento) {
     const alvo = evento.target;
-    if (alvo === campoData) {
-      alvo.value = mascaraData(alvo.value);
-    } else if (alvo.dataset && MASCARAS[alvo.dataset.campo]) {
+    if (alvo === campoFrete) {
+      alvo.value = mascaraMoeda(alvo.value);
+      atualizarTotais();
+    } else if (alvo.tagName !== "SELECT" && alvo.dataset && MASCARAS[alvo.dataset.campo]) {
       alvo.value = MASCARAS[alvo.dataset.campo](alvo.value);
     }
     limparErro(alvo.closest(".tem-erro"));
     const linha = alvo.closest(".compra-item");
-    if (linha) recalcular(linha);
+    if (linha) atualizarTotais();
   });
+
 
   form.addEventListener("change", function (evento) {
     const alvo = evento.target;
@@ -297,11 +329,21 @@
 
   function limpar() {
     form.reset();
-    lista.replaceChildren(); // libera as miniaturas (imagem-referencia.js observa a lista)
+    // Esvazia cada seção (libera as miniaturas: imagem-referencia.js observa a lista).
+    lista.querySelectorAll("[data-linhas]").forEach(function (secao) { secao.replaceChildren(); });
     limparErros();
     atualizarLocal();
     numerar();
     form.elements.chave_envio.value = novaChave();
+    campoData.value = hojeISO();
+  }
+
+  // Data de hoje (fuso local) no formato aaaa-mm-dd, o valor do campo de calendário.
+  function hojeISO() {
+    const agora = new Date();
+    const mes = String(agora.getMonth() + 1).padStart(2, "0");
+    const dia = String(agora.getDate()).padStart(2, "0");
+    return agora.getFullYear() + "-" + mes + "-" + dia;
   }
 
   function abrir(categoria, botao) {
