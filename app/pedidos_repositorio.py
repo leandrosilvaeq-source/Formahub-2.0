@@ -110,6 +110,7 @@ class PedidoResumo:
     imagem_caminho: str | None = None
     imagem_produto: str | None = None
     cancelado: bool = False
+    valor_total: Decimal | None = None  # None: banco ainda sem a migration do valor na listagem
 
 
 @dataclass(frozen=True)
@@ -358,6 +359,9 @@ class RepositorioPedidosSupabase:
                     imagem_produto=linha["imagem_produto"],
                     # .get: com o banco ainda sem a migration de cancelamento, a lista abre.
                     cancelado=bool(linha.get("cancelado", False)),
+                    valor_total=(
+                        Decimal(linha["valor_total"]) if linha.get("valor_total") else None
+                    ),
                 )
                 for linha in linhas or []
             ]

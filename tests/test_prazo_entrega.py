@@ -197,12 +197,12 @@ def test_detalhes_mostram_o_prazo(repo_pedidos):
     assert '<dt>Prazo de entrega</dt><dd><time datetime="2026-10-05">05/10/26</time></dd>' in html
 
 
-def test_listagem_de_pedidos_preserva_o_card_sem_prazo(repo_pedidos):
+def test_listagem_de_pedidos_mostra_o_prazo(repo_pedidos):
     novo_pedido(repo_pedidos, prazo_entrega=date(2026, 10, 5))
 
     html = client.get("/pedidos").text
 
-    assert "05/10/26" not in html and "Prazo" not in html
+    assert '<td><time datetime="2026-10-05">05/10/26</time></td>' in html
 
 
 # ---------- Migration do prazo (texto) ----------

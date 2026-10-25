@@ -58,7 +58,8 @@ def test_producao_usa_largura_propria_e_as_outras_telas_nao(repo_pedidos):
     pedido = novo_pedido(repo_pedidos)
 
     assert '<main class="container container-producao">' in client.get("/producao").text
-    for caminho in ("/pedidos", "/pedidos/novo", f"/pedidos/{pedido.id}", "/"):
+    assert '<main class="container container-pedidos">' in client.get("/pedidos").text
+    for caminho in ("/pedidos/novo", f"/pedidos/{pedido.id}", "/"):
         assert '<main class="container">' in client.get(caminho).text, caminho
 
 

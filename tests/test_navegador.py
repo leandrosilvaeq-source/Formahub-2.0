@@ -1443,6 +1443,45 @@ def test_listagem_sem_rolagem_horizontal_nem_cortes(pagina, servidor, repo_pedid
     assert alturas and min(alturas) >= 44
 
 
+def test_filtros_de_coluna_prazo_em_ordem_de_data_e_cliente(pagina, repo_pedidos):
+    from datetime import date
+
+    from tests.test_pedidos_consulta import novo_pedido
+
+    novo_pedido(repo_pedidos, cliente="Ana", prazo_entrega=date(2026, 10, 20))
+    novo_pedido(repo_pedidos, cliente="Bia", prazo_entrega=date(2026, 9, 30))
+    novo_pedido(repo_pedidos, cliente="Cris", prazo_entrega=date(2026, 10, 5))
+    pagina.tela(1280, 800)
+    pagina.abrir("/pedidos")
+    visiveis = (
+        "[...document.querySelectorAll('#tabela-pedidos tbody tr:not([hidden])')]"
+        ".map(l => l.dataset.cliente)"
+    )
+
+    def filtrar(chave, manter):
+        """Abre o filtro da coluna, desmarca tudo e marca só o valor `manter`."""
+        pagina.clicar(f'.filtro-botao[data-filtro="{chave}"]')
+        rotulos = pagina.js(
+            "[...document.querySelectorAll('.filtro-opcao span')].map(s => s.textContent)"
+        )
+        pagina.js("document.querySelector('.filtro-todos input').click()")
+        pagina.js(
+            "[...document.querySelectorAll('.filtro-opcao')]"
+            f".find(o => o.textContent === {json.dumps(manter)}).querySelector('input').click()"
+        )
+        pagina.js("document.body.click()")  # fecha o painel
+        return rotulos[1:]  # sem o "(Selecionar tudo)"
+
+    # Prazo: valores em ordem de data (não de dia), no mesmo formato da tabela.
+    assert filtrar("prazo", "05/10/26") == ["30/09/26", "05/10/26", "20/10/26"]
+    assert pagina.js(visiveis) == ["Cris"]
+
+    pagina.clicar('.filtro-botao[data-filtro="prazo"]')
+    pagina.clicar(".filtro-limpar")
+    assert sorted(filtrar("cliente", "Bia")) == ["Ana", "Bia", "Cris"]
+    assert pagina.js(visiveis) == ["Bia"]
+
+
 @pytest.mark.parametrize("largura", [360, 768, 1280])
 def test_listagem_vazia_responsiva(pagina, largura):
     pagina.tela(largura, 800)
@@ -2205,13 +2244,16 @@ def test_producao_usa_quase_toda_a_largura_e_as_outras_telas_nao(pagina, servido
     pagina.tela(2560, 900)
     pagina.abrir("/producao")
     main_2560 = pagina.js(largura_main)
+    pagina.abrir("/pedidos")
+    lista_2560 = pagina.js(largura_main)
     larguras = {}
-    for caminho in ("/pedidos", "/pedidos/novo", f"/pedidos/{pedido.id}"):
+    for caminho in ("/pedidos/novo", f"/pedidos/{pedido.id}"):
         pagina.abrir(caminho)
         larguras[caminho] = pagina.js(largura_main)
 
     assert quadro_1920 >= 1920 - 2 * 40  # quase toda a janela
     assert main_2560 == 1920  # largura máxima da Produção
+    assert lista_2560 == 1600  # a tabela de pedidos tem largura própria, menor
     assert all(valor <= 1080 for valor in larguras.values()), larguras
 
 

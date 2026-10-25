@@ -4,6 +4,7 @@ Nenhum teste acessa o Supabase; os pedidos são criados só no repositório em m
 """
 
 import re
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -71,17 +72,20 @@ def test_tabela_tem_as_colunas_na_ordem_pedida(repo_pedidos):
 
     html = client.get("/pedidos").text
 
-    # Cada título (exceto a foto) traz um botão de filtro; o texto do título fica no 1º <span>.
+    # Títulos com filtro trazem o texto no 1º <span> (Foto, Quantidade, Valor e Ações não filtram).
     cabecalho = re.findall(
-        r'<th scope="col">\s*(?:<span class="th-conteudo">\s*<span>)?([^<]*)', html
+        r'<th scope="col"[^>]*>\s*(?:<span class="th-conteudo">\s*<span>)?([^<]*)', html
     )
     assert cabecalho == [
         "Foto",
-        "Produto",
         "Cliente",
+        "Produto",
+        "Quantidade",
         "Pagamento",
+        "Valor Total",
+        "Prazo",
         "Status Pagamento",
-        "Status Produção",
+        "Status Entrega",
         "Observações",
         "Ações",
     ]
@@ -104,26 +108,51 @@ def test_linha_mostra_os_dados_do_pedido(repo_pedidos):
     html = resposta.text
     assert "<h1>Pedidos</h1>" in html
     assert '<a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>' in html
-    _foto, produto, cliente, pagamento, status_pag, status_prod, obs, _acoes = celulas(
-        html, "Cliente Teste"
-    )
-    assert '<span class="pedido-card-produtos">Caneca, Camiseta</span>' in produto
-    assert '<span class="pedido-card-unidades">13 unidades</span>' in produto
+    (
+        _foto,
+        cliente,
+        produto,
+        quantidade,
+        pagamento,
+        valor,
+        prazo,
+        status_pag,
+        status_prod,
+        obs,
+        _acoes,
+    ) = celulas(html, "Cliente Teste")
     assert f'href="/pedidos/{pedido.id}"' in cliente and "Cliente Teste" in cliente
+    assert '<span class="pedido-card-produtos">Caneca, Camiseta</span>' in produto
+    assert quantidade.strip() == "13"
     assert pagamento.strip() == "Cartão"
+    assert valor.strip() == "R$ 192,00"
+    assert '<time datetime="2026-10-05">05/10/26</time>' in prazo
     assert 'data-status="pago"' in status_pag and "Pago" in status_pag
     assert "Na Fila" in status_prod
     assert "Embalar para presente" in obs
     assert "Marise" not in card(html, "Cliente Teste")  # "Cadastrado por" saiu da lista
 
 
-def test_linha_nao_mostra_contato_data_entrega_nem_total(repo_pedidos):
+def test_linha_nao_mostra_contato_data_de_cadastro_nem_entrega(repo_pedidos):
     novo_pedido(repo_pedidos, tipo_entrega="retirada")
 
     c = card(client.get("/pedidos").text, "Cliente Teste")
 
-    for removido in ("(11) 98765-4321", "Contato", "01/10/2026", "Retirada", "R$ 132,00"):
+    for removido in ("(11) 98765-4321", "Contato", "01/10/2026", "Retirada"):
         assert removido not in c, removido
+
+
+def test_valor_total_ausente_aparece_como_traco(repo_pedidos, monkeypatch):
+    """Banco ainda sem a migration do valor na listagem: a coluna mostra um traço."""
+    novo_pedido(repo_pedidos)
+    listar = repo_pedidos.listar_pedidos
+    monkeypatch.setattr(
+        repo_pedidos,
+        "listar_pedidos",
+        lambda: [replace(p, valor_total=None) for p in listar()],
+    )
+
+    assert celulas(client.get("/pedidos").text, "Cliente Teste")[5].strip() == "—"
 
 
 @pytest.mark.parametrize(("status", "rotulo"), [("pendente", "Pendente"), ("pago", "Pago")])
@@ -236,15 +265,16 @@ def test_listagem_do_mais_recente_para_o_mais_antigo(repo_pedidos):
 
 @pytest.mark.parametrize(
     ("quantidades", "texto"),
-    [([11], "11 unidades"), ([1, 2, 3], "6 unidades"), ([1], "1 unidade")],
+    [([11], "11"), ([1, 2, 3], "6"), ([1], "1")],
 )
 def test_linha_soma_as_quantidades_e_lista_todos_os_produtos(repo_pedidos, quantidades, texto):
     itens = [item(n, f"Produto {n}", q, "1.00") for n, q in enumerate(quantidades, 1)]
     novo_pedido(repo_pedidos, itens=itens)
 
-    c = card(client.get("/pedidos").text, "Cliente Teste")
+    html = client.get("/pedidos").text
+    c = card(html, "Cliente Teste")
 
-    assert f'<span class="pedido-card-unidades">{texto}</span>' in c
+    assert celulas(html, "Cliente Teste")[3].strip() == texto
     nomes = ", ".join(f"Produto {n}" for n in range(1, len(quantidades) + 1))
     assert f'<span class="pedido-card-produtos">{nomes}</span>' in c
 

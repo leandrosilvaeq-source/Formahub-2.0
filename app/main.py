@@ -71,8 +71,19 @@ MENSAGEM_CONSULTA_INDISPONIVEL = (
     "Não foi possível carregar os pedidos agora. Tente novamente em instantes."
 )
 
+
+class ArquivosEstaticos(StaticFiles):
+    """CSS, JS e imagens: o navegador revalida a cada uso (304 se nada mudou), então uma
+    atualização do sistema aparece sem precisar limpar o cache."""
+
+    def file_response(self, *args, **kwargs):
+        resposta = super().file_response(*args, **kwargs)
+        resposta.headers["Cache-Control"] = "no-cache"
+        return resposta
+
+
 app = FastAPI(title="FormaHub 2.0")
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+app.mount("/static", ArquivosEstaticos(directory=BASE_DIR / "static"), name="static")
 app.include_router(rotas_auth)
 app.include_router(rotas_custos)
 app.include_router(rotas_estoque)

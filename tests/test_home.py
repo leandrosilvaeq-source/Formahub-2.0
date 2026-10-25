@@ -24,6 +24,15 @@ def test_css_e_servido():
     assert "--cor-primaria" in resposta.text
 
 
+def test_estaticos_sao_revalidados_para_atualizacoes_aparecerem():
+    resposta = client.get("/static/css/app.css")
+
+    assert resposta.headers["cache-control"] == "no-cache"
+    etag = resposta.headers["etag"]
+    revalidacao = client.get("/static/css/app.css", headers={"if-none-match": etag})
+    assert revalidacao.status_code == 304
+
+
 def test_cabecalho_exibe_logotipo_oficial():
     html = client.get("/").text
 

@@ -161,15 +161,21 @@
 
   function valorDaLinha(linha, chave) {
     const c = linha.cells;
-    if (chave === "produto") return texto(linha.querySelector(".pedido-card-produtos") || c[1]);
-    if (chave === "cliente") return texto(c[2]);
-    if (chave === "pagamento") return texto(c[3]);
+    // Colunas: 0 Foto, 1 Cliente, 2 Produto, 3 Quantidade, 4 Pagamento, 5 Valor Total, 6 Prazo,
+    // 7 Status Pagamento, 8 Status Entrega, 9 Observações, 10 Ações.
+    if (chave === "cliente") return texto(c[1]);
+    if (chave === "produto") return texto(c[2]);
+    if (chave === "pagamento") return texto(c[4]);
+    if (chave === "prazo") { // aaaa-mm-dd: a lista do filtro fica em ordem de data
+      const data = c[6].querySelector("time");
+      return data ? data.dateTime : "";
+    }
     if (chave === "status_pagamento") {
       const botao = linha.querySelector(".producao-pagamento");
       return botao ? botao.dataset.status : "";
     }
     if (chave === "etapa") return linha.dataset.etapa;
-    return texto(c[6]); // observacoes
+    return texto(c[9]); // observacoes
   }
 
   function aplicarFiltros() {
@@ -200,7 +206,16 @@
     linhas.forEach(function (linha) { vistos.add(valorDaLinha(linha, botao.dataset.filtro)); });
     return Array.from(vistos)
       .sort(function (a, b) { return a.localeCompare(b, "pt-BR", { sensitivity: "base" }); })
-      .map(function (v) { return { valor: v, rotulo: v || SEM_VALOR }; });
+      .map(function (v) { return { valor: v, rotulo: rotuloDoValor(botao.dataset.filtro, v) }; });
+  }
+
+  function rotuloDoValor(chave, valor) {
+    if (!valor) return SEM_VALOR;
+    if (chave === "prazo") { // 2026-10-05 -> 05/10/26 (como na tabela)
+      const p = valor.split("-");
+      return p[2] + "/" + p[1] + "/" + p[0].slice(2);
+    }
+    return valor;
   }
 
   function normalizar(t) {

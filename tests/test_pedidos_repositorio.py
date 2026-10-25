@@ -222,6 +222,17 @@ def test_listar_pedidos_converte_o_card():
     assert (resumo.imagem_caminho, resumo.imagem_produto) == ("pedidos/1/itens/2/x.png", "Caneca")
     assert resumo.criado_por_nome == "Leandro"
     assert resumo.prazo_entrega == date(2026, 10, 5)
+    assert resumo.valor_total is None  # banco ainda sem a migration do valor na listagem
+
+
+def test_listar_pedidos_converte_o_valor_total():
+    cliente = ClienteSimulado(
+        rpc={"listar_pedidos": [{**LINHA_LISTAGEM, "valor_total": "1234.50"}]}
+    )
+
+    (resumo,) = RepositorioPedidosSupabase(cliente).listar_pedidos()
+
+    assert resumo.valor_total == Decimal("1234.50")
 
 
 def test_listagem_no_formato_antigo_vira_falha_amigavel():
