@@ -19,7 +19,7 @@
 </div>
 
 {% if pedido.cancelado %}
-<div class="alerta alerta-erro" role="status">Pedido cancelado em <time datetime="{{ pedido.cancelado_em.isoformat(timespec='minutes') }}">{{ pedido.cancelado_em | data_hora }}</time>. Ele não aparece mais na Produção e não pode ser alterado.</div>
+<div class="alerta alerta-erro" role="status">Pedido cancelado em <time datetime="{{ pedido.cancelado_em.isoformat(timespec='minutes') }}">{{ pedido.cancelado_em | data_hora }}</time>. Ele não pode ser alterado.</div>
 {% endif %}
 
 {% if imagens_indisponiveis %}
@@ -83,6 +83,31 @@
     <div><dt>Unidades</dt><dd>{{ quantidade_total }}</dd></div>
     <div class="resumo-total"><dt>Total do pedido</dt><dd>{{ pedido.valor_total | brl }}</dd></div>
   </dl>
+</section>
+
+{% set etapa = "cancelado" if pedido.cancelado else pedido.etapa %}
+<section class="secao">
+  <h2>Andamento da produção</h2>
+  <dl class="detalhe-dados">
+    <div><dt>Status da entrega</dt><dd><span class="pedidos-etapa-final etapa-{{ etapa }}"><span class="etapa-ponto" aria-hidden="true"></span>{{ rotulos_etapa[etapa] }}</span></dd></div>
+  </dl>
+  <p class="detalhe-vazio">O status da entrega e do pagamento são alterados na lista de <a href="/pedidos">pedidos</a>.</p>
+  {% if card %}
+  {% set auditoria = texto_auditoria(card.comentario_atualizado_por_nome, card.comentario_atualizado_em) %}
+  <div class="producao-comentario" id="comentario-producao" data-pedido="{{ pedido.id }}" data-csrf="{{ csrf }}">
+    <div class="producao-comentario-titulo">
+      <label for="comentario-campo">Comentários da produção</label>
+    </div>
+    <textarea id="comentario-campo" class="campo-texto producao-comentario-campo" rows="3"
+      maxlength="{{ limite_comentario }}" data-salvo="{{ card.comentario_producao or '' }}"
+      aria-describedby="comentario-info">{{ card.comentario_producao or '' }}</textarea>
+    <div class="producao-comentario-rodape">
+      <p id="comentario-info" class="producao-comentario-info">{{ auditoria }}</p>
+      <button type="button" class="botao botao-secundario producao-salvar-comentario">Salvar comentário</button>
+    </div>
+    <div class="producao-comentario-mensagem" aria-live="polite"></div>
+  </div>
+  {% endif %}
 </section>
 
 <section class="secao">

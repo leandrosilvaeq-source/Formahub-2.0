@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -22,7 +23,6 @@ from app.estoque_rotas import router as rotas_estoque
 from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
     ESCOLHA_OBRIGATORIA,
-    ETAPAS_PRODUCAO,
     FILTROS_STATUS,
     FORMAS_ENTREGA,
     FORMAS_PAGAMENTO,
@@ -117,11 +117,6 @@ MODULOS = [
             {"url": "/pedidos", "texto": "Ver pedidos", "principal": True},
             {"url": "/pedidos/novo", "texto": "Novo pedido"},
         ],
-    },
-    {
-        "titulo": "Produção",
-        "descricao": "Quadro com as etapas de produção dos pedidos.",
-        "links": [{"url": "/producao", "texto": "Ver produção", "principal": True}],
     },
     {
         "titulo": "Custos",
@@ -276,7 +271,14 @@ def listar_pedidos(
         if etapas.get(p.id) in contagens:
             contagens[etapas[p.id]] += 1
     ativos = [p for p in todos if not p.cancelado]
-    pedidos = [p for p in todos if etapas.get(p.id) == status] if base["status"] else ativos
+    # Concluído = entregue e pago (a regra que tira o pedido do quadro); não é a etapa
+    # "Finalizado", que também inclui o entregue com pagamento pendente.
+    pendentes = [
+        p for p in ativos if not (etapas[p.id] == "entregue" and p.status_pagamento == "pago")
+    ]
+    pedidos = [p for p in todos if etapas.get(p.id) == status] if base["status"] else pendentes
+    # Mesmo conjunto do total (pedidos não cancelados); sem valor (banco antigo) não soma.
+    total_valor = sum((p.valor_total for p in ativos if p.valor_total is not None), Decimal(0))
 
     # No máximo uma foto por card (a de destaque, escolhida no banco), assinadas num só pedido
     # ao Storage. Se falhar, os cards aparecem sem foto, com um aviso discreto.
@@ -290,6 +292,8 @@ def listar_pedidos(
         "pedidos": pedidos,
         "imagens": imagens,
         "total": len(ativos),
+        "total_valor": total_valor,
+        "total_pendentes": len(pendentes),
         "contagens": contagens,
         "etapas": etapas,
         "rotulos_etapa": filtros,
@@ -325,8 +329,16 @@ def ver_pedido(
         imagens = repo.assinar_imagens(caminhos) if caminhos else {}
     except FalhaAoConsultar:
         imagens, imagens_indisponiveis = {}, True
+    # O comentário da produção vem do quadro (pedido concluído ou cancelado não está nele).
+    try:
+        card = next((c for c in repo.listar_producao() if c.id == pedido.id), None)
+    except FalhaAoConsultar:
+        card = None
     contexto = {
         "pedido": pedido,
+        "card": card,
+        "rotulos_etapa": dict(FILTROS_STATUS),
+        "limite_comentario": LIMITE_COMENTARIO,
         "imagens": imagens,
         "imagens_indisponiveis": imagens_indisponiveis,
         "csrf": request.state.csrf,
@@ -494,9 +506,6 @@ async def cancelar_pedido(
 
 # ---------- Produção ----------
 
-MENSAGEM_PRODUCAO_INDISPONIVEL = (
-    "Não foi possível carregar a produção agora. Tente novamente em instantes."
-)
 MOVIMENTO = {
     "conflito": (409, "Este pedido foi atualizado por outro usuário."),
     "invalido": (422, "Este movimento não é permitido para a etapa atual do pedido."),
@@ -505,38 +514,10 @@ MOVIMENTO = {
 }
 
 
-@app.get("/producao", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
-def producao(request: Request, repo: RepositorioPedidos | None = Depends(get_repositorio_pedidos)):
-    contexto = {
-        "colunas": [],
-        "imagens": {},
-        "total": 0,
-        "movimentos": MOVIMENTOS_ETAPA,
-        "alternancia_pagamento": ALTERNANCIA_PAGAMENTO,
-        "limite_comentario": LIMITE_COMENTARIO,
-        "erro": "",
-    }
-    try:
-        if repo is None:
-            raise FalhaAoConsultar
-        cards = repo.listar_producao()
-    except FalhaAoConsultar:
-        contexto["erro"] = MENSAGEM_PRODUCAO_INDISPONIVEL
-        return _pagina_sem_cache(request, "producao.html", contexto, status_code=503)
-
-    # No máximo uma foto por card, assinadas num só pedido ao Storage; se falhar, o quadro
-    # aparece sem fotos (com aviso discreto nos cards que teriam foto).
-    caminhos = [c.imagem_caminho for c in cards if c.imagem_caminho]
-    try:
-        contexto["imagens"] = repo.assinar_imagens(caminhos) if caminhos else {}
-    except FalhaAoConsultar:
-        contexto["imagens"] = {}
-    contexto["colunas"] = [
-        {"etapa": codigo, "titulo": titulo, "cards": [c for c in cards if c.etapa == codigo]}
-        for codigo, titulo in ETAPAS_PRODUCAO
-    ]
-    contexto["total"] = len(cards)
-    return _pagina_sem_cache(request, "producao.html", contexto)
+@app.get("/producao", dependencies=[Depends(exigir_usuario)])
+def producao():
+    """A tela de Produção foi descontinuada: o acompanhamento é feito em Pedidos."""
+    return RedirectResponse("/pedidos", status_code=307)
 
 
 def _resposta_movimento(motivo: str) -> JSONResponse:

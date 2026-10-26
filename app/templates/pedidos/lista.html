@@ -3,7 +3,7 @@
 {% block title %}Pedidos · FormaHub 2.0{% endblock %}
 {% block main_classe %} container-pedidos{% endblock %}
 
-{# Ícones do selo do pagamento (os mesmos da Produção): SVG inline. #}
+{# Ícones do selo do pagamento : SVG inline. #}
 {% macro icone_pagamento(codigo) -%}
 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
   {%- if codigo == "pago" %}<circle cx="12" cy="12" r="9"/><path d="m7.8 12.4 2.8 2.8 5.6-5.8"/>
@@ -31,7 +31,6 @@
 <div class="pagina-topo">
   <h1>Pedidos</h1>
   <div class="pagina-topo-acoes">
-    <a class="botao botao-secundario" href="/producao">Produção</a>
     <a class="botao botao-primario" href="/pedidos/novo">Novo pedido</a>
   </div>
 </div>
@@ -43,13 +42,14 @@
   <div class="pedidos-total">
     <span class="pedidos-total-rotulo">Total de Pedidos</span>
     <strong class="pedidos-total-valor">{{ total }}</strong>
+    <span class="pedidos-total-soma">{{ total_valor | brl }}</span>
   </div>
   <nav class="pedidos-filtro" aria-label="Filtrar por status">
     <a class="pedidos-filtro-item{% if not status %} ativo{% endif %}" href="/pedidos"
-      {% if not status %}aria-current="true"{% endif %}>Todos <span class="pedidos-filtro-qtd">{{ total }}</span></a>
+      {% if not status %}aria-current="true"{% endif %}><span class="pedidos-filtro-rotulo">Pendentes</span><span class="pedidos-filtro-qtd">{{ total_pendentes }}</span></a>
     {% for codigo, rotulo in filtros %}
     <a class="pedidos-filtro-item etapa-{{ codigo }}{% if status == codigo %} ativo{% endif %}" href="/pedidos?status={{ codigo }}"
-      {% if status == codigo %}aria-current="true"{% endif %}><span class="etapa-ponto" aria-hidden="true"></span>{{ rotulo }} <span class="pedidos-filtro-qtd">{{ contagens[codigo] }}</span></a>
+      {% if status == codigo %}aria-current="true"{% endif %}><span class="pedidos-filtro-rotulo"><span class="etapa-ponto" aria-hidden="true"></span>{{ rotulo }}</span><span class="pedidos-filtro-qtd">{{ contagens[codigo] }}</span></a>
     {% endfor %}
   </nav>
 </div>
@@ -97,8 +97,11 @@
       <tr data-pedido="{{ p.id }}" data-cliente="{{ p.cliente_nome }}" data-etapa="{{ etapa }}">
         <td class="tabela-pedidos-foto">
           {% if foto %}
-          <img class="pedido-tabela-foto" src="{{ foto }}" alt="Foto de referência: {{ p.imagem_produto }}"
-            width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
+          <button type="button" class="foto-previa-botao" aria-haspopup="dialog"
+            aria-label="Ampliar a foto de {{ p.imagem_produto }}: pedido de {{ p.cliente_nome }}" title="Ampliar foto">
+            <img class="pedido-tabela-foto" src="{{ foto }}" alt="Foto de referência: {{ p.imagem_produto }}"
+              width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
+          </button>
           {% elif p.imagem_caminho %}
           <span class="pedido-card-aviso">Indisponível</span>
           {% else %}
@@ -121,13 +124,16 @@
         </td>
         <td>
           {% if movimentos.get(etapa) %}
-          <select class="campo-texto pedidos-etapa" data-etapa="{{ etapa }}"
-            aria-label="Status da entrega: pedido de {{ p.cliente_nome }}">
-            <option value="{{ etapa }}" selected>{{ rotulos_etapa[etapa] }}</option>
-            {% for m in movimentos[etapa] %}
-            <option value="{{ m.destino }}">{{ rotulos_etapa[m.destino] }}</option>
-            {% endfor %}
-          </select>
+          <span class="pedidos-etapa-caixa etapa-{{ etapa }}">
+            <span class="etapa-ponto" aria-hidden="true"></span>
+            <select class="campo-texto pedidos-etapa" data-etapa="{{ etapa }}"
+              aria-label="Status da entrega: pedido de {{ p.cliente_nome }}">
+              <option value="{{ etapa }}" selected>{{ rotulos_etapa[etapa] }}</option>
+              {% for m in movimentos[etapa] %}
+              <option value="{{ m.destino }}">{{ rotulos_etapa[m.destino] }}</option>
+              {% endfor %}
+            </select>
+          </span>
           {% else %}
           <span class="pedidos-etapa-final etapa-{{ etapa }}"><span class="etapa-ponto" aria-hidden="true"></span>{{ rotulos_etapa[etapa] }}</span>
           {% endif %}
@@ -143,8 +149,14 @@
           {% if etapa in ("entregue", "cancelado") %}
           <span class="pedido-card-vazio">—</span>
           {% else %}
-          <a class="acao-tabela" href="/pedidos/{{ p.id }}/editar" aria-label="Editar pedido de {{ p.cliente_nome }}">Editar</a>
-          <a class="acao-tabela acao-perigo" href="/pedidos/{{ p.id }}/cancelar" aria-label="Cancelar pedido de {{ p.cliente_nome }}">Cancelar</a>
+          <a class="acao-tabela acao-icone" href="/pedidos/{{ p.id }}/editar"
+            aria-label="Editar pedido de {{ p.cliente_nome }}" title="Editar pedido">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17Z"/><path d="m14.5 7.5 3 3"/></svg>
+          </a>
+          <a class="acao-tabela acao-icone acao-perigo" href="/pedidos/{{ p.id }}/cancelar"
+            aria-label="Cancelar pedido de {{ p.cliente_nome }}" title="Cancelar pedido">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg>
+          </a>
           {% endif %}
         </td>
       </tr>

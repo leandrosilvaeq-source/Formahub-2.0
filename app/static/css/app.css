@@ -1499,11 +1499,14 @@ main {
 
 .tabela-pedidos tbody tr[hidden] { display: none; }
 
+.tabela-pedidos thead th { height: 3rem; vertical-align: middle; line-height: 1.2; }
+
 .th-conteudo {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
+  min-height: 1.75rem;
 }
 
 /* Botão de filtro do título (estilo Excel): discreto até passar o mouse; forte quando filtrando */
@@ -1581,6 +1584,64 @@ main {
 /* Células */
 .tabela-pedidos-foto { width: 64px; }
 
+.foto-previa-botao {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: var(--raio-campo);
+  background: none;
+  cursor: zoom-in;
+}
+.foto-previa-botao:focus-visible { outline: 2px solid var(--cor-destaque); outline-offset: 2px; }
+
+/* Prévia ampliada da foto: posicionada por JavaScript, sempre dentro da tela */
+.foto-previa {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 0.4rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--azul-marinho) 28%, transparent);
+}
+.foto-previa img {
+  display: block;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  object-fit: contain;
+  border-radius: var(--raio-campo);
+  background: color-mix(in srgb, var(--azul-marinho) 4%, var(--branco));
+}
+.foto-previa-fechar {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--alvo-toque);
+  height: var(--alvo-toque);
+  padding: 0;
+  border: 1px solid var(--cor-borda);
+  border-radius: 50%;
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+  cursor: pointer;
+}
+.foto-previa-fechar.visivel { display: inline-flex; }
+.foto-previa-fechar svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
 .pedido-tabela-foto {
   display: block;
   width: 48px;
@@ -1624,10 +1685,47 @@ main {
   overflow-wrap: anywhere;
 }
 
+.pedidos-etapa-caixa {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.pedidos-etapa-caixa .etapa-ponto {
+  position: absolute;
+  left: 0.8rem;
+  pointer-events: none;
+}
 .pedidos-etapa {
   min-height: var(--alvo-toque);
   width: auto;
+  min-width: 11rem;
+  padding: 0.5rem 2.4rem 0.5rem 1.9rem;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23566' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+      right 0.7rem center / 1rem no-repeat,
+    color-mix(in srgb, var(--cor-etapa, var(--cor-etapa-fila)) 10%, var(--branco));
+  color: var(--cor-texto);
   font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pedidos-etapa:hover { border-color: var(--cor-texto-suave); }
+.pedidos-etapa:focus-visible { outline: 2px solid var(--cor-destaque); outline-offset: 2px; }
+.pedidos-etapa option {
+  padding: 0.6rem 0.75rem;
+  background: var(--branco);
+  color: var(--cor-texto);
+  font-weight: 500;
+}
+/* Opção selecionada: fundo e peso próprios, além da cor do ponto */
+.pedidos-etapa option:checked {
+  background: var(--cor-primaria);
+  color: var(--cor-primaria-texto);
+  font-weight: 700;
 }
 
 .pedidos-etapa:disabled { cursor: progress; opacity: 0.6; }
@@ -1677,6 +1775,22 @@ main {
   text-decoration: none;
   transition: background-color 0.12s ease, border-color 0.12s ease;
 }
+.acao-tabela.acao-icone {
+  justify-content: center;
+  min-width: var(--alvo-toque);
+  min-height: var(--alvo-toque);
+  padding: 0;
+}
+.acao-icone svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.acao-tabela:focus-visible { outline: 2px solid var(--cor-destaque); outline-offset: 2px; }
 .acao-tabela:hover {
   border-color: var(--cor-borda-campo);
   background: color-mix(in srgb, var(--azul-marinho) 5%, var(--branco));
@@ -1703,12 +1817,20 @@ main {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
   min-width: 9rem;
   padding: 0.5rem 1.1rem;
   border: 1px solid var(--cor-borda);
   border-radius: var(--raio);
   background: var(--cor-superficie);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 6%, transparent);
+  text-align: center;
+}
+
+.pedidos-total-soma {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--cor-texto-suave);
 }
 
 .pedidos-total-rotulo {
@@ -1723,58 +1845,60 @@ main {
   line-height: 1.2;
 }
 
-/* Filtro de status como controle segmentado */
+/* Filtro de status: um card por status, como o "Total de Pedidos" (título e número centralizados) */
 .pedidos-filtro {
   display: flex;
   flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.pedidos-filtro-item {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.3rem;
+  justify-content: center;
+  min-width: 7.5rem;
+  min-height: var(--alvo-toque);
+  padding: 0.5rem 1.1rem;
   border: 1px solid var(--cor-borda);
   border-radius: var(--raio);
   background: var(--cor-superficie);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 6%, transparent);
-}
-
-.pedidos-filtro-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: var(--alvo-toque);
-  padding: 0 0.85rem;
-  border-radius: var(--raio-campo);
-  color: var(--cor-texto-suave);
-  font-size: 0.9rem;
-  font-weight: 600;
+  color: var(--cor-texto);
+  text-align: center;
   text-decoration: none;
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
 .pedidos-filtro-item:hover {
+  border-color: var(--cor-borda-campo);
   background: color-mix(in srgb, var(--azul-marinho) 5%, var(--branco));
-  color: var(--cor-texto);
+}
+
+.pedidos-filtro-rotulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--cor-texto-suave);
 }
 
 .pedidos-filtro-qtd {
-  min-width: 1.6rem;
-  padding: 0.05rem 0.45rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--azul-marinho) 8%, var(--branco));
-  color: var(--cor-texto);
-  font-size: 0.75rem;
+  font-family: var(--fonte-titulo);
+  font-size: 1.5rem;
   font-weight: 700;
-  text-align: center;
+  line-height: 1.2;
 }
 
 .pedidos-filtro-item.ativo {
   background: var(--cor-primaria);
+  border-color: var(--cor-primaria);
   color: var(--cor-primaria-texto);
 }
 
-.pedidos-filtro-item.ativo .pedidos-filtro-qtd {
-  background: color-mix(in srgb, var(--branco) 18%, transparent);
-  color: var(--cor-primaria-texto);
-}
+.pedidos-filtro-item.ativo .pedidos-filtro-rotulo { color: var(--cor-primaria-texto); }
 
 .lista-pedidos {
   display: grid;

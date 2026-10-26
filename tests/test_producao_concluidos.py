@@ -10,9 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from tests.test_pedidos_consulta import novo_pedido
-from tests.test_producao import ETAPAS, card, contador, mover
-from tests.test_producao_comentarios_pagamento import pagar
+from tests.test_producao import ETAPAS
 
 client = TestClient(app)
 
@@ -31,105 +29,6 @@ def no_quadro(pedido_id) -> bool:
 
 
 # ---------- Regra de conclusão ----------
-
-
-@pytest.mark.parametrize(("etapa", "status"), COMBINACOES)
-def test_so_entregue_e_pago_sai_do_quadro(repo_pedidos, etapa, status):
-    pedido = novo_pedido(repo_pedidos, status_pagamento=status)
-    repo_pedidos.etapas[pedido.id] = etapa
-
-    html = client.get("/producao").text
-
-    concluido = etapa == "entregue" and status == "pago"
-    assert (f'data-pedido="{pedido.id}"' in html) is not concluido
-    if not concluido:
-        assert f'data-pedido="{pedido.id}" data-etapa="{etapa}"' in html
-
-
-def test_entregue_pendente_continua_na_coluna_entregue(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos, status_pagamento="pendente")
-    repo_pedidos.etapas[pedido.id] = "entregue"
-
-    html = client.get("/producao").text
-
-    assert contador(html, "entregue") == 1
-    assert 'data-status="pendente"' in card(html, pedido.id)
-
-
-def test_concluido_continua_em_pedidos_e_nos_detalhes_sem_alteracao(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos, cliente="Cliente Concluído", status_pagamento="pago")
-    repo_pedidos.etapas[pedido.id] = "entregue"
-    escritas = repo_pedidos.escritas
-
-    assert not no_quadro(pedido.id)
-    assert "Cliente Concluído" in client.get("/pedidos").text
-    detalhe = client.get(f"/pedidos/{pedido.id}")
-    assert detalhe.status_code == 200 and "Cliente Concluído" in detalhe.text
-    # Nada foi apagado nem alterado: o pedido e a etapa continuam gravados.
-    assert repo_pedidos.pedidos[pedido.id] == pedido
-    assert repo_pedidos.etapas[pedido.id] == "entregue"
-    assert repo_pedidos.escritas == escritas
-
-
-def test_contadores_nao_contam_o_concluido(repo_pedidos):
-    for status in ("pago", "pendente", "pago"):
-        p = novo_pedido(repo_pedidos, status_pagamento=status)
-        repo_pedidos.etapas[p.id] = "entregue"
-    novo_pedido(repo_pedidos, status_pagamento="pago")  # pago na fila: continua
-
-    html = client.get("/producao").text
-
-    assert [contador(html, e) for e in ETAPAS] == [1, 0, 0, 1]
-
-
-def test_marcar_como_pago_na_coluna_entregue_tira_do_quadro(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos, status_pagamento="pendente")
-    repo_pedidos.etapas[pedido.id] = "entregue"
-
-    assert pagar(pedido.id, "pendente", "pago").json()["status"] == "pago"
-
-    assert not no_quadro(pedido.id)
-    assert repo_pedidos.etapas[pedido.id] == "entregue"
-    # Voltar para pendente devolve o pedido à coluna Entregue.
-    assert pagar(pedido.id, "pago", "pendente").status_code == 200
-    assert no_quadro(pedido.id)
-
-
-def test_pedido_pago_movido_para_entregue_sai_do_quadro(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos, status_pagamento="pago")
-    repo_pedidos.etapas[pedido.id] = "aguardando_entrega"
-    assert no_quadro(pedido.id)
-
-    resposta = mover(pedido.id, "aguardando_entrega", "entregue")
-
-    assert resposta.status_code == 200 and resposta.json()["etapa"] == "entregue"
-    assert not no_quadro(pedido.id)
-    assert repo_pedidos.pedidos[pedido.id].status_pagamento == "pago"
-
-
-@pytest.mark.parametrize("etapa", ["fila_producao", "em_producao", "aguardando_entrega"])
-def test_pagar_antes_da_entrega_mantem_no_quadro(repo_pedidos, etapa):
-    pedido = novo_pedido(repo_pedidos, status_pagamento="pendente")
-    repo_pedidos.etapas[pedido.id] = etapa
-
-    pagar(pedido.id, "pendente", "pago")
-
-    assert f'data-pedido="{pedido.id}" data-etapa="{etapa}"' in client.get("/producao").text
-
-
-def test_javascript_retira_o_card_so_depois_do_servidor():
-    js = (RAIZ / "app" / "static" / "js" / "producao.js").read_text(encoding="utf-8")
-
-    regra = re.search(r"function concluido\(etapa, statusPagamento\) \{([^}]*)\}", js).group(1)
-    assert 'etapa === "entregue" && statusPagamento === "pago"' in regra
-    # Nos dois caminhos, a retirada fica dentro do "corpo.ok" (depois da resposta).
-    for chamada in (
-        "if (concluido(corpo.etapa, statusDoPagamento(card))) {",
-        "if (concluido(card.dataset.etapa, corpo.status)) {",
-    ):
-        antes = js[: js.index(chamada)]
-        assert antes.rstrip().endswith("if (corpo && corpo.ok) {"), chamada
-    assert js.count("retirarConcluido(card);") == 2
 
 
 # ---------- Tamanhos: títulos das colunas e textos do card ----------
@@ -210,24 +109,6 @@ def test_titulo_das_colunas_com_1_5rem():
     # especial de 1024 a 1279 px (título abaixo deles) foi removida.
     assert "max-width: 1279.98px" not in css
     assert ".coluna-topo h2 { grid-area" not in css and ".coluna-icone { grid-area" not in css
-
-
-def test_textos_das_colunas_nao_mudam(repo_pedidos):
-    html = client.get("/producao").text
-
-    assert re.findall(r'<h2 id="coluna-[a-z_]+">([^<]+)</h2>', html) == [
-        "Na Fila de Produção",
-        "Em Produção",
-        "Ag. Entrega",
-        "Entregue",
-    ]
-
-
-def test_nome_longo_aparece_inteiro_no_card(repo_pedidos):
-    nome = "Maria " + "Aparecida" * 12 + " da Silva"
-    pedido = novo_pedido(repo_pedidos, cliente=nome)
-
-    assert f"<h3>{nome}</h3>" in card(client.get("/producao").text, pedido.id)
 
 
 # ---------- Migration (texto) ----------

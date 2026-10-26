@@ -313,7 +313,7 @@ def test_filtro_cancelado_lista_os_cancelados_sem_acoes(repo_pedidos):
     assert 'data-cliente="Cancelado Um"' in html
     assert 'data-cliente="Ativo"' not in html
     assert f'href="/pedidos/{cancelado.id}/editar"' not in html
-    assert 'Cancelado <span class="pedidos-filtro-qtd">1</span>' in html
+    assert 'Cancelado</span><span class="pedidos-filtro-qtd">1</span>' in html
 
 
 def test_detalhe_mostra_editar_e_cancelar_so_quando_permitido(repo_pedidos, pedido):

@@ -354,7 +354,149 @@
   // Foto que não carregou (URL expirada): some, sem deixar espaço vazio.
   tabela.addEventListener("error", function (evento) {
     if (evento.target.classList && evento.target.classList.contains("pedido-tabela-foto")) {
-      evento.target.remove();
+      (evento.target.closest(".foto-previa-botao") || evento.target).remove();
     }
   }, true);
+
+  // Prévia ampliada da foto (a mesma imagem privada, com a URL assinada que a página já tem).
+  // Mouse: abre após 2 s sobre a foto e fecha ao sair da foto e da prévia. Teclado: abre após
+  // 2 s com a foto focada e fecha ao sair do foco. Clique, Enter, Espaço ou toque: abre na hora
+  // e fecha ao tocar fora, no botão Fechar ou com Esc. Esc fecha em todos os casos.
+  const ATRASO_PREVIA = 2000;
+  const MARGEM = 8;
+  const ICONE_FECHAR = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  let previa = null;
+  let origemPrevia = null;
+  let modoPrevia = "";
+  let temporizador = null;
+
+  function cancelarAgendamento() {
+    if (temporizador !== null) window.clearTimeout(temporizador);
+    temporizador = null;
+  }
+
+  function fecharPrevia(devolverFoco) {
+    cancelarAgendamento();
+    if (!previa) return;
+    previa.remove();
+    previa = null;
+    if (origemPrevia) {
+      origemPrevia.setAttribute("aria-expanded", "false");
+      if (devolverFoco) origemPrevia.focus();
+    }
+    origemPrevia = null;
+    modoPrevia = "";
+  }
+
+  // Ao lado da foto (direita, depois esquerda); sem espaço (celular), centralizada. Nunca
+  // passa das bordas da tela.
+  function posicionarPrevia(botao) {
+    const lado = Math.min(420, window.innerWidth - 2 * MARGEM, window.innerHeight - 2 * MARGEM);
+    const r = botao.getBoundingClientRect();
+    let esquerda;
+    let topo = r.top + r.height / 2 - lado / 2;
+    if (r.right + lado + MARGEM <= window.innerWidth) {
+      esquerda = r.right;
+    } else if (r.left - lado >= MARGEM) {
+      esquerda = r.left - lado;
+    } else {
+      esquerda = (window.innerWidth - lado) / 2;
+      topo = (window.innerHeight - lado) / 2;
+    }
+    previa.style.width = lado + "px";
+    previa.style.height = lado + "px";
+    previa.style.left = Math.round(Math.max(MARGEM, Math.min(esquerda, window.innerWidth - lado - MARGEM))) + "px";
+    previa.style.top = Math.round(Math.max(MARGEM, Math.min(topo, window.innerHeight - lado - MARGEM))) + "px";
+  }
+
+  function abrirPrevia(botao, modo) {
+    cancelarAgendamento();
+    const miniatura = botao.querySelector("img");
+    if (!miniatura) return;
+    if (previa && origemPrevia === botao) {
+      if (modo === "clique" && modoPrevia !== "clique") { // já aberta por hover/foco: vira fixa
+        modoPrevia = "clique";
+        previa.querySelector(".foto-previa-fechar").classList.add("visivel");
+      }
+      return;
+    }
+    fecharPrevia(false);
+    previa = document.createElement("div");
+    previa.className = "foto-previa";
+    previa.setAttribute("role", "dialog");
+    previa.setAttribute("aria-label", miniatura.alt);
+    const imagem = document.createElement("img");
+    imagem.src = miniatura.currentSrc || miniatura.src;
+    imagem.alt = miniatura.alt;
+    imagem.referrerPolicy = "no-referrer";
+    const fechar = document.createElement("button");
+    fechar.type = "button";
+    fechar.className = "foto-previa-fechar" + (modo === "clique" ? " visivel" : "");
+    fechar.title = "Fechar prévia";
+    fechar.setAttribute("aria-label", "Fechar prévia da foto");
+    fechar.innerHTML = ICONE_FECHAR;
+    fechar.addEventListener("click", function () { fecharPrevia(true); });
+    previa.append(imagem, fechar);
+    document.body.append(previa);
+    origemPrevia = botao;
+    modoPrevia = modo;
+    botao.setAttribute("aria-expanded", "true");
+    posicionarPrevia(botao);
+    if (modo === "clique") fechar.focus();
+  }
+
+  function agendarPrevia(botao, modo) {
+    cancelarAgendamento();
+    if (previa && origemPrevia === botao) return;
+    temporizador = window.setTimeout(function () {
+      temporizador = null;
+      abrirPrevia(botao, modo);
+    }, ATRASO_PREVIA);
+  }
+
+  function dentroDe(elemento, alvo) { return !!alvo && elemento.contains(alvo); }
+
+  tabela.addEventListener("pointerover", function (evento) {
+    if (evento.pointerType !== "mouse") return;
+    const botao = evento.target.closest(".foto-previa-botao");
+    if (botao && !dentroDe(botao, evento.relatedTarget)) agendarPrevia(botao, "mouse");
+  });
+  tabela.addEventListener("pointerout", function (evento) {
+    if (evento.pointerType !== "mouse") return;
+    const botao = evento.target.closest(".foto-previa-botao");
+    if (!botao || dentroDe(botao, evento.relatedTarget)) return;
+    cancelarAgendamento();
+    if (previa && modoPrevia === "mouse" && !dentroDe(previa, evento.relatedTarget)) fecharPrevia(false);
+  });
+  document.addEventListener("pointerout", function (evento) {
+    if (!previa || modoPrevia !== "mouse" || evento.pointerType !== "mouse") return;
+    if (!previa.contains(evento.target) || dentroDe(previa, evento.relatedTarget)) return;
+    if (!dentroDe(origemPrevia, evento.relatedTarget)) fecharPrevia(false);
+  });
+
+  tabela.addEventListener("focusin", function (evento) {
+    const botao = evento.target.closest(".foto-previa-botao");
+    if (botao && botao.matches(":focus-visible")) agendarPrevia(botao, "foco");
+  });
+  tabela.addEventListener("focusout", function (evento) {
+    const botao = evento.target.closest(".foto-previa-botao");
+    if (!botao) return;
+    cancelarAgendamento();
+    if (previa && modoPrevia === "foco" && !dentroDe(previa, evento.relatedTarget)) fecharPrevia(false);
+  });
+
+  tabela.addEventListener("click", function (evento) {
+    const botao = evento.target.closest(".foto-previa-botao");
+    if (botao) abrirPrevia(botao, "clique");
+  });
+  document.addEventListener("pointerdown", function (evento) {
+    if (!previa || modoPrevia !== "clique") return;
+    if (previa.contains(evento.target) || origemPrevia.contains(evento.target)) return;
+    fecharPrevia(false);
+  });
+  document.addEventListener("keydown", function (evento) {
+    if (evento.key === "Escape" && previa && !painel) fecharPrevia(true);
+  });
+  window.addEventListener("resize", function () { fecharPrevia(false); });
+  window.addEventListener("scroll", function () { fecharPrevia(false); }, true);
 })();

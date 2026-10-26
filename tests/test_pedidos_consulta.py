@@ -228,7 +228,13 @@ def test_total_de_pedidos_e_filtro_por_status(repo_pedidos):
     html = client.get("/pedidos").text
     assert "Total de Pedidos" in html
     assert '<strong class="pedidos-total-valor">4</strong>' in html
-    assert sorted(_clientes(html)) == ["Ana", "Bia", "Cris", "Dani"]
+    # Sem filtro: "Pendentes" = tudo menos o concluído (entregue e pago).
+    assert sorted(_clientes(html)) == ["Ana", "Bia", "Cris"]
+    assert "Todos" not in html
+    assert (
+        '<span class="pedidos-filtro-rotulo">Pendentes</span>'
+        '<span class="pedidos-filtro-qtd">3</span>' in html
+    )
     for rotulo in ("Na Fila", "Em Produção", "Ag. Entrega", "Finalizado"):
         assert rotulo in html
 
@@ -242,6 +248,40 @@ def test_total_de_pedidos_e_filtro_por_status(repo_pedidos):
         filtrado = client.get(f"/pedidos?status={etapa}").text
         assert _clientes(filtrado) == clientes
         assert '<strong class="pedidos-total-valor">4</strong>' in filtrado
+
+
+def test_soma_dos_valores_no_total_de_pedidos(repo_pedidos):
+    novo_pedido(repo_pedidos, cliente="Ana", itens=[item(1, "Caneca", 1000, "1.50")])
+    pago = novo_pedido(repo_pedidos, cliente="Bia", itens=[item(1, "Vaso", 3, "0.10")])
+    cancelado = novo_pedido(repo_pedidos, cliente="Cris", itens=[item(1, "Pote", 1, "99.00")])
+    repo_pedidos.cancelar_pedido(cancelado.id, 1)
+
+    html = client.get("/pedidos").text
+
+    # 1.500,00 + 0,30, sem o cancelado (o mesmo conjunto da contagem); Decimal, sem arredondar.
+    assert '<strong class="pedidos-total-valor">2</strong>' in html
+    assert '<span class="pedidos-total-soma">R$ 1.500,30</span>' in html
+    assert pago.id
+
+
+def test_entregue_com_pagamento_pendente_continua_em_pendentes(repo_pedidos):
+    ana = novo_pedido(repo_pedidos, cliente="Ana")
+    bia = novo_pedido(repo_pedidos, cliente="Bia", status_pagamento="pago")
+    repo_pedidos.etapas[ana.id] = "entregue"  # entregue, mas ainda a receber: não é concluído
+    repo_pedidos.etapas[bia.id] = "entregue"
+
+    assert _clientes(client.get("/pedidos").text) == ["Ana"]
+    assert sorted(_clientes(client.get("/pedidos?status=entregue").text)) == ["Ana", "Bia"]
+
+
+def test_acoes_com_icone_e_foto_ampliavel(repo_pedidos):
+    pedido = novo_pedido(repo_pedidos)
+
+    html = client.get("/pedidos").text
+
+    assert 'aria-label="Editar pedido de Cliente Teste" title="Editar pedido">' in html
+    assert 'title="Cancelar pedido"' in html and 'class="acao-tabela acao-icone' in html
+    assert f'href="/pedidos/{pedido.id}/cancelar"' in html
 
 
 def test_filtro_com_status_desconhecido_mostra_todos(repo_pedidos):
@@ -563,7 +603,8 @@ def test_navegador_nao_acessa_o_supabase_diretamente(repo_pedidos):
     for html in paginas:
         for proibido in ("supabase", "secret", "service_role", "apikey"):
             assert proibido not in html.lower()
-    for proibido in ("fetch(", "xmlhttprequest", "supabase", "localstorage", "sessionstorage"):
+    # O fetch é só do comentário da produção, que passa pelo servidor.
+    for proibido in ("xmlhttprequest", "supabase", "localstorage", "sessionstorage", "usuario_id"):
         assert proibido not in codigo
 
 

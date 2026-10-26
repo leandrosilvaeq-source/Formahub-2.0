@@ -9,9 +9,8 @@ from fastapi.testclient import TestClient
 from app.auth.repositorio import Usuario
 from app.auth.rotas import exigir_usuario
 from app.main import app
-from app.pedidos_repositorio import FalhaAoConsultar, FalhaAoMover
-from tests.test_pedidos_consulta import caminho_de, item, novo_pedido, pedido_com_fotos
-from tests.test_pedidos_gravacao import enviar
+from app.pedidos_repositorio import FalhaAoMover
+from tests.test_pedidos_consulta import novo_pedido
 
 client = TestClient(app)
 
@@ -52,201 +51,6 @@ PERMITIDOS = [
 # ---------- Quadro ----------
 
 
-def test_quatro_colunas_na_ordem_com_icone_e_contador(repo_pedidos):
-    html = client.get("/producao").text
-
-    titulos = re.findall(r'<h2 id="coluna-([a-z_]+)">([^<]+)</h2>', html)
-    assert titulos == [
-        ("fila_producao", "Na Fila de Produção"),
-        ("em_producao", "Em Produção"),
-        ("aguardando_entrega", "Ag. Entrega"),
-        ("entregue", "Entregue"),
-    ]
-    for etapa in ETAPAS:
-        assert '<svg class="coluna-icone"' in coluna(html, etapa)
-        assert contador(html, etapa) == 0
-
-
-def test_quadro_vazio(repo_pedidos):
-    html = client.get("/producao").text
-
-    assert "Nenhum pedido na produção" in html
-    assert '<a class="botao botao-primario" href="/pedidos/novo">Cadastrar pedido</a>' in html
-    assert html.count('<p class="coluna-vazia">Nenhum pedido nesta etapa.</p>') == 4
-
-
-def test_pedido_novo_entra_na_fila_de_producao(repo_pedidos):
-    assert enviar().status_code == 200
-    (pedido_id,) = repo_pedidos.pedidos
-
-    html = client.get("/producao").text
-
-    assert repo_pedidos.etapas[pedido_id] == "fila_producao"
-    assert f'data-pedido="{pedido_id}" data-etapa="fila_producao"' in coluna(html, "fila_producao")
-    assert contador(html, "fila_producao") == 1
-
-
-def test_contadores_e_ordem_do_mais_antigo_para_o_mais_recente(repo_pedidos):
-    ids = [novo_pedido(repo_pedidos, cliente=nome).id for nome in ("Ana", "Bia", "Caio", "Davi")]
-    repo_pedidos.etapas[ids[1]] = "em_producao"
-    repo_pedidos.etapas[ids[3]] = "entregue"
-
-    html = client.get("/producao").text
-
-    assert [contador(html, e) for e in ETAPAS] == [2, 1, 0, 1]
-    fila = coluna(html, "fila_producao")
-    assert fila.index("<h3>Ana</h3>") < fila.index("<h3>Caio</h3>")
-    assert "<h3>Bia</h3>" in coluna(html, "em_producao")
-    assert "<h3>Davi</h3>" in coluna(html, "entregue")
-    assert coluna(html, "aguardando_entrega").count("producao-card") == 0
-    assert '<p class="coluna-vazia" hidden>' in coluna(html, "fila_producao")
-
-
-def test_conteudo_do_card(repo_pedidos):
-    pedido = novo_pedido(
-        repo_pedidos,
-        itens=[item(1, "Caneca", 11, "12.00"), item(2, "Chaveiro", 2, "5.00")],
-        status_pagamento="pago",
-        tipo_entrega="retirada",
-        observacoes="Embalar para presente",
-        criado_por=2,
-    )
-
-    c = card(client.get("/producao").text, pedido.id)
-
-    assert "<h3>Cliente Teste</h3>" in c
-    assert "Caneca, Chaveiro" in c and '<span class="pedido-card-unidades">13 unidades</span>' in c
-    assert (
-        '<dd class="pedido-card-pagamento">PIX <button type="button"'
-        ' class="selo-status selo-status-pago producao-pagamento"'
-    ) in c
-    assert "<dt>Entrega</dt><dd>Retirada</dd>" in c
-    assert '<dt>Prazo</dt><dd><time datetime="2026-10-05">05/10/26</time></dd>' in c
-    assert "Cadastrado por" not in c and "Kassia" not in c
-    assert "<dt>Observações do pedido</dt><dd>Embalar para presente</dd>" in c
-    assert f'href="/pedidos/{pedido.id}"' in c and ">Ver pedido</a>" in c
-    assert 'draggable="true"' in c
-    assert 'data-destino="em_producao"' in c and ">Iniciar produção</button>" in c
-
-
-def test_card_sem_observacoes_nao_mostra_o_campo(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos, observacoes=None)
-
-    assert "Observações" not in card(client.get("/producao").text, pedido.id)
-
-
-@pytest.mark.parametrize(
-    ("etapa", "acao", "proxima"),
-    [
-        ("fila_producao", "Iniciar produção", "em_producao"),
-        ("em_producao", "Finalizar produção", "aguardando_entrega"),
-        ("aguardando_entrega", "Marcar como entregue", "entregue"),
-    ],
-)
-def test_botao_da_proxima_acao(repo_pedidos, etapa, acao, proxima):
-    pedido = novo_pedido(repo_pedidos)
-    repo_pedidos.etapas[pedido.id] = etapa
-
-    c = card(client.get("/producao").text, pedido.id)
-
-    principal = re.search(r'class="botao botao-primario[^"]*"\s+data-destino="([a-z_]+)"', c)
-    assert principal.group(1) == proxima
-    assert f'aria-label="{acao}: pedido de Cliente Teste">{acao}</button>' in c
-
-
-def test_em_producao_tem_voltar_para_fila_secundario_antes_de_finalizar(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos)
-    repo_pedidos.etapas[pedido.id] = "em_producao"
-
-    c = card(client.get("/producao").text, pedido.id)
-
-    voltar = c.index(">Voltar para fila</button>")
-    assert voltar < c.index(">Finalizar produção</button>")
-    trecho = c[c.rindex("<button", 0, voltar) : voltar]
-    assert 'class="botao botao-secundario producao-voltar producao-mover"' in trecho
-    assert 'data-destino="fila_producao"' in trecho
-    assert 'aria-label="Voltar para fila: pedido de Cliente Teste"' in trecho
-
-
-@pytest.mark.parametrize("etapa", ["fila_producao", "aguardando_entrega", "entregue"])
-def test_voltar_para_fila_so_aparece_em_producao(repo_pedidos, etapa):
-    pedido = novo_pedido(repo_pedidos)
-    repo_pedidos.etapas[pedido.id] = etapa
-
-    c = card(client.get("/producao").text, pedido.id)
-
-    assert "Voltar para fila" not in c and "producao-voltar" not in c
-
-
-def test_entregue_nao_tem_botao_de_avanco_nem_arraste(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos)
-    repo_pedidos.etapas[pedido.id] = "entregue"
-
-    c = card(client.get("/producao").text, pedido.id)
-
-    assert "producao-mover" not in c and "draggable" not in c
-    assert ">Ver pedido</a>" in c
-
-
-def test_card_sem_imagem_nao_tem_foto(repo_pedidos):
-    pedido = pedido_com_fotos(repo_pedidos, [(2, False)])
-
-    c = card(client.get("/producao").text, pedido.id)
-
-    assert "<img" not in c and "pedido-card-aviso" not in c
-    assert repo_pedidos.assinaturas == []
-
-
-def test_card_com_imagem_usa_a_foto_de_destaque_assinada(repo_pedidos):
-    pedido = pedido_com_fotos(repo_pedidos, [(2, True), (5, True), (9, False)])
-
-    html = client.get("/producao").text
-
-    escolhido = caminho_de(pedido.id, 2)
-    assert repo_pedidos.assinaturas == [[escolhido]]
-    c = card(html, pedido.id)
-    url = "https://armazenamento.exemplo/assinada/0.img?token=falso"
-    assert f'<img class="producao-card-foto" src="{url}"' in c
-    assert 'alt="Foto de referência: Produto 2"' in c
-    assert escolhido not in html
-
-
-def test_no_maximo_uma_url_assinada_por_pedido(repo_pedidos):
-    pedido_com_fotos(repo_pedidos, [(1, True), (2, True)], cliente="Ana")
-    pedido_com_fotos(repo_pedidos, [(1, False)], cliente="Bia")
-    pedido_com_fotos(repo_pedidos, [(3, True), (3, True)], cliente="Caio")
-
-    html = client.get("/producao").text
-
-    assert len(repo_pedidos.assinaturas) == 1
-    (caminhos,) = repo_pedidos.assinaturas
-    assert caminhos == [caminho_de(1, 2), caminho_de(3, 1)]
-    assert html.count('class="producao-card-foto"') == 2
-
-
-def test_falha_de_imagem_nao_impede_o_quadro(repo_pedidos):
-    pedido = pedido_com_fotos(repo_pedidos, [(1, True)])
-    repo_pedidos.falhar_em["assinar_imagens"] = FalhaAoConsultar()
-
-    resposta = client.get("/producao")
-
-    assert resposta.status_code == 200
-    c = card(resposta.text, pedido.id)
-    assert "<img" not in c and "Foto indisponível no momento." in c
-
-
-def test_falha_de_banco_mostra_erro_com_tentar_novamente(repo_pedidos):
-    repo_pedidos.falhar_em["listar_producao"] = FalhaAoConsultar()
-
-    resposta = client.get("/producao")
-
-    assert resposta.status_code == 503
-    assert "Não foi possível carregar a produção agora" in resposta.text
-    assert '<a class="botao botao-primario" href="/producao">Tentar novamente</a>' in resposta.text
-    assert 'id="quadro"' not in resposta.text
-    assert "FalhaAoConsultar" not in resposta.text
-
-
 def test_sem_configuracao_do_banco_fica_indisponivel():
     from app.pedidos_repositorio import get_repositorio_pedidos
 
@@ -254,13 +58,6 @@ def test_sem_configuracao_do_banco_fica_indisponivel():
 
     assert client.get("/producao").status_code == 503
     assert mover(1, "fila_producao", "em_producao").status_code == 503
-
-
-def test_quadro_tem_o_token_csrf_e_nao_vai_para_cache(repo_pedidos):
-    resposta = client.get("/producao")
-
-    assert 'id="quadro" class="quadro" data-csrf="csrf-de-teste"' in resposta.text
-    assert resposta.headers["cache-control"] == "no-store"
 
 
 def test_consulta_do_quadro_nao_altera_pedidos(repo_pedidos):
@@ -485,27 +282,33 @@ def test_rotas_exigem_login(repo_pedidos):
 # ---------- Navegação e segurança da página ----------
 
 
-def test_navegacao_para_producao_pedidos_e_novo_pedido():
+# ---------- Tela descontinuada ----------
+
+
+def test_producao_redireciona_para_pedidos(repo_pedidos):
+    resposta = client.get("/producao", follow_redirects=False)
+
+    assert resposta.status_code == 307 and resposta.headers["location"] == "/pedidos"
+
+
+def test_home_e_pedidos_nao_levam_mais_a_producao(repo_pedidos):
     home = client.get("/").text
-    producao = client.get("/producao").text
     pedidos = client.get("/pedidos").text
 
-    assert "<h2>Produção</h2>" in home and 'href="/producao">Ver produção</a>' in home
-    assert 'href="/pedidos">Ver pedidos</a>' in home and 'href="/pedidos/novo">' in home
-    assert (
-        'href="/pedidos">Pedidos</a>' in producao
-        and 'href="/pedidos/novo">Novo pedido</a>' in producao
+    assert "/producao" not in home and "<h2>Produção</h2>" not in home
+    assert "/producao" not in pedidos.replace('"/producao/', "")
+    assert 'href="/pedidos">Ver pedidos</a>' in home
+
+
+def test_detalhe_mostra_etapa_e_salva_comentario_da_producao(repo_pedidos):
+    pedido = novo_pedido(repo_pedidos)
+
+    html = client.get(f"/pedidos/{pedido.id}").text
+    assert "Na Fila" in html and 'id="comentario-campo"' in html
+
+    resposta = client.post(
+        f"/producao/{pedido.id}/comentario",
+        data={"csrf": "csrf-de-teste", "comentario_esperado": "", "comentario": "Imprimir em PLA"},
     )
-    assert 'href="/producao">Produção</a>' in pedidos
-    assert 'class="topo-nome"' in producao and 'action="/sair"' in producao
-
-
-def test_javascript_nao_acessa_o_supabase_nem_envia_usuario():
-    js = client.get("/static/js/producao.js").text
-    codigo = " ".join(linha.split("//")[0] for linha in js.splitlines()).lower()
-
-    for proibido in ("supabase", "secret", "service_role", "usuario_id", "localstorage"):
-        assert proibido not in codigo, proibido
-    assert "etapa_esperada" in codigo and "csrf" in codigo
-    html = client.get("/producao").text.lower()
-    assert "supabase" not in html and "secret" not in html
+    assert resposta.json()["ok"] is True
+    assert "Imprimir em PLA" in client.get(f"/pedidos/{pedido.id}").text
