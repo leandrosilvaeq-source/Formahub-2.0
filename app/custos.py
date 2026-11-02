@@ -6,43 +6,74 @@ exibição. O servidor valida de novo o que o navegador envia; o banco também c
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from app.pedidos import parse_moeda
 
 CASAS_MAXIMAS = 4  # casas decimais aceitas nos valores digitados (recusa, não arredonda)
 LIMITE_VALOR = Decimal("1000000000")  # exclusivo; o mesmo limite do banco
-LIMITE_NOME = 120
-LIMITE_QUANTIDADE = 1_000_000_000  # menor que o maior integer do banco (2.147.483.647)
+LIMITE_DESCRICAO = 200
 LIMITE_VIDA_UTIL_ANOS = Decimal(1000)
 
 # Chaves de custos_parametros.
 TARIFA = "energia_tarifa_kwh"
-CONSUMO = "energia_consumo_w"
+CONSUMO = "energia_consumo_w"  # legado (W): a tela usa o consumo mensal em kWh
+CONSUMO_KWH = "energia_consumo_kwh_mes"
+HORAS_MES = "horas_impressas_mes"  # referência única de energia e depreciação
+ENERGIA_MANUAL = "energia_hora_manual"  # sem valor (None) = usar o calculado
 PERDA = "perda_percentual"
 MDO = "mdo_hora"
-MANUTENCAO = "manutencao_hora"  # sem valor (None) = "A definir"; zero é um valor digitado
+MANUTENCAO = "manutencao_hora"  # ajuste manual; sem valor (None) = calculado pelos gastos reais
 AQUISICAO = "depreciacao_valor_aquisicao"
 VIDA_UTIL = "depreciacao_vida_util_anos"
 RESIDUAL = "depreciacao_valor_residual"
-HORAS_DIA = "depreciacao_horas_dia"
-DIAS_MES = "depreciacao_dias_mes"
+DEPRECIACAO_MANUAL = "depreciacao_hora_manual"
+HORAS_DIA = "depreciacao_horas_dia"  # legado: substituído por HORAS_MES
+DIAS_MES = "depreciacao_dias_mes"  # legado: substituído por HORAS_MES
+TAXA_FIXA = "taxa_venda_fixa"
+TAXA_PERCENTUAL = "taxa_venda_percentual"
+MEI = "mei_mensal"
+RETIRADA = "retirada_desejada_mensal"
+
+DIAS_REVISAO = 90  # a referência de horas mensais deve ser revista a cada trimestre
+MINUTOS_MDO = (0, 10, 20, 30)  # referências de tempo ativo mostradas para a MDO
+LIMITE_HORAS_MES = Decimal(744)  # 31 dias x 24 h
+LIMITE_HORAS_PERIODO = Decimal(999_999)  # exclusivo no banco: horas < 1.000.000
 
 
-# Grupos da média ponderada do custo por kg dos filamentos comprados: (título, material, tipos).
+# Grupos da média ponderada do custo por kg dos filamentos comprados:
+# (chave do ajuste, título, material, tipos).
 GRUPOS_CUSTO_KG = (
-    ("PETG", "PETG", None),  # None = todos os tipos
-    ("PLA (Sólido, Velvet, Silk)", "PLA", ("solido", "velvet", "silk")),
-    ("PLA Multicolor (Bicolor, Tricolor)", "PLA", ("bicolor", "tricolor")),
+    ("filamento:petg", "PETG", "PETG", None),  # None = todos os tipos
+    ("filamento:pla", "PLA (Sólido, Velvet, Silk)", "PLA", ("solido", "velvet", "silk")),
+    (
+        "filamento:pla-multicolor",
+        "PLA Multicolor (Bicolor, Tricolor)",
+        "PLA",
+        ("bicolor", "tricolor"),
+    ),
+)
+
+
+# Grupos de filamento da tela Custos (cards e tabela): PLA aberto por tipo, sem misturar categorias.
+GRUPOS_FILAMENTO = (
+    ("filamento:petg", "PETG", "PETG", None),
+    ("filamento:pla-solido", "PLA Sólido", "PLA", ("solido",)),
+    ("filamento:pla-velvet", "PLA Velvet", "PLA", ("velvet",)),
+    ("filamento:pla-silk", "PLA Silk", "PLA", ("silk",)),
+    ("filamento:pla-multicolor", "PLA Multicolor", "PLA", ("bicolor", "tricolor")),
 )
 
 
 @dataclass(frozen=True)
 class CustoMedioKg:
+    chave: str
     titulo: str
     custo_kg: Decimal | None  # None = nenhuma compra do grupo
-    kg_comprados: Decimal
+    kg_comprados: Decimal  # peso líquido comprado (rolos x peso do rolo); não diminui com o uso
     compras: int  # lotes (linhas de compra) considerados
+    saldo_kg: Decimal = Decimal(0)  # o que ainda está disponível no estoque (outra coisa)
 
 
 def custo_medio_kg_lotes(lotes) -> Decimal | None:
@@ -62,18 +93,139 @@ def custo_medio_unidade_lotes(lotes) -> Decimal | None:
     return pago / quantidade if quantidade else None
 
 
-def custo_medio_por_kg(filamentos) -> list[CustoMedioKg]:
-    """Custo médio por kg de cada grupo (PETG, PLA, PLA Multicolor), pela regra acima."""
+def custo_medio_por_kg(filamentos, grupos=GRUPOS_CUSTO_KG) -> list[CustoMedioKg]:
+    """Custo médio por kg de cada grupo (por padrão PETG, PLA, PLA Multicolor), pela regra acima."""
     resultado = []
-    for titulo, material, tipos in GRUPOS_CUSTO_KG:
+    for chave, titulo, material, tipos in grupos:
         lotes = [
             f for f in filamentos if f.material == material and (tipos is None or f.tipo in tipos)
         ]
         peso_g = sum((f.peso_comprado_g for f in lotes), Decimal(0))
+        saldo_g = sum((f.peso_g for f in lotes), Decimal(0))
         resultado.append(
-            CustoMedioKg(titulo, custo_medio_kg_lotes(lotes), peso_g / 1000, len(lotes))
+            CustoMedioKg(
+                chave,
+                titulo,
+                custo_medio_kg_lotes(lotes),
+                peso_g / 1000,
+                len(lotes),
+                saldo_g / 1000,
+            )
         )
     return resultado
+
+
+@dataclass(frozen=True)
+class Insumo:
+    """Um insumo (filamento, acessório ou embalagem) com o custo das compras e o ajuste manual."""
+
+    chave: str  # 'filamento:petg', 'acessorio:<nome>' ou 'embalagem:<nome>'
+    titulo: str
+    categoria: str  # filamento, acessorio ou embalagem
+    unidade: str  # 'kg' ou 'un'
+    calculado: Decimal | None  # média ponderada das compras (None = nenhuma compra)
+    manual: Decimal | None  # ajuste manual; as compras originais não são alteradas
+    comprado: Decimal  # kg ou unidades compradas
+    saldo: Decimal  # kg ou unidades ainda disponíveis (não confundir com o comprado)
+    compras: int
+    imagem_caminho: str | None = None  # foto da compra (bucket privado)
+    # Compras do item, da mais recente para a mais antiga: (data, quantidade, valor pago).
+    historico: tuple = ()
+
+    @property
+    def usado(self) -> Decimal | None:
+        return self.manual if self.manual is not None else self.calculado
+
+    @property
+    def comparacao(self) -> str | None:
+        """Manual frente ao calculado ('menor', 'igual' ou 'maior'), em Decimal e sem arredondar.
+
+        Sem valor manual ou sem base calculada não há comparação (None).
+        """
+        if self.manual is None or self.calculado is None:
+            return None
+        if self.manual == self.calculado:
+            return "igual"
+        return "maior" if self.manual > self.calculado else "menor"
+
+    @property
+    def origem(self) -> str | None:
+        if self.manual is not None:
+            return "Manual"
+        return "Calculado" if self.calculado is not None else None
+
+
+def grupos_de_filamento(filamentos) -> list[tuple]:
+    """Os cinco grupos fixos mais um por material adicional cadastrado (TPU, por exemplo)."""
+    fixos = {material for _chave, _titulo, material, _tipos in GRUPOS_FILAMENTO}
+    extras = sorted({f.material for f in filamentos} - fixos, key=str.casefold)
+    return [*GRUPOS_FILAMENTO, *((f"filamento:material:{m}", m, m, None) for m in extras)]
+
+
+def insumos_filamento(filamentos, ajustes: dict[str, Decimal]) -> list[Insumo]:
+    """Os grupos de filamento, cada um com o ajuste manual (se houver)."""
+    return [
+        Insumo(
+            g.chave, g.titulo, "filamento", "kg", g.custo_kg, ajustes.get(g.chave),
+            g.kg_comprados, g.saldo_kg, g.compras,
+        )
+        for g in custo_medio_por_kg(filamentos, grupos_de_filamento(filamentos))
+    ]  # fmt: skip
+
+
+def ordem_de_exibicao(filamentos: list[Insumo]) -> list[Insumo]:
+    """Ordem dos cards: PLA Sólido, Velvet, Silk, Multicolor, PETG e depois os outros materiais.
+
+    Só a exibição muda: a posição (e o id do card) segue a ordem de GRUPOS_FILAMENTO.
+    """
+    chaves = [g[0] for g in GRUPOS_FILAMENTO]
+    pla = [i for i in filamentos if i.chave.startswith("filamento:pla-")]
+    petg = [i for i in filamentos if i.chave == "filamento:petg"]
+    outros = [i for i in filamentos if i.chave not in chaves]
+    return [*pla, *petg, *outros]
+
+
+def chave_item(categoria: str, nome: str) -> str:
+    return f"{categoria}:{' '.join(nome.split())}"
+
+
+def insumos_itens(itens, ajustes: dict[str, Decimal]) -> dict[str, list[Insumo]]:
+    """Acessórios e embalagens do estoque, agrupados por nome (média ponderada pela quantidade).
+
+    Não há cadastro de custo à parte: o custo unitário vem das compras do estoque.
+    """
+    grupos: dict[tuple[str, str], list] = {}
+    for item in itens:
+        nome = " ".join(item.nome.split())
+        grupos.setdefault((item.categoria, nome.casefold()), []).append(item)
+    resultado: dict[str, list[Insumo]] = {"acessorio": [], "embalagem": []}
+    for (categoria, _), lotes in grupos.items():
+        if categoria not in resultado:
+            continue
+        nome = " ".join(lotes[0].nome.split())
+        chave = chave_item(categoria, nome)
+        resultado[categoria].append(
+            Insumo(
+                chave, nome, categoria, "un", custo_medio_unidade_lotes(lotes), ajustes.get(chave),
+                Decimal(sum(i.quantidade_comprada for i in lotes)),
+                Decimal(sum(i.quantidade for i in lotes)), len(lotes),
+                next((i.imagem_caminho for i in lotes if i.imagem_caminho), None),
+                tuple(
+                    (i.data_compra, i.quantidade_comprada, i.valor_total)
+                    for i in sorted(lotes, key=lambda i: (i.data_compra, i.id), reverse=True)
+                ),
+            )
+        )  # fmt: skip
+    for lista in resultado.values():
+        lista.sort(key=lambda i: i.titulo.casefold())
+    return resultado
+
+
+def aplicar_perda(custo: Decimal, perda_percentual: Decimal) -> Decimal:
+    """Custo com perda = custo x (1 + perda/100). Vale só para o filamento, e uma única vez."""
+    with localcontext() as contexto:
+        contexto.prec = 50
+        return custo * (1 + perda_percentual / 100)
 
 
 def ler_decimal(texto: str, *, casas: int = CASAS_MAXIMAS, maximo: Decimal | None = None):
@@ -103,27 +255,58 @@ def ler_vida_util(texto: str):
     return valor, erro
 
 
-def ler_horas_dia(texto: str):
-    """Horas de impressão por dia: maior que zero e até 24, até duas casas."""
-    valor, erro = ler_decimal(texto, casas=2, maximo=Decimal(24))
+def ler_horas_mes(texto: str):
+    """Horas impressas por mês: maior que zero e até 744 (31 dias x 24 h), até duas casas."""
+    valor, erro = ler_decimal(texto, casas=2, maximo=LIMITE_HORAS_MES)
     if erro == "Valor acima do limite permitido.":
-        return None, "As horas por dia não podem passar de 24."
+        return None, "As horas por mês não podem passar de 744."
     if not erro and valor <= 0:
-        return None, "As horas por dia devem ser maiores que zero."
+        return None, "As horas por mês devem ser maiores que zero."
     return valor, erro
 
 
-def ler_dias_mes(texto: str):
-    """Dias de impressão por mês: inteiro de 1 a 31."""
-    texto = texto.strip()
-    if not texto:
-        return None, "Informe um valor."
-    if not texto.isascii() or not texto.isdigit():
-        return None, "Os dias por mês devem ser um número inteiro, de 1 a 31."
-    dias = int(texto)
-    if not 1 <= dias <= 31:
-        return None, "Os dias por mês devem ficar entre 1 e 31."
-    return Decimal(dias), ""
+def ler_horas_periodo(texto: str):
+    """Horas impressas no período de referência da manutenção: maior que zero, até duas casas."""
+    valor, erro = ler_decimal(texto, casas=2, maximo=LIMITE_HORAS_PERIODO)
+    if erro == "Valor acima do limite permitido.":
+        return None, "As horas do período estão acima do limite permitido."
+    if not erro and valor <= 0:
+        return None, "As horas do período devem ser maiores que zero."
+    return valor, erro
+
+
+def ler_percentual(texto: str):
+    """Percentual de 0 a 100, até duas casas."""
+    valor, erro = ler_decimal(texto, casas=2, maximo=Decimal(100))
+    if erro == "Valor acima do limite permitido.":
+        return None, "O percentual não pode passar de 100%."
+    return valor, erro
+
+
+def ler_data(texto: str):
+    """(data, erro): aaaa-mm-dd (campo de data do navegador)."""
+    try:
+        return date.fromisoformat(texto.strip()), ""
+    except ValueError:
+        return None, "Informe uma data válida."
+
+
+def ler_descricao(texto: str):
+    """(descrição, erro): sem espaços nas pontas, obrigatória, até 200 caracteres."""
+    descricao = " ".join(texto.split())
+    if not descricao:
+        return "", "Informe a descrição."
+    if len(descricao) > LIMITE_DESCRICAO:
+        return descricao, f"A descrição pode ter no máximo {LIMITE_DESCRICAO} caracteres."
+    return descricao, ""
+
+
+def ler_valor_gasto(texto: str):
+    """Gasto real: maior que zero, até duas casas (centavos)."""
+    valor, erro = ler_decimal(texto, casas=2)
+    if not erro and valor <= 0:
+        return None, "O valor deve ser maior que zero."
+    return valor, erro
 
 
 def ler_perda(texto: str):
@@ -158,51 +341,39 @@ class Campo:
 
 # Cada formulário da tela altera um grupo de campos; os grupos viram rotas e seções.
 GRUPOS = {
-    "energia": [
-        Campo("tarifa_kwh", TARIFA, "Tarifa de energia", "R$/kWh", "moeda"),
-        Campo("consumo_w", CONSUMO, "Consumo médio da impressora", "W", "numero"),
+    "perdas": [Campo("perda_percentual", PERDA, "Perda de material", "%", "numero", ler_perda)],
+    "taxas": [
+        Campo("taxa_fixa", TAXA_FIXA, "Valor fixo por venda", "R$", "moeda"),
+        Campo(
+            "taxa_percentual",
+            TAXA_PERCENTUAL,
+            "Percentual sobre a venda",
+            "%",
+            "numero",
+            ler_percentual,
+        ),
     ],
-    "perdas": [Campo("perda_percentual", PERDA, "Perdas", "%", "numero", ler_perda)],
-    "mdo": [Campo("mdo_hora", MDO, "Mão de Obra (MDO)", "R$/h", "moeda")],
-    "manutencao": [
-        Campo("manutencao_hora", MANUTENCAO, "Manutenção", "R$/h", "moeda", opcional=True)
+    "energia": [
+        Campo("consumo_kwh", CONSUMO_KWH, "Consumo mensal", "kWh/mês", "numero"),
+        Campo("tarifa_kwh", TARIFA, "Tarifa de energia", "R$/kWh", "moeda"),
+    ],
+    "horas": [
+        Campo("horas_mes", HORAS_MES, "Horas impressas por mês", "h/mês", "numero", ler_horas_mes)
     ],
     "depreciacao": [
         Campo("valor_aquisicao", AQUISICAO, "Valor de aquisição", "R$", "moeda"),
-        Campo("vida_util_anos", VIDA_UTIL, "Vida útil", "anos", "numero", ler_vida_util),
         Campo("valor_residual", RESIDUAL, "Valor residual", "R$", "moeda"),
-        Campo("horas_dia", HORAS_DIA, "Impressão diária", "horas/dia", "numero", ler_horas_dia),
-        Campo("dias_mes", DIAS_MES, "Dias por mês", "dias/mês", "numero", ler_dias_mes),
+        Campo("vida_util_anos", VIDA_UTIL, "Vida útil", "anos", "numero", ler_vida_util),
     ],
+    "mdo": [Campo("mdo_hora", MDO, "Mão de obra direta (MDO)", "R$/h", "moeda")],
+    "mei": [Campo("mei_mensal", MEI, "MEI", "R$/mês", "moeda")],
+    "retirada": [Campo("retirada", RETIRADA, "Retirada desejada", "R$/mês", "moeda")],
+    # Ajustes manuais dos custos derivados (R$/h). "Voltar ao calculado" apaga o valor.
+    "energia-ajuste": [Campo("valor", ENERGIA_MANUAL, "Valor utilizado", "R$/h", "moeda")],
+    "depreciacao-ajuste": [Campo("valor", DEPRECIACAO_MANUAL, "Valor utilizado", "R$/h", "moeda")],
+    "manutencao-ajuste": [Campo("valor", MANUTENCAO, "Valor utilizado", "R$/h", "moeda")],
 }
-
-TIPOS_ITEM = {"acessorios": "acessorio", "embalagens": "embalagem"}  # rota -> código do banco
-TITULOS_ITEM = {"acessorio": "Acessórios", "embalagem": "Embalagens"}
-
-
-def ler_quantidade(texto: str):
-    """(quantidade, erro): inteiro maior que zero."""
-    texto = texto.strip()
-    if not texto:
-        return None, "Informe a quantidade."
-    if not texto.isascii() or not texto.isdigit():
-        return None, "A quantidade deve ser um número inteiro, sem vírgula."
-    quantidade = int(texto)
-    if quantidade <= 0:
-        return None, "A quantidade deve ser maior que zero."
-    if quantidade > LIMITE_QUANTIDADE:
-        return None, "Quantidade acima do limite permitido."
-    return quantidade, ""
-
-
-def ler_nome(texto: str):
-    """(nome, erro): sem espaços nas pontas, obrigatório, até 120 caracteres."""
-    nome = " ".join(texto.split())
-    if not nome:
-        return "", "Informe o nome."
-    if len(nome) > LIMITE_NOME:
-        return nome, f"O nome pode ter no máximo {LIMITE_NOME} caracteres."
-    return nome, ""
+VOLTAR_AO_CALCULADO = {"energia-ajuste", "depreciacao-ajuste", "manutencao-ajuste"}
 
 
 def ler_campo(campo: Campo, texto: str):
@@ -223,28 +394,54 @@ def conferir_depreciacao(valores: dict[str, Decimal]) -> dict[str, str]:
 # ---------- Cálculos (exatos; sem arredondar) ----------
 
 
-def energia_por_hora(tarifa_kwh: Decimal, consumo_w: Decimal) -> Decimal:
-    """R$/h = tarifa (R$/kWh) x consumo (W) / 1000."""
+@dataclass(frozen=True)
+class CustoHora:
+    """Um custo por hora derivado: o calculado, o ajuste manual e o valor utilizado."""
+
+    calculado: Decimal | None  # None = sem dados para calcular ("A definir")
+    manual: Decimal | None = None
+    provisorio: bool = False  # ajuste manual que entrou pela migration e ainda não foi revisto
+
+    @property
+    def usado(self) -> Decimal | None:
+        return self.manual if self.manual is not None else self.calculado
+
+    @property
+    def comparacao(self) -> str | None:
+        """Manual frente ao calculado ('menor', 'igual' ou 'maior'), em Decimal e sem arredondar.
+
+        Sem ajuste manual ou sem base calculada não há comparação (None).
+        """
+        if self.manual is None or self.calculado is None:
+            return None
+        if self.manual == self.calculado:
+            return "igual"
+        return "maior" if self.manual > self.calculado else "menor"
+
+    @property
+    def origem(self) -> str | None:
+        if self.manual is not None:
+            return "Manual"
+        return "Calculado" if self.calculado is not None else None
+
+
+def energia_por_hora(consumo_kwh_mes: Decimal, tarifa_kwh: Decimal, horas_mes: Decimal) -> Decimal:
+    """R$/h = consumo mensal (kWh) x tarifa (R$/kWh) / horas impressas no mês."""
     with localcontext() as contexto:
         contexto.prec = 50
-        return tarifa_kwh * consumo_w / Decimal(1000)
+        return consumo_kwh_mes * tarifa_kwh / horas_mes
 
 
 @dataclass(frozen=True)
 class Depreciacao:
-    horas_mensais: Decimal  # dias por mês x horas por dia
     mensal: Decimal  # (aquisição - residual) / (vida útil em anos x 12)
-    por_hora: Decimal  # (aquisição - residual) / (vida útil x 12 x dias por mês x horas por dia)
+    por_hora: Decimal  # (aquisição - residual) / (vida útil x 12 x horas mensais)
 
 
 def depreciacao(
-    aquisicao: Decimal,
-    residual: Decimal,
-    vida_util_anos: Decimal,
-    dias_mes: Decimal,
-    horas_dia: Decimal,
+    aquisicao: Decimal, residual: Decimal, vida_util_anos: Decimal, horas_mes: Decimal
 ) -> Depreciacao:
-    """Depreciação linear derivada dos critérios, sem arredondar em nenhuma etapa.
+    """Depreciação gerencial linear, sem arredondar em nenhuma etapa.
 
     O valor por hora é uma única divisão da base depreciável pelas horas de uso na vida útil.
     """
@@ -252,33 +449,62 @@ def depreciacao(
         contexto.prec = 50
         base = aquisicao - residual
         meses = vida_util_anos * 12
-        horas_mensais = dias_mes * horas_dia
-        return Depreciacao(
-            horas_mensais=horas_mensais,
-            mensal=base / meses,
-            por_hora=base / (meses * horas_mensais),
-        )
+        return Depreciacao(mensal=base / meses, por_hora=base / (meses * horas_mes))
 
 
-def custo_unitario(valor_compra: Decimal, quantidade: int) -> Decimal:
-    """R$/un = valor total de compra / unidades compradas (a mesma conta da coluna do banco)."""
-    with localcontext() as contexto:
-        contexto.prec = 28
-        return valor_compra / Decimal(quantidade)
+def manutencao_por_hora(gastos, periodo) -> Decimal | None:
+    """R$/h = gastos do período / horas impressas do mesmo período.
 
-
-def custo_por_hora(
-    energia: Decimal, mdo: Decimal, depreciacao_hora: Decimal, manutencao: Decimal | None
-) -> tuple[Decimal, bool]:
-    """(valor, completo): energia + MDO + depreciação + manutenção, cada uma somada em separado.
-
-    Com a manutenção ainda sem valor, o resultado é só um subtotal (completo=False): nunca deve
-    ser apresentado como o custo por hora completo.
+    Sem período, sem horas ou sem nenhum gasto dentro do período: None ("A definir"). Ausência de
+    informação não é zero. Gastos fora do período não entram.
     """
-    subtotal = energia + mdo + depreciacao_hora
+    if periodo is None or periodo.horas <= 0:
+        return None
+    no_periodo = [g.valor for g in gastos if periodo.inicio <= g.data <= periodo.fim]
+    if not no_periodo:
+        return None
+    with localcontext() as contexto:
+        contexto.prec = 50
+        return sum(no_periodo, Decimal(0)) / periodo.horas
+
+
+def mdo_referencias(mdo_hora: Decimal) -> list[tuple[int, Decimal]]:
+    """Custo de MDO para 0, 10, 20 e 30 minutos de tempo ativo (R$/h x minutos / 60)."""
+    with localcontext() as contexto:
+        contexto.prec = 50
+        return [(minutos, mdo_hora * minutos / 60) for minutos in MINUTOS_MDO]
+
+
+def taxa_de_venda(venda: Decimal, fixa: Decimal, percentual: Decimal) -> Decimal:
+    """Taxa = valor fixo + percentual sobre o valor da venda."""
+    with localcontext() as contexto:
+        contexto.prec = 50
+        return fixa + venda * percentual / 100
+
+
+def subtotal_maquina(
+    energia: Decimal | None, depreciacao_hora: Decimal | None, manutencao: Decimal | None
+) -> tuple[Decimal | None, bool]:
+    """(R$/h, completo): energia + depreciação + manutenção, cada uma somada em separado.
+
+    A MDO fica de fora (é tempo ativo de pessoas, não hora de máquina) e a perda também (é do
+    filamento). Sem energia ou depreciação: (None, False). Com a manutenção ainda "A definir", o
+    resultado é só um subtotal (completo=False), nunca o custo por hora completo.
+    """
+    if energia is None or depreciacao_hora is None:
+        return None, False
+    subtotal = energia + depreciacao_hora
     if manutencao is None:
         return subtotal, False
     return subtotal + manutencao, True
+
+
+def revisao_das_horas(data_base: date | None, hoje: date) -> tuple[date | None, bool]:
+    """(próxima revisão, vencida): a referência de horas mensais é revista a cada trimestre."""
+    if data_base is None:
+        return None, False
+    proxima = data_base + timedelta(days=DIAS_REVISAO)
+    return proxima, hoje > proxima
 
 
 # ---------- Formatação (só para exibir) ----------
@@ -307,6 +533,11 @@ def formatar_custo_aprox(valor: Decimal) -> str:
 def formatar_custo_curto(valor: Decimal) -> str:
     """Duas casas, arredondado: 'R$ 0,90' (apoio ao valor com quatro casas)."""
     return "R$ " + _texto_decimal(valor, 2, 2)
+
+
+def formatar_data(valor: date) -> str:
+    """'01/11/2026'."""
+    return valor.strftime("%d/%m/%Y")
 
 
 def formatar_numero(valor: Decimal) -> str:

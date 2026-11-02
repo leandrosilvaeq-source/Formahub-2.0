@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Compras · FormaHub 2.0{% endblock %}
+{% block main_classe %} container-pedidos{% endblock %}
 
 {% block content %}
 <div class="estoque compras">
@@ -26,49 +27,82 @@
 <a class="botao botao-secundario" href="/compras">Tentar novamente</a>
 {% else %}
 
-<section class="compras-resumo" aria-label="Resumo das compras">
-  <div class="compras-card">
-    <p class="compras-card-rotulo">Valor total gasto</p>
-    <p class="compras-card-valor" id="compras-total">{{ resumo.total_gasto | brl }}</p>
-    <p class="compras-card-dica">Itens + frete de todas as compras</p>
+{# Cards e tabela mostram o período escolhido; os cards somam todas as compras dele, não só a página. #}
+<form class="compras-filtro" id="compras-filtro" method="get" action="/compras">
+  <label for="compras-periodo">Período</label>
+  <select class="campo-texto" id="compras-periodo" name="periodo">
+    <option value="todos"{% if periodo == "todos" %} selected{% endif %}>Todos</option>
+    {% for valor, rotulo in opcoes_periodo %}
+    <option value="{{ valor }}"{% if valor == periodo %} selected{% endif %}>{{ rotulo }}</option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit" class="botao botao-secundario">Filtrar</button></noscript>
+</form>
+
+<section class="compras-resumo" aria-label="Resumo das compras{% if periodo_rotulo %} de {{ periodo_rotulo }}{% endif %}">
+  {% for chave, titulo, dica in (
+    ("compras", "Compras", "itens + frete"),
+    ("filamento", "Filamentos", "só itens"),
+    ("acessorio", "Acessórios", "só itens"),
+    ("embalagem", "Embalagens", "só itens")) %}
+  <div class="compras-card" id="card-{{ chave }}">
+    <p class="compras-card-rotulo">{{ titulo }}</p>
+    <p class="compras-card-valor">{{ resumo[chave].total | brl }}</p>
+    <p class="compras-card-dica">{{ resumo[chave].quantidade }} {{ "compra" if resumo[chave].quantidade == 1 else "compras" }} · {{ dica }}</p>
   </div>
-  <div class="compras-card">
-    <p class="compras-card-rotulo">Número de compras</p>
-    <p class="compras-card-valor" id="compras-quantidade">{{ resumo.quantidade }}</p>
-    <p class="compras-card-dica">Desde o início</p>
-  </div>
+  {% endfor %}
 </section>
 
 <section class="secao" id="ultimas-compras" aria-labelledby="titulo-ultimas-compras">
-  <h2 id="titulo-ultimas-compras">Últimas compras</h2>
-  {% if not ultimas %}
-  <p class="compras-vazio">Nenhuma compra registrada</p>
+  <h2 id="titulo-ultimas-compras">Compras{% if periodo_rotulo %} de {{ periodo_rotulo }}{% endif %}</h2>
+  {% if not linhas %}
+  <p class="compras-vazio">{% if periodo_rotulo %}Nenhuma compra em {{ periodo_rotulo }}{% else %}Nenhuma compra registrada{% endif %}</p>
   {% else %}
-  <ul class="compras-lista">
-    {% for c in ultimas %}
-    <li class="compra-registro">
-      <div class="compra-registro-cabecalho">
-        <div>
-          <p class="compra-registro-data"><time datetime="{{ c.data.isoformat() }}">{{ c.data | data_compra }}</time></p>
-          <p class="compra-registro-local">{{ c.local }}</p>
-        </div>
-        <p class="compra-registro-total">{{ c.total | brl }}{% if c.frete %}<span class="compra-registro-frete">inclui frete de {{ c.frete | brl }}</span>{% endif %}</p>
-      </div>
-      <ul class="compra-registro-itens">
-        {% for descricao in c.itens %}<li>{{ descricao }}</li>{% endfor %}
-      </ul>
-      {% if c.fotos %}
-      <ul class="compra-registro-fotos" aria-label="Fotos de referência">
-        {% for foto in c.fotos %}
-        <li><a href="{{ foto.url }}" target="_blank" rel="noopener noreferrer"><img src="{{ foto.url }}" alt="Foto de referência: {{ foto.descricao }}" width="64" height="64" loading="lazy"></a></li>
+  <div class="tabela-rolagem">
+    <table class="tabela-pedidos tabela-compras" id="tabela-compras">
+      <thead>
+        <tr>
+          <th scope="col">Data</th>
+          <th scope="col">Local</th>
+          <th scope="col">Itens</th>
+          <th scope="col">Fotos</th>
+          <th scope="col" class="coluna-numero">Valor total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in linhas %}
+        <tr class="compra-registro">
+          <td><time datetime="{{ c.data.isoformat() }}">{{ c.data | data_compra }}</time></td>
+          <td class="tabela-compras-local">{{ c.local }}</td>
+          <td>
+            <ul class="tabela-compras-itens">
+              {% for descricao in c.itens %}<li>{{ descricao }}</li>{% endfor %}
+            </ul>
+          </td>
+          <td class="tabela-compras-fotos">
+            {% for foto in c.fotos %}
+            <button type="button" class="foto-previa-botao" aria-haspopup="dialog"
+              aria-label="Ampliar a foto de {{ foto.descricao }}" title="Ampliar foto">
+              <img class="pedido-tabela-foto" src="{{ foto.url }}" alt="Foto de referência: {{ foto.descricao }}"
+                width="48" height="48" loading="lazy" referrerpolicy="no-referrer">
+            </button>
+            {% endfor %}
+            {% if c.fotos_indisponiveis %}<span class="pedido-card-aviso">Indisponível</span>
+            {% elif not c.fotos %}<span class="compra-registro-sem-foto">Sem foto</span>{% endif %}
+          </td>
+          <td class="coluna-numero tabela-pedidos-valor">{{ c.total | brl }}{% if c.frete %}<span class="compra-registro-frete">inclui frete de {{ c.frete | brl }}</span>{% endif %}</td>
+        </tr>
         {% endfor %}
-      </ul>
-      {% else %}
-      <p class="compra-registro-sem-foto">Sem foto de referência</p>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
+      </tbody>
+    </table>
+  </div>
+  {% if total_paginas > 1 %}
+  <nav class="compras-paginas" aria-label="Páginas de compras">
+    {% if pagina > 1 %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;pagina={{ pagina - 1 }}" rel="prev">Anterior</a>{% endif %}
+    <span>Página {{ pagina }} de {{ total_paginas }}</span>
+    {% if pagina < total_paginas %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;pagina={{ pagina + 1 }}" rel="next">Próxima</a>{% endif %}
+  </nav>
+  {% endif %}
   {% endif %}
 </section>
 
@@ -81,5 +115,7 @@
 {% if not erro %}
 <script src="{{ url_for('static', path='js/imagem-referencia.js') }}"></script>
 <script src="{{ url_for('static', path='js/estoque-compra.js') }}"></script>
+<script src="{{ url_for('static', path='js/foto-previa.js') }}"></script>
+<script src="{{ url_for('static', path='js/compras-lista.js') }}"></script>
 {% endif %}
 {% endblock %}

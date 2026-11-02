@@ -125,7 +125,7 @@ begin
   for v_funcao in
     select * from (values
       ('listar_estoque', '', 'jsonb'),
-      ('listar_compras', '', 'jsonb'),
+      ('listar_compras', 'p_inicio date, p_fim date', 'jsonb'),
       ('reservar_id_compra', '', 'bigint'),
       ('registrar_compra',
        'p_id bigint, p_chave_envio uuid, p_data_compra date, p_local_tipo text, '
@@ -176,7 +176,7 @@ begin
     raise exception 'o estoque deveria começar vazio: %', public.listar_estoque();
   end if;
 
-  if public.listar_compras() <> '{"total_gasto": "0", "quantidade": 0, "compras": []}'::jsonb then
+  if public.listar_compras() <> '{"meses": [], "compras": []}'::jsonb then
     raise exception 'sem compras, listar_compras deveria vir zerada: %', public.listar_compras();
   end if;
 
@@ -283,9 +283,7 @@ begin
   -- ---------- listar_compras: resumo de todo o histórico e lista da mais recente à mais antiga ----
   -- Compra 1: 3 x 89,90 + 2 x 100,00 + 14,00 + 10,00 = 493,70 · compra 2: 0,00 + 1,00 = 1,00.
   v_lista := public.listar_compras();
-  if v_lista ->> 'total_gasto' <> '494.70' or (v_lista ->> 'quantidade')::int <> 2
-     or jsonb_typeof(v_lista -> 'total_gasto') <> 'string'
-     or jsonb_array_length(v_lista -> 'compras') <> 2
+  if jsonb_array_length(v_lista -> 'compras') <> 2
      or v_lista -> 'compras' -> 0 ->> 'id' <> v_c2::text  -- data mais recente primeiro
      or v_lista -> 'compras' -> 0 ->> 'total' <> '1.00'
      or v_lista -> 'compras' -> 0 ->> 'local_nome' <> 'Papelaria Centro'
@@ -298,6 +296,18 @@ begin
      or v_lista -> 'compras' -> 1 -> 'itens' -> 1 ->> 'peso_rolo_g' <> '750.50'
      or v_lista -> 'compras' -> 1 -> 'itens' -> 2 ->> 'nome' <> 'Argola Teste' then
     raise exception 'formato de listar_compras inesperado: %', v_lista;
+  end if;
+
+  -- Período: [p_inicio, p_fim) pela data da compra; 'meses' ignora o filtro; valor do item no JSON.
+  if public.listar_compras('2026-09-01', '2026-10-01') <> v_lista
+     or jsonb_array_length(public.listar_compras('2026-10-01', '2026-11-01') -> 'compras') <> 0
+     or public.listar_compras('2026-10-01', '2026-11-01') -> 'meses' <> '["2026-09"]'::jsonb
+     or jsonb_array_length(public.listar_compras('2026-09-15', '2026-09-21') -> 'compras') <> 1
+     or jsonb_array_length(public.listar_compras('2026-09-10', '2026-09-20') -> 'compras') <> 1
+     or v_lista -> 'compras' -> 1 -> 'itens' -> 0 ->> 'valor' <> '269.70'  -- 3 x 89,90
+     or v_lista -> 'compras' -> 1 -> 'itens' -> 2 ->> 'valor' <> '14.00'
+     or jsonb_typeof(v_lista -> 'compras' -> 1 -> 'itens' -> 0 -> 'valor') <> 'string' then
+    raise exception 'filtro por período de listar_compras inesperado: %', v_lista;
   end if;
 
   -- ---------- Edição: só a descrição; saldo e compra não mudam ----------

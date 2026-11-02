@@ -20,6 +20,7 @@ from app.auth.rotas import (
 from app.auth.rotas import router as rotas_auth
 from app.custos_rotas import router as rotas_custos
 from app.estoque_rotas import router as rotas_estoque
+from app.manutencao_rotas import router as rotas_manutencao
 from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
     ESCOLHA_OBRIGATORIA,
@@ -87,6 +88,7 @@ app.mount("/static", ArquivosEstaticos(directory=BASE_DIR / "static"), name="sta
 app.include_router(rotas_auth)
 app.include_router(rotas_custos)
 app.include_router(rotas_estoque)
+app.include_router(rotas_manutencao)
 app.add_exception_handler(NaoAutenticado, tratar_nao_autenticado)
 app.add_exception_handler(ServicoIndisponivel, tratar_servico_indisponivel)
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -122,6 +124,11 @@ MODULOS = [
         "titulo": "Custos",
         "descricao": "Custos diretos e indiretos da empresa.",
         "links": [{"url": "/custos", "texto": "Ver custos", "principal": True}],
+    },
+    {
+        "titulo": "Manutenção",
+        "descricao": "Manutenções da máquina: tempo parado, peças trocadas e custos.",
+        "links": [{"url": "/manutencao", "texto": "Ver manutenção", "principal": True}],
     },
 ]
 

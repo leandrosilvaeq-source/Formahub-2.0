@@ -2146,6 +2146,16 @@ def custos_texto(p, seletor):
     return " ".join(p.js(f"document.querySelector({json.dumps(seletor)}).innerText").split())
 
 
+def texto_completo(p, seletor):
+    """Texto visível do elemento depois de abrir os "Ver detalhes" que ele tiver."""
+    return " ".join(
+        p.js(
+            f"(e => {{ e.querySelectorAll('details').forEach(d => {{ d.open = true }});"
+            f" return e.innerText }})(document.querySelector({json.dumps(seletor)}))"
+        ).split()
+    )
+
+
 def editar_custo(p, seletor_link):
     navegar(p, f"document.querySelector({json.dumps(seletor_link)}).click()")
 
@@ -2161,129 +2171,456 @@ def salvar_custo(p, seletor_form):
     )
 
 
-def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos):
+def estoque_de_custos():
+    """Estoque falso (PLA a R$ 100/kg e um acessório) que a tela Custos lê nos testes."""
     from decimal import Decimal
 
+    from app.estoque_repositorio import get_repositorio_estoque
+    from tests.fake_estoque import RepositorioEstoqueMemoria
+
+    estoque = RepositorioEstoqueMemoria()
+    estoque.com_filamento(tipo="solido", valor_unitario=Decimal("100"))
+    estoque.com_item("Imã", quantidade=10, valor_total=Decimal("30"))
+    app.dependency_overrides[get_repositorio_estoque] = lambda: estoque
+    return estoque
+
+
+def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos):
+    from datetime import date
+    from decimal import Decimal
+
+    from app.custos_repositorio import GastoManutencao
+
+    estoque_de_custos()
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
-    assert "R$ 100,00/kg" in custos_texto(pagina, "#filamento-1")
-    assert "Energia por hora (calculado) R$ 0,12/h" in custos_texto(pagina, "#energia")
+    assert "A definir" in custos_texto(pagina, "#insumo-1")  # sem valor manual
+    assert "Calculado (referência) ≈ R$ 0,1363/h" in texto_completo(pagina, "#energia")
+    assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")  # valor principal
+    assert "Manual · provisório" in texto_completo(pagina, "#energia")
+    assert "Calculado (referência) ≈ R$ 0,2732/h" in texto_completo(pagina, "#depreciacao")
     resumo = custos_texto(pagina, "#resumo")
-    assert "Subtotal por hora ≈ R$ 0,8978/h (≈ R$ 0,90/h)" in resumo
-    assert "Manutenção ainda não definida" in resumo and "Total" not in resumo
-    assert "Manutenção A definir" in custos_texto(pagina, "#manutencao")
-    assert "Depreciação por hora (calculado) ≈ R$ 0,2778/h" in custos_texto(pagina, "#depreciacao")
+    assert "Subtotal parcial da máquina R$ 0,41/h" in resumo and "A definir" in resumo
+    assert "Data-base 01/11/2026" in custos_texto(pagina, "#horas")
 
-    # Editar -> Salvar: o valor novo aparece, com aviso de sucesso, e fica gravado.
-    editar_custo(pagina, "#filamento-1 .custos-editar")
-    assert pagina.js("location.search") == "?editar=filamento-1"
-    assert pagina.valor("#filamento-1-valor_kg") == "100,00"
-    preencher(pagina, "#filamento-1-valor_kg", "99,5")
-    salvar_custo(pagina, "#filamento-1 form")
-    assert pagina.texto(".alerta-sucesso") == "Valor do filamento atualizado."
-    assert pagina.js("document.querySelector('.alerta-sucesso').getAttribute('role')") == "status"
-    assert "R$ 99,50/kg" in custos_texto(pagina, "#filamento-1")
-    assert repo_custos.filamentos[1].valor_kg == Decimal("99.5")
-    assert repo_custos.gravacoes == [("filamento", 1, Decimal("99.5"), 1)]  # usuário da sessão
-    pagina.abrir("/custos")  # persistiu: recarregar mantém
-    assert "R$ 99,50/kg" in custos_texto(pagina, "#filamento-1")
+    # Formulário comum (sem JavaScript): o lápis edita no lugar, mas a página funciona sem ele.
+    pagina.abrir("/custos?editar=valores-energia-ajuste")
+    assert pagina.valor("#valores-energia-ajuste-valor") == "0,14"
+    preencher(pagina, "#valores-energia-ajuste-valor", "0,15")
+    salvar_custo(pagina, "#energia form")
+    assert pagina.texto(".alerta-sucesso") == "Valor atualizado."
+    assert repo_custos.parametros["energia_hora_manual"] == Decimal("0.15")
+    assert repo_custos.gravacoes[-1][2] == 1  # usuário da sessão
+    energia = texto_completo(pagina, "#energia")
+    assert "R$ 0,15/h de máquina" in energia and "provisório" not in energia
 
-    # Cancelar: nada é gravado.
-    editar_custo(pagina, "#filamento-2 .custos-editar")
-    preencher(pagina, "#filamento-2-valor_kg", "1")
-    navegar(pagina, "document.querySelector('#filamento-2 a.botao-secundario').click()")
-    assert repo_custos.filamentos[2].valor_kg == Decimal("125")
-    assert "R$ 125,00/kg" in custos_texto(pagina, "#filamento-2")
-    assert pagina.js("document.querySelectorAll('form input[name=valor_kg]').length") == 0
+    # Voltar ao calculado (por fetch, no card): o ajuste some e o calculado passa a valer.
+    pagina.js("window.__marca = 'mesma-pagina'")
+    pagina.js("document.querySelector('#energia form[action$=\"/calculado\"] button').click()")
+    esperar(lambda: repo_custos.parametros["energia_hora_manual"] is None)
+    esperar(lambda: "Voltar ao calculado" not in texto_completo(pagina, "#energia"))
+    assert pagina.js("window.__marca") == "mesma-pagina"  # sem recarregar
+    energia = texto_completo(pagina, "#energia")
+    assert "OrigemCalculado" in energia.replace(" ", "")
+    assert "R$ 0,1363/h de máquina" in custos_texto(pagina, "#energia")
 
     # Valor inválido: o formulário continua aberto, com o que foi digitado e o erro.
-    editar_custo(pagina, "#filamento-3 .custos-editar")
-    preencher(pagina, "#filamento-3-valor_kg", "abc")
-    salvar_custo(pagina, "#filamento-3 form")
-    assert pagina.valor("#filamento-3-valor_kg") == "abc"
-    assert "número válido" in pagina.texto("#filamento-3 .campo-erro")
-    assert (
-        pagina.js("document.getElementById('filamento-3-valor_kg').getAttribute('aria-invalid')")
-        == "true"
-    )
-    assert repo_custos.filamentos[3].valor_kg == Decimal("85")
-
-    # Energia: tarifa e consumo; o custo por hora é recalculado (0,95 x 150 / 1000 = 0,1425).
-    pagina.abrir("/custos")
-    editar_custo(pagina, "#energia .custos-editar")
-    preencher(pagina, "#valores-energia-tarifa_kwh", "0,95")
-    preencher(pagina, "#valores-energia-consumo_w", "150")
-    salvar_custo(pagina, "#energia form")
-    assert "Energia por hora (calculado) R$ 0,1425/h" in custos_texto(pagina, "#energia")
-    # Subtotal: 0,1425 + 0,50 + 0,27777... (a manutenção segue a definir).
-    assert "Subtotal por hora ≈ R$ 0,9203/h" in custos_texto(pagina, "#resumo")
-
-    # Manutenção: sai de "A definir" para um valor; o resumo passa a ser o total completo.
-    editar_custo(pagina, "#manutencao .custos-editar")
-    assert pagina.valor("#valores-manutencao-manutencao_hora") == ""
-    preencher(pagina, "#valores-manutencao-manutencao_hora", "0,10")
-    salvar_custo(pagina, "#manutencao form")
-    assert pagina.texto(".alerta-sucesso") == "Manutenção atualizada."
-    assert "Manutenção R$ 0,10/h" in custos_texto(pagina, "#manutencao")
-    assert "Total ≈ R$ 1,0203/h" in custos_texto(pagina, "#resumo")
-    assert repo_custos.parametros["manutencao_hora"] == Decimal("0.10")
-    editar_custo(pagina, "#manutencao .custos-editar")  # em branco volta a "A definir"
-    preencher(pagina, "#valores-manutencao-manutencao_hora", "")
-    salvar_custo(pagina, "#manutencao form")
-    assert "A definir" in custos_texto(pagina, "#manutencao")
-    assert repo_custos.parametros["manutencao_hora"] is None
-
-    # Depreciação: edita os critérios e o valor por hora é recalculado (6.000 / 12.000 = 0,50).
-    editar_custo(pagina, "#depreciacao .custos-editar")
-    assert pagina.valor("#valores-depreciacao-valor_aquisicao") == "6.000,00"
-    preencher(pagina, "#valores-depreciacao-valor_aquisicao", "7200")
-    preencher(pagina, "#valores-depreciacao-vida_util_anos", "4")
-    preencher(pagina, "#valores-depreciacao-valor_residual", "1200")
-    preencher(pagina, "#valores-depreciacao-horas_dia", "10")
-    preencher(pagina, "#valores-depreciacao-dias_mes", "25")
+    pagina.abrir("/custos?editar=valores-depreciacao-ajuste")  # formulário comum (sem JS)
+    preencher(pagina, "#valores-depreciacao-ajuste-valor", "abc")
     salvar_custo(pagina, "#depreciacao form")
-    assert pagina.texto(".alerta-sucesso") == "Depreciação atualizada."
-    deprec = custos_texto(pagina, "#depreciacao")
-    assert "Depreciação por hora (calculado) R$ 0,50/h" in deprec
-    assert (
-        "Depreciação mensal R$ 125,00/mês" in deprec
-        and "Horas mensais (dias × horas) 250 h" in deprec
-    )
-    # Critério inválido: residual maior que a aquisição; nada é gravado e o formulário fica aberto.
-    editar_custo(pagina, "#depreciacao .custos-editar")
-    preencher(pagina, "#valores-depreciacao-valor_residual", "9999")
-    salvar_custo(pagina, "#depreciacao form")
-    assert "não pode ser maior que o valor de aquisição" in pagina.texto("#depreciacao .campo-erro")
-    assert pagina.valor("#valores-depreciacao-valor_residual") == "9999"
-    assert repo_custos.parametros["depreciacao_valor_residual"] == Decimal("1200.00")
+    assert pagina.valor("#valores-depreciacao-ajuste-valor") == "abc"
+    assert "número válido" in pagina.texto("#depreciacao .campo-erro")
+    assert repo_custos.parametros["depreciacao_hora_manual"] == Decimal("0.27")
 
-    # Acessório: cadastro e edição recalculam o custo unitário (10 / 3, depois 10 / 4).
+    # Horas mensais: uma referência só, que recalcula energia e depreciação.
     pagina.abrir("/custos")
-    preencher(pagina, "#novo-acessorios-nome", "Chaveiro")
-    preencher(pagina, "#novo-acessorios-valor_compra", "10")
-    preencher(pagina, "#novo-acessorios-quantidade", "3")
-    salvar_custo(pagina, "#acessorios .custos-novo")
-    assert pagina.texto(".alerta-sucesso") == "Acessório cadastrado."
-    item = custos_texto(pagina, "#acessorios .custos-item")
-    assert "Chaveiro" in item and "Valor de compra R$ 10,00" in item and "Quantidade 3 un" in item
-    assert "Custo unitário R$ 3,3333/un" in item
-    (item_id,) = repo_custos.itens
-    editar_custo(pagina, f"#item-{item_id} .custos-editar")
-    preencher(pagina, f"#item-{item_id}-quantidade", "4")
-    salvar_custo(pagina, f"#item-{item_id} form")
-    assert pagina.texto(".alerta-sucesso") == "Acessório atualizado."
-    assert "Custo unitário R$ 2,50/un" in custos_texto(pagina, f"#item-{item_id}")
-    assert "Quantidade 4 un" in custos_texto(pagina, f"#item-{item_id}")
-    assert len(repo_custos.itens) == 1
+    editar_custo(pagina, '#horas a[href*="valores-horas"]')
+    preencher(pagina, "#valores-horas-horas_mes", "200")
+    salvar_custo(pagina, "#horas form")
+    assert "≈ R$ 0,2079/h" in texto_completo(pagina, "#energia")
+    assert "≈ R$ 0,4167/h" in texto_completo(pagina, "#depreciacao")
 
-    # Quantidade inválida no cadastro: nada é gravado e o digitado fica.
-    preencher(pagina, "#novo-embalagens-nome", "Caixa")
-    preencher(pagina, "#novo-embalagens-valor_compra", "20")
-    preencher(pagina, "#novo-embalagens-quantidade", "0")
-    salvar_custo(pagina, "#embalagens .custos-novo")
-    assert "maior que zero" in pagina.texto("#embalagens .campo-erro")
-    assert pagina.valor("#novo-embalagens-nome") == "Caixa"
-    assert len(repo_custos.itens) == 1
+    # Insumo: ajuste manual sem tocar nas compras.
+    pagina.abrir("/custos?editar=insumo-1")  # formulário comum (o lápis edita no lugar, por JS)
+    preencher(pagina, "#insumo-1-valor", "110")
+    salvar_custo(pagina, "#insumo-1 form")
+    assert pagina.texto(".alerta-sucesso").startswith("Ajuste manual do insumo salvo")
+    assert "R$ 110,00/kg" in custos_texto(pagina, "#insumo-1")
+    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("110")}
+
+    # Manutenção: período de referência aqui; os gastos vêm das manutenções registradas na tela
+    # Manutenção (R$ 120 / 240 h = R$ 0,50/h).
+    pagina.abrir("/custos")
+    editar_custo(pagina, '#manutencao a[href*="manutencao-periodo"]')
+    pagina.digitar("#manutencao-periodo-inicio", "01102026")
+    pagina.digitar("#manutencao-periodo-fim", "31102026")
+    preencher(pagina, "#manutencao-periodo-horas", "240")
+    salvar_custo(pagina, "#manutencao form")
+    assert repo_custos.periodo.horas == Decimal("240")
+    assert "Registrar gasto" not in custos_texto(pagina, "#manutencao")  # sem cadastro duplicado
+    repo_custos.gastos = [GastoManutencao(1, date(2026, 10, 10), "Bico novo", Decimal("120"))]
+    pagina.abrir("/custos")
+    manutencao = texto_completo(pagina, "#manutencao")
+    assert "Calculado (referência) R$ 0,50/h" in manutencao
+    assert "R$ 120,00 (1 manutenção)" in manutencao
+    assert "Subtotal da máquina" in custos_texto(pagina, "#resumo")
+
+
+def card_filamento(p, seletor="#insumo-1"):
+    return custos_texto(p, seletor)
+
+
+def colar(p, seletor, texto):
+    """Cola um texto no campo (evento de colagem real, com o campo todo selecionado)."""
+    p.js(
+        f"(() => {{ const c = document.querySelector({json.dumps(seletor)}); c.focus(); c.select();"
+        " const dt = new DataTransfer(); dt.setData('text', " + json.dumps(texto) + ");"
+        " c.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true,"
+        " cancelable: true})) })()"
+    )
+
+
+def test_custos_filamento_edita_no_lugar_sem_recarregar(pagina, servidor, repo_custos):
+    from decimal import Decimal
+
+    from app.custos_repositorio import FalhaAoSalvarCustos
+
+    estoque_de_custos()  # PLA Sólido a R$ 100/kg = #insumo-1
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    pagina.js("window.__marca = 'mesma-pagina'")
+    assert "A definir" in card_filamento(pagina)
+
+    # O lápis abre o campo no lugar do valor: sem navegar e sem formulário ou caixa extra.
+    pagina.clicar("#insumo-1 .custos-lapis")
+    assert pagina.js("location.search") == "" and pagina.js("window.__marca") == "mesma-pagina"
+    assert pagina.js("document.activeElement.id") == "insumo-1-inline"
+    assert pagina.js("document.querySelectorAll('#insumo-1 form').length") == 0
+    assert pagina.js("document.querySelector('#insumo-1 .custos-fil-valor').hidden") is True
+    assert pagina.js("document.querySelector('#insumo-1-inline').offsetHeight") >= 44
+    assert pagina.js("document.querySelector('#insumo-1-inline').inputMode") == "numeric"
+
+    # Esc cancela e restaura o valor anterior, sem gravar.
+    pagina.digitar("#insumo-1-inline", "55")
+    assert pagina.valor("#insumo-1-inline") == "R$ 0,55"
+    tecla(pagina, "Escape", "Escape", 27)
+    assert pagina.js("!!document.querySelector('#insumo-1 .custos-fil-edicao')") is False
+    assert "A definir" in card_filamento(pagina) and repo_custos.gravacoes == []
+
+    # Perder o foco não salva.
+    pagina.clicar("#insumo-1 .custos-lapis")
+    pagina.digitar("#insumo-1-inline", "77")
+    pagina.js("document.activeElement.blur()")
+    assert pagina.valor("#insumo-1-inline") == "R$ 0,77" and repo_custos.gravacoes == []
+
+    # Campo vazio: o erro do servidor aparece junto ao campo.
+    pagina.js("(c => { c.value = ''; c.focus() })(document.querySelector('#insumo-1-inline'))")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: pagina.js("!document.querySelector('#insumo-1-inline-erro').hidden"))
+    assert "Informe um valor" in pagina.texto("#insumo-1-inline-erro")
+    attr = "document.querySelector('#insumo-1-inline').getAttribute('aria-invalid')"
+    assert pagina.js(attr) == "true"
+
+    # Falha ao gravar: erro junto ao campo, valor digitado preservado, sem recarregar.
+    repo_custos.falhar_em["salvar_ajuste_insumo"] = FalhaAoSalvarCustos()
+    preencher(pagina, "#insumo-1-inline", "13000")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "Não foi possível salvar" in pagina.texto("#insumo-1-inline-erro"))
+    assert pagina.valor("#insumo-1-inline") == "R$ 130,00" and repo_custos.gravacoes == []
+    assert pagina.js("window.__marca") == "mesma-pagina"
+    assert pagina.js("document.querySelector('#insumo-1-inline').disabled") is False
+
+    # Sucesso (botão de confirmar clicado duas vezes seguidas grava uma vez só); card atualizado.
+    del repo_custos.falhar_em["salvar_ajuste_insumo"]
+    botao = "document.querySelector('#insumo-1 .custos-fil-ok')"
+    pagina.js(f"(() => {{ const b = {botao}; b.click(); b.click() }})()")
+    esperar(lambda: "R$ 130,00/kg" in card_filamento(pagina))
+    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("130.00")}
+    assert len(repo_custos.gravacoes) == 1 and repo_custos.gravacoes[0][3] == 1
+    assert pagina.js("window.__marca") == "mesma-pagina" and pagina.js("location.search") == ""
+    assert pagina.js("!!document.querySelector('#insumo-1 .custos-fil-edicao')") is False
+    assert "Custo/kg calculado" not in card_filamento(pagina)  # detalhes recolhidos
+    assert "Remover valor" not in card_filamento(pagina)  # sem o botão de remover
+
+
+def test_custos_filamento_mascara_monetaria_brasileira(pagina, servidor, repo_custos):
+    from decimal import Decimal
+
+    estoque_de_custos()
+    repo_custos.ajustes["filamento:pla-solido"] = Decimal("120")
+    repo_custos.ajustes["filamento:petg"] = Decimal("12.3456")  # 4 casas salvas
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+
+    # Abrir preserva o valor salvo e o deixa selecionado (digitar já substitui).
+    pagina.clicar("#insumo-1 .custos-lapis")
+    assert pagina.valor("#insumo-1-inline") == "R$ 120,00"
+    selecao = "[c.selectionStart, c.selectionEnd, c.value.length]"
+    assert pagina.js(f"(c => {selecao})(document.querySelector('#insumo-1-inline'))") == [0, 9, 9]
+
+    # Dígitos preenchidos da direita para a esquerda, como centavos.
+    for digitos, esperado in (
+        ("1", "R$ 0,01"),
+        ("100", "R$ 1,00"),
+        ("10000", "R$ 100,00"),
+        ("123456789", "R$ 1.234.567,89"),
+    ):
+        pagina.js("(c => { c.focus(); c.select() })(document.querySelector('#insumo-1-inline'))")
+        pagina.digitar("#insumo-1-inline", digitos)
+        assert pagina.valor("#insumo-1-inline") == esperado, digitos
+
+    # Letras e símbolos são ignorados.
+    pagina.js("document.querySelector('#insumo-1-inline').select()")
+    pagina.digitar("#insumo-1-inline", "a1b,2.c")
+    assert pagina.valor("#insumo-1-inline") == "R$ 0,12"
+
+    # Colar com ou sem "R$", com vírgula ou ponto decimal, e com milhar.
+    for colado, esperado in (
+        ("100,00", "R$ 100,00"),
+        ("R$ 100,00", "R$ 100,00"),
+        ("R$ 1.234,56", "R$ 1.234,56"),
+        ("100.5", "R$ 100,50"),
+        ("1.000", "R$ 1.000,00"),
+        ("2550", "R$ 25,50"),  # só dígitos: igual a digitar (centavos)
+    ):
+        colar(pagina, "#insumo-1-inline", colado)
+        assert pagina.valor("#insumo-1-inline") == esperado, colado
+
+    # O servidor recebe o Decimal certo, sem erro de separador ou escala.
+    colar(pagina, "#insumo-1-inline", "R$ 1.234,56")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "R$ 1.234,56/kg" in card_filamento(pagina))
+    assert repo_custos.ajustes["filamento:pla-solido"] == Decimal("1234.56")
+
+    # Valor salvo com 4 casas: a máscara usa as 4 e salvar sem mexer não altera nada.
+    pagina.clicar("#insumo-0 .custos-lapis")
+    assert pagina.valor("#insumo-0-inline") == "R$ 12,3456"
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "R$ 12,3456/kg" in card_filamento(pagina, "#insumo-0"))
+    assert repo_custos.ajustes["filamento:petg"] == Decimal("12.3456")
+
+
+def test_custos_filamento_sem_botao_remover(pagina, servidor, repo_custos):
+    from decimal import Decimal
+
+    estoque_de_custos()
+    repo_custos.ajustes["filamento:pla-solido"] = Decimal("120")
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+
+    assert "R$ 120,00/kg" in card_filamento(pagina)
+    assert pagina.js("document.querySelectorAll('#filamentos form').length") == 0
+    assert "Remover" not in custos_texto(pagina, "#filamentos")
+    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("120")}  # valor preservado
+
+
+def test_custos_filamento_comparacao_com_cores_e_texto(pagina, servidor, repo_custos):
+    from decimal import Decimal
+
+    estoque_de_custos()  # PLA Sólido a R$ 100/kg
+    repo_custos.ajustes["filamento:pla-solido"] = Decimal("90")
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    cor = "getComputedStyle(document.querySelector('#insumo-1 .custos-fil-valor')).color"
+
+    assert pagina.js(cor) == "rgb(180, 35, 24)"  # menor (90 < 100): vermelho
+    assert "Revisar custos: valor manual abaixo do custo calculado" in card_filamento(pagina)
+
+    for manual, esperado_cor, texto in (
+        ("12000", "rgb(30, 122, 70)", "Acima do custo calculado"),
+        ("10000", pagina.js("getComputedStyle(document.body).color"), "Igual ao custo calculado"),
+    ):
+        pagina.clicar("#insumo-1 .custos-lapis")
+        preencher(pagina, "#insumo-1-inline", manual)
+        tecla(pagina, "Enter", "Enter", 13, "\r")
+        esperar(lambda texto=texto: texto in card_filamento(pagina))
+        assert pagina.js(cor) == esperado_cor, manual
+        assert "Revisar custos" not in card_filamento(pagina), manual  # maior/igual: sem alerta
+
+    # Salvar um valor menor, sem recarregar, troca a regra anterior: vermelho e aviso.
+    pagina.clicar("#insumo-1 .custos-lapis")
+    preencher(pagina, "#insumo-1-inline", "5000")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "abaixo do custo calculado" in card_filamento(pagina))
+    assert pagina.js(cor) == "rgb(180, 35, 24)"
+
+    # Sem valor manual: neutro e sem comparação.
+    repo_custos.ajustes.clear()
+    navegar(pagina, "location.reload()")
+    assert "custo calculado" not in card_filamento(pagina).replace("Ver detalhes", "")
+    assert pagina.js(cor) == pagina.js("getComputedStyle(document.body).color")
+
+
+def test_custos_filamento_gravou_mas_card_falhou_nao_diz_que_nao_salvou(
+    pagina, servidor, repo_custos, monkeypatch
+):
+    from decimal import Decimal
+
+    estoque_de_custos()  # PLA Sólido a R$ 100/kg = #insumo-1
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    pagina.js("window.__marca = 'mesma-pagina'")
+    monkeypatch.setattr("app.custos_rotas._cartao_html", lambda *a, **k: 1 / 0)
+
+    # Edição: gravou, só o card não veio. Sem erro de salvamento, sem recarregar.
+    pagina.clicar("#insumo-1 .custos-lapis")
+    pagina.digitar("#insumo-1-inline", "13000")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "Valor salvo" in card_filamento(pagina))
+    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("130.00")}
+    assert "Não foi possível salvar" not in card_filamento(pagina)
+    assert "R$ 130,00" in card_filamento(pagina)
+    assert pagina.js("document.querySelectorAll('#insumo-1 .campo-erro').length") == 0
+    assert pagina.js("window.__marca") == "mesma-pagina"
+
+    # Tentar de novo sem recarregar; agora o card volta completo.
+    monkeypatch.undo()
+    pagina.clicar("#insumo-1 .custos-lapis")
+    assert pagina.valor("#insumo-1-inline") == "R$ 130,00"
+    preencher(pagina, "#insumo-1-inline", "9000")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "R$ 90,00/kg" in card_filamento(pagina))
+    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("90.00")}
+    assert "Valor salvo" not in card_filamento(pagina)  # card refeito pelo servidor
+    assert pagina.js("window.__marca") == "mesma-pagina"
+
+
+def test_custos_filamento_sessao_expirada_vai_ao_login_e_recupera_o_valor(
+    pagina, servidor, repo_custos
+):
+    from fastapi import Request
+
+    from app.auth.repositorio import Usuario
+    from app.auth.rotas import NaoAutenticado, exigir_usuario
+
+    def logado(request: Request):
+        request.state.usuario = Usuario(id=1, nome="Leandro")
+        request.state.csrf = "csrf-de-teste"
+        return request.state.usuario
+
+    def sessao_que_expira(request: Request):
+        if request.method == "POST":
+            raise NaoAutenticado(request.url.path)
+        return logado(request)
+
+    estoque_de_custos()
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    app.dependency_overrides[exigir_usuario] = sessao_que_expira
+
+    pagina.clicar("#insumo-1 .custos-lapis")
+    pagina.digitar("#insumo-1-inline", "13000")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: pagina.js("location.pathname") == "/entrar")
+    assert pagina.js("location.search") == "?next=%2Fcustos"  # volta para /custos depois
+    assert repo_custos.gravacoes == []  # nada foi salvo, nem automaticamente
+
+    # Depois de entrar de novo: volta ao /custos com o campo reaberto e o valor digitado.
+    app.dependency_overrides[exigir_usuario] = logado
+    pagina.abrir("/custos")
+    assert pagina.js("document.activeElement.id") == "insumo-1-inline"
+    assert pagina.valor("#insumo-1-inline") == "R$ 130,00"
+    assert "Valor recuperado" in custos_texto(pagina, "#insumo-1 .custos-fil-edicao")
+    assert repo_custos.gravacoes == []  # recuperar não salva
+
+    # Só Enter salva; a recuperação não se repete.
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "R$ 130,00/kg" in card_filamento(pagina))
+    assert len(repo_custos.gravacoes) == 1
+    pagina.abrir("/custos")
+    assert pagina.js("!!document.querySelector('#insumo-1 .custos-fil-edicao')") is False
+
+
+def test_custos_filamento_redirecionamento_solto_nao_vira_sessao_expirada(
+    pagina, servidor, repo_custos, monkeypatch
+):
+    from fastapi.responses import RedirectResponse
+
+    estoque_de_custos()
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    monkeypatch.setattr(
+        "app.custos_rotas._ajuste_assincrono",
+        lambda *a, **k: RedirectResponse("/custos", status_code=303),
+    )
+
+    pagina.clicar("#insumo-1 .custos-lapis")
+    pagina.digitar("#insumo-1-inline", "13000")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: pagina.js("!document.querySelector('#insumo-1-inline-erro').hidden"))
+
+    erro = pagina.texto("#insumo-1-inline-erro")
+    assert "sessão expirou" not in erro and "redirecionou" in erro
+    assert pagina.js("location.pathname") == "/custos"  # não foi ao login
+    assert pagina.valor("#insumo-1-inline") == "R$ 130,00"  # valor preservado
+
+
+def test_custos_outros_cards_editam_no_lugar_com_mascara_e_percentual(
+    pagina, servidor, repo_custos
+):
+    from decimal import Decimal
+
+    from app.custos_repositorio import FalhaAoSalvarCustos
+
+    estoque_de_custos()
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    pagina.js("window.__marca = 'mesma-pagina'")
+    assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")
+    assert "R$ 15,00/h ativa" in custos_texto(pagina, "#mdo")
+    assert "3 %" in custos_texto(pagina, "#perdas")
+
+    # Energia (R$/h de máquina, máscara bancária): abre com o valor salvo selecionado.
+    pagina.clicar("#energia .custos-lapis")
+    assert pagina.js("location.search") == "" and pagina.js("window.__marca") == "mesma-pagina"
+    assert pagina.valor("#energia-inline") == "R$ 0,14"
+    assert (
+        pagina.js(
+            "(c => c.selectionEnd - c.selectionStart)(document.querySelector('#energia-inline'))"
+        )
+        == 7
+    )
+    assert pagina.js("document.querySelectorAll('#energia form').length") == 1  # só o "Voltar"
+    pagina.digitar("#energia-inline", "1550")
+    assert pagina.valor("#energia-inline") == "R$ 15,50"
+    tecla(pagina, "Escape", "Escape", 27)  # Esc cancela e restaura
+    assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")
+    assert repo_custos.gravacoes == []
+
+    pagina.clicar("#energia .custos-lapis")
+    pagina.digitar("#energia-inline", "15")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "R$ 0,15/h de máquina" in custos_texto(pagina, "#energia"))
+    assert repo_custos.parametros["energia_hora_manual"] == Decimal("0.15")
+    assert pagina.js("window.__marca") == "mesma-pagina"
+
+    # MDO (R$/h ativa).
+    pagina.clicar("#mdo .custos-lapis")
+    pagina.digitar("#mdo-inline", "2050")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "R$ 20,50/h ativa" in custos_texto(pagina, "#mdo"))
+    assert repo_custos.parametros["mdo_hora"] == Decimal("20.50")
+    assert "custo calculado" not in custos_texto(pagina, "#mdo")  # sem base calculada: neutro
+
+    # Taxa de perda (percentual): sem máscara; valor inválido mostra o erro e mantém o digitado.
+    pagina.clicar("#perdas .custos-lapis")
+    assert pagina.valor("#perdas-inline") == "3"
+    preencher(pagina, "#perdas-inline", "101")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: not pagina.js("document.querySelector('#perdas-inline-erro').hidden"))
+    assert "100%" in pagina.texto("#perdas-inline-erro") and pagina.valor("#perdas-inline") == "101"
+    assert repo_custos.parametros["perda_percentual"] == Decimal("3")
+
+    repo_custos.falhar_em["salvar_parametros"] = FalhaAoSalvarCustos()
+    preencher(pagina, "#perdas-inline", "3,5")
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "Não foi possível salvar" in pagina.texto("#perdas-inline-erro"))
+    assert pagina.valor("#perdas-inline") == "3,5"
+    del repo_custos.falhar_em["salvar_parametros"]
+    tecla(pagina, "Enter", "Enter", 13, "\r")
+    esperar(lambda: "3,5 %" in custos_texto(pagina, "#perdas"))
+    assert repo_custos.parametros["perda_percentual"] == Decimal("3.5")
+    assert pagina.js("window.__marca") == "mesma-pagina"
 
 
 MENOR_FONTE_NA_PAGINA = """
@@ -2293,7 +2630,7 @@ Math.min(...[...document.querySelectorAll('main *')]
   .map(e => parseFloat(getComputedStyle(e).fontSize)))
 """
 CONTROLES_BAIXOS = """
-[...document.querySelectorAll('main a.botao, main button, main input')]
+[...document.querySelectorAll('main a.botao, main a.custos-lapis, main button, main input')]
   .filter(e => e.getClientRects().length && e.type !== 'hidden')
   .filter(e => e.getBoundingClientRect().height < 44).map(e => e.tagName + '.' + e.className)
 """
@@ -2310,23 +2647,35 @@ SAINDO_NA_HORIZONTAL = """
 def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
     pagina, servidor, repo_custos, largura
 ):
+    from datetime import date
     from decimal import Decimal
 
-    repo_custos.salvar_item(None, "acessorio", "Chaveiro " + "x" * 90, Decimal("1234.5678"), 7, 1)
-    repo_custos.salvar_item(None, "acessorio", "Imã", Decimal("10"), 3, 1)
-    repo_custos.salvar_item(None, "embalagem", "Caixa " + "y" * 100, Decimal("36"), 12, 1)
+    from app.custos_repositorio import GastoManutencao
+
+    estoque = estoque_de_custos()
+    estoque.com_item("Chaveiro " + "x" * 90, quantidade=7, valor_total=Decimal("1234.5678"))
+    estoque.com_item("Caixa " + "y" * 100, categoria="embalagem", quantidade=12)
+    repo_custos.gastos.append(
+        GastoManutencao(1, date(2026, 10, 3), "Peça " + "z" * 150, Decimal("1234.56"))
+    )
     pagina.tela(largura, 900)
 
     estados = [
         "/custos",
-        "/custos?editar=filamento-1",
+        "/custos?editar=insumo-0",
+        "/custos?editar=insumo-1",
+        "/custos?editar=insumo-3",
         "/custos?editar=valores-energia",
+        "/custos?editar=valores-energia-ajuste",
         "/custos?editar=valores-perdas",
+        "/custos?editar=valores-horas",
         "/custos?editar=valores-mdo",
-        "/custos?editar=valores-manutencao",
+        "/custos?editar=valores-mei",
+        "/custos?editar=valores-retirada",
+        "/custos?editar=valores-taxas",
+        "/custos?editar=valores-manutencao-ajuste",
+        "/custos?editar=manutencao-periodo",
         "/custos?editar=valores-depreciacao",
-        "/custos?editar=item-1",
-        "/custos?editar=item-3",
     ]
     for estado in estados:
         pagina.abrir(estado)
@@ -2342,9 +2691,26 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
             if not c.startswith(("INPUT", "TEXTAREA"))
         ]
         assert cortes == [], contexto
-        # Custos Diretos antes de Custos Indiretos, e todas as seções visíveis.
+        # Os três blocos, na ordem, e todas as seções visíveis.
         titulos = pagina.js(
             "[...document.querySelectorAll('main h2')].map(h => h.textContent.trim())"
         )
-        assert titulos == ["Custos Diretos", "Custos Indiretos"], contexto
+        assert titulos == [
+            "Custos diretos",
+            "Custos indiretos",
+            "Despesas fixas e metas gerenciais",
+        ], contexto
         assert pagina.js("document.querySelectorAll('main section.secao').length") == 10, contexto
+        # Todo card editável tem o lápis "Editar" visível, com nome acessível.
+        lapis = pagina.js(
+            "[...document.querySelectorAll('main .custos-lapis')]"
+            ".map(a => [a.title, a.getAttribute('aria-label').startsWith('Editar '),"
+            " a.getBoundingClientRect().width >= 44])"
+        )
+        assert len(lapis) >= 13 and all(item == ["Editar", True, True] for item in lapis), contexto
+        # Com todos os "Ver detalhes" abertos, nada corta nem estoura a largura.
+        pagina.js("document.querySelectorAll('main details').forEach(d => { d.open = true })")
+        assert pagina.js("document.documentElement.scrollWidth") <= largura, contexto
+        assert pagina.js(SAINDO_NA_HORIZONTAL) == [], contexto
+        assert pagina.js(CONTROLES_BAIXOS) == [], contexto
+        assert pagina.js(MENOR_FONTE_NA_PAGINA) >= 11, contexto

@@ -29,6 +29,12 @@ class CompraGravada:
     lotes: list[tuple[str, int]]  # (filamento ou item, id do lote), na ordem dos itens
 
 
+def _valor(item) -> Decimal:
+    return (
+        item.quantidade * item.valor_unitario if item.categoria == "filamento" else item.valor_total
+    )
+
+
 def _listar(compra: CompraParaGravar) -> CompraListada:
     """A compra como o banco a devolve em listar_compras (total = itens + frete)."""
     itens = tuple(
@@ -42,14 +48,12 @@ def _listar(compra: CompraParaGravar) -> CompraListada:
             marca=i.marca,
             peso_rolo_g=i.peso_rolo_g,
             nome=i.nome,
+            valor=_valor(i),
             imagem_caminho=i.imagem_caminho,
         )
         for i in compra.itens
     )
-    valor = sum(
-        (i.quantidade * i.valor_unitario if i.categoria == "filamento" else i.valor_total)
-        for i in compra.itens
-    )
+    valor = sum((_valor(i) for i in compra.itens), Decimal(0))
     return CompraListada(
         compra.id,
         compra.data_compra,
@@ -85,17 +89,18 @@ class RepositorioEstoqueMemoria:
 
     # ---------- Compra ----------
 
-    def listar_compras(self) -> Compras:
+    def listar_compras(self, inicio: date | None = None, fim: date | None = None) -> Compras:
         if self.falhar:
             raise FalhaNoEstoque
-        todas = [g.compra for g in self.compras.values()]
-        listadas = [_listar(c) for c in todas]
-        recentes = sorted(listadas, key=lambda c: (c.data_compra, c.id), reverse=True)[:20]
-        return Compras(
-            total_gasto=sum((c.total for c in listadas), Decimal(0)),
-            quantidade=len(listadas),
-            recentes=tuple(recentes),
-        )
+        listadas = [_listar(g.compra) for g in self.compras.values()]
+        meses = sorted({c.data_compra.strftime("%Y-%m") for c in listadas}, reverse=True)
+        no_periodo = [
+            c
+            for c in listadas
+            if (inicio is None or c.data_compra >= inicio) and (fim is None or c.data_compra < fim)
+        ]
+        ordenadas = sorted(no_periodo, key=lambda c: (c.data_compra, c.id), reverse=True)
+        return Compras(meses=tuple(meses), compras=tuple(ordenadas))
 
     def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
         if "assinar" in self.falhar_em:
@@ -235,10 +240,19 @@ class RepositorioEstoqueMemoria:
         quantidade=10,
         data_compra=date(2026, 9, 1),
         valor_total=None,
+        imagem_caminho=None,
+        quantidade_comprada=None,
     ) -> int:
         lote_id = self._novo("item")
         valor = Decimal(quantidade) if valor_total is None else valor_total  # R$ 1,00/un
         self.itens[lote_id] = ItemEstoque(
-            lote_id, categoria, nome, quantidade, data_compra, max(quantidade, 1), valor
+            lote_id,
+            categoria,
+            nome,
+            quantidade,
+            data_compra,
+            max(quantidade, 1) if quantidade_comprada is None else quantidade_comprada,
+            valor,
+            imagem_caminho,
         )
         return lote_id

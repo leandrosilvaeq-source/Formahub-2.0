@@ -1,126 +1,88 @@
 {% extends "base.html" %}
 
 {% block title %}Custos · FormaHub 2.0{% endblock %}
+{% block main_classe %} container-custos{% endblock %}
 
-{# Campo de texto de um formulário de custos. `padrao` é o valor salvo; o que foi digitado (numa
-   tentativa recusada) tem prioridade. #}
-{% macro campo(escopo, nome, rotulo, unidade, padrao, modo="decimal", maximo=None, obrigatorio=True, placeholder="", dica="") -%}
-{% set id = escopo ~ "-" ~ nome %}
-{% set mensagem = estado.erro(escopo, nome) %}
-<div class="campo{% if mensagem %} tem-erro{% endif %}">
-  <label for="{{ id }}">{{ rotulo }}{% if unidade %} <span class="custos-unidade">({{ unidade }})</span>{% endif %}</label>
-  <input id="{{ id }}" name="{{ nome }}" type="text" inputmode="{{ modo }}" autocomplete="off"
-    {%- if obrigatorio %} required{% endif %}
-    {%- if maximo %} maxlength="{{ maximo }}"{% endif %}
-    {%- if placeholder %} placeholder="{{ placeholder }}"{% endif %}
-    value="{{ estado.texto(escopo, nome, padrao) }}"
-    {%- if mensagem or dica %} aria-describedby="{% if dica %}{{ id }}-dica{% endif %}{% if dica and mensagem %} {% endif %}{% if mensagem %}{{ id }}-erro{% endif %}"{% endif %}
-    {%- if mensagem %} aria-invalid="true"{% endif %}>
-  {% if dica %}<p class="custos-dica" id="{{ id }}-dica">{{ dica }}</p>{% endif %}
-  {% if mensagem %}<p class="campo-erro" id="{{ id }}-erro">{{ mensagem }}</p>{% endif %}
+{% from "custos_macros.html" import campo, abrir_form, botoes, lapis, valores, cartao_filamento, cartao_energia, cartao_depreciacao, cartao_manutencao, cartao_perda, cartao_mdo with context %}
+
+{# Cabeçalho de cada item: título, classificação, unidade e origem; o critério (e o que mais vier
+   no bloco chamador) fica em "Ver detalhes", recolhido, a menos que `aberto`. #}
+{% macro cabecalho(rotulo_id, titulo, classificacao, unidade, origem="", provisorio=False, criterio="", aberto=False, editar="", editar_desc="", etiquetas=True, titulo_visivel=True) -%}
+<div class="custos-cab">
+  <div class="custos-cab-titulo">
+    <h4 id="{{ rotulo_id }}"{% if not titulo_visivel %} class="visualmente-oculto"{% endif %}>{{ titulo }}</h4>
+    {% if etiquetas %}<ul class="custos-etiquetas">
+      <li class="custos-etiqueta">{{ classificacao }}</li>
+      <li class="custos-etiqueta">Unidade: {{ unidade }}</li>
+      {% if origem %}<li class="custos-etiqueta custos-origem{% if origem == "Manual" %} custos-origem-manual{% endif %}">Origem: {{ origem }}{% if provisorio %} · provisório{% endif %}</li>{% endif %}
+    </ul>{% endif %}
+  </div>
+  {% if editar %}{{ lapis(editar, editar_desc or titulo) }}{% endif %}
+  {% if criterio or caller is defined %}
+  <details class="custos-detalhes"{% if aberto %} open{% endif %}>
+    <summary>Ver detalhes</summary>
+    {% if criterio %}<p class="custos-dica"><strong>Critério:</strong> {{ criterio }}</p>{% endif %}
+    {% if caller is defined %}{{ caller() }}{% endif %}
+  </details>
+  {% endif %}
 </div>
 {%- endmacro %}
 
-{# Início e fim de um formulário de edição: CSRF, mensagem geral, Salvar e Cancelar. #}
-{% macro abrir_form(acao, escopo, classe="custos-form") -%}
-<form class="{{ classe }}" method="post" action="{{ acao }}" novalidate>
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  {% if estado.falhas.get(escopo) %}
-  <div class="alerta alerta-erro" role="alert">{{ estado.falhas[escopo] }}</div>
-  {% endif %}
-{%- endmacro %}
-
-{% macro botoes(ancora, rotulo_salvar="Salvar") -%}
-  <div class="custos-form-acoes">
-    <button type="submit" class="botao botao-primario">{{ rotulo_salvar }}</button>
-    <a class="botao botao-secundario" href="/custos#{{ ancora }}">Cancelar</a>
-  </div>
-</form>
-{%- endmacro %}
-
-{# Um ou mais valores únicos (uma chave de custos_parametros cada), com Editar/Salvar/Cancelar. #}
-{% macro valores(grupo, ancora, descricao_editar) -%}
-{% set escopo = "valores-" ~ grupo %}
-{% if escopo in estado.abertos %}
-  {{ abrir_form("/custos/valores/" ~ grupo, escopo) }}
-  <div class="custos-form-campos">
-  {% for c in grupos[grupo] %}
-  {{ campo(escopo, c.nome, c.rotulo, c.unidade, valor_do_campo(parametros.get(c.chave), c.formato),
-       obrigatorio=not c.opcional, placeholder="A definir" if c.opcional else "",
-       dica="Deixe em branco para manter “A definir”. Zero é um valor." if c.opcional else "") }}
-  {% endfor %}
-  </div>
-  {{ botoes(ancora) }}
-{% else %}
-  <dl class="custos-valores">
-    {% for c in grupos[grupo] %}
-    <div>
-      <dt>{{ c.rotulo }}</dt>
-      <dd>
-        {%- if c.chave not in parametros %}—
-        {%- elif parametros[c.chave] is none %}<span class="custos-pendente">A definir</span>
-        {%- elif c.formato == "moeda" %}{{ parametros[c.chave] | custo }}{% if "/" in c.unidade %}<span class="custos-unidade">/{{ c.unidade.split("/")[1] }}</span>{% endif %}
-        {%- else %}{{ parametros[c.chave] | numero }}<span class="custos-unidade">{{ "" if c.unidade == "%" else " " }}{{ c.unidade }}</span>{% endif -%}
-      </dd>
-    </div>
-    {% endfor %}
-    {% if caller is defined %}{{ caller() }}{% endif %}
-  </dl>
-  <a class="botao botao-secundario custos-editar" href="/custos?editar=valores-{{ grupo }}#{{ ancora }}"
-    aria-label="Editar {{ descricao_editar }}">Editar</a>
-{% endif %}
-{%- endmacro %}
-
-{# Acessórios ou embalagens: lista, edição de cada item e formulário de cadastro. #}
-{% macro itens_secao(rota, titulo, singular, vazio) -%}
-<section class="secao custos-secao" id="{{ rota }}" aria-labelledby="titulo-{{ rota }}">
-  <h3 id="titulo-{{ rota }}">{{ titulo }}</h3>
-  <p class="custos-dica">Informe o valor total da compra e a quantidade de unidades adquiridas: o custo unitário (R$/un) é calculado.</p>
-  {% if not itens[rota] %}
-  <p class="custos-vazio">{{ vazio }}</p>
-  {% else %}
-  <ul class="custos-lista">
-    {% for i in itens[rota] %}
-    {% set escopo = "item-" ~ i.id %}
-    <li class="custos-item" id="item-{{ i.id }}">
-      {% if escopo in estado.abertos %}
-      {{ abrir_form("/custos/itens/" ~ rota ~ "/" ~ i.id, escopo) }}
-      <div class="custos-form-grade">
-        {{ campo(escopo, "nome", "Nome", "", i.nome, "text", 120) }}
-        {{ campo(escopo, "valor_compra", "Valor total de compra", "R$", valor_do_campo(i.valor_compra, "moeda")) }}
-        {{ campo(escopo, "quantidade", "Quantidade comprada", "un", i.quantidade, "numeric", 9) }}
-      </div>
-      <p class="custos-dica">Custo unitário atual: {{ i.custo_unitario | custo }}/un. Ele é recalculado ao salvar.</p>
-      {{ botoes(rota) }}
-      {% else %}
-      <div class="custos-item-corpo">
-        <strong class="custos-item-nome">{{ i.nome }}</strong>
-        <dl class="custos-item-dados">
-          <div><dt>Valor de compra</dt><dd>{{ i.valor_compra | custo }}</dd></div>
-          <div><dt>Quantidade</dt><dd>{{ i.quantidade }} <span class="custos-unidade">un</span></dd></div>
-          <div class="custos-item-unitario"><dt>Custo unitário</dt><dd>{{ i.custo_unitario | custo }}<span class="custos-unidade">/un</span></dd></div>
-        </dl>
-        <a class="botao botao-secundario custos-editar" href="/custos?editar=item-{{ i.id }}#item-{{ i.id }}"
-          aria-label="Editar {{ i.nome }}">Editar</a>
-      </div>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-  {% set novo = "novo-" ~ rota %}
-  {{ abrir_form("/custos/itens/" ~ rota, novo, "custos-form custos-novo") }}
-  <h4>Cadastrar {{ singular }}</h4>
-  <div class="custos-form-grade">
-    {{ campo(novo, "nome", "Nome", "", "", "text", 120) }}
-    {{ campo(novo, "valor_compra", "Valor total de compra", "R$", "") }}
-    {{ campo(novo, "quantidade", "Quantidade comprada", "un", "", "numeric", 9) }}
-  </div>
-  <div class="custos-form-acoes">
-    <button type="submit" class="botao botao-primario">Cadastrar</button>
-  </div>
-  </form>
-</section>
+{# Lista de acessórios ou embalagens no padrão da Lista de Pedidos (tabela-rolagem + tabela-pedidos):
+   foto (prévia com lupa), item, quantidade (saldo disponível somando os lotes) e custo unitário
+   calculado pelas compras (média ponderada de todo o histórico). Ajustes manuais antigos ficam
+   guardados, mas não entram aqui. #}
+{% macro tabela_insumos(itens, legenda) -%}
+<div class="tabela-rolagem">
+  <table class="tabela-pedidos custos-tabela-insumos">
+    <caption class="visualmente-oculto">{{ legenda }}</caption>
+    <thead>
+      <tr>
+        <th scope="col" class="custos-col-foto">Foto</th>
+        <th scope="col">Item</th>
+        <th scope="col" class="coluna-numero">Quantidade</th>
+        <th scope="col" class="coluna-numero">Custo unitário</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for i in itens %}
+      <tr id="insumo-{{ todos_insumos.index(i) }}">
+        <td class="custos-col-foto">
+          {% if i.imagem_caminho and i.imagem_caminho in fotos_itens %}
+          <button type="button" class="foto-previa-botao" aria-haspopup="dialog"
+            aria-label="Ampliar a foto de {{ i.titulo }}" title="Ampliar foto">
+            <img class="pedido-tabela-foto" src="{{ fotos_itens[i.imagem_caminho] }}" alt="Foto de referência: {{ i.titulo }}"
+              width="48" height="48" loading="lazy" referrerpolicy="no-referrer">
+          </button>
+          {% else %}
+          <span class="custos-sem-foto" role="img" aria-label="Sem foto de referência" title="Sem foto">—</span>
+          {% endif %}
+        </td>
+        <th scope="row" class="custos-col-item">
+          <span class="custos-item-nome">{{ i.titulo }}</span>
+        </th>
+        <td class="coluna-numero">{{ i.saldo | numero }}<span class="custos-unidade"> un</span></td>
+        <td class="coluna-numero">
+          {% if i.calculado is none %}—{% else %}
+          <button type="button" class="custos-hist-gatilho" aria-haspopup="dialog"
+            aria-label="Histórico de compras de {{ i.titulo }}; custo unitário {{ i.calculado | brl }}">{{ i.calculado | brl }}</button>
+          <div class="custos-hist-dados" hidden>
+            <table class="custos-hist-tabela">
+              <thead><tr><th scope="col">Data</th><th scope="col" class="coluna-numero">Quantidade</th><th scope="col" class="coluna-numero">Valor</th></tr></thead>
+              <tbody>
+                {% for data, quantidade, valor in i.historico %}
+                <tr><td>{{ data | data }}</td><td class="coluna-numero">{{ quantidade }}</td><td class="coluna-numero">{{ valor | brl }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {%- endmacro %}
 
 {% block content %}
@@ -129,7 +91,7 @@
 <div class="pagina-topo">
   <div>
     <h1>Custos</h1>
-    <p>Cadastro dos custos da empresa, com edição manual.</p>
+    <p>Administração e gestão de custos: custos diretos, custos indiretos e despesas fixas mensais.</p>
   </div>
   <div class="pagina-topo-acoes">
     <a class="botao botao-secundario" href="/">Início</a>
@@ -142,135 +104,177 @@
 
 {% if erro %}
 <div class="alerta alerta-erro" role="alert">{{ erro }}</div>
-{% if filamentos is not defined %}
+{% if parametros is not defined %}
 <a class="botao botao-primario" href="/custos">Tentar novamente</a>
 {% endif %}
 {% endif %}
 
-{% if filamentos is defined %}
+{% if parametros is defined %}
 
-<h2 class="custos-grupo" id="custos-diretos">Custos Diretos</h2>
+<p class="custos-dica custos-legenda">Cada grandeza tem a sua unidade (R$/kg, R$/h, R$/mês) e <strong>não é somada com as outras</strong>: o subtotal por hora da máquina e o total mensal aparecem separados, e a mão de obra ativa fica à parte. O lápis de cada card edita o valor; nos valores vindos de Compras/Estoque ele é só um ajuste manual de referência e nunca altera compras ou saldos.</p>
 
+{# ================= CUSTOS DIRETOS ================= #}
+<h2 class="custos-grupo" id="custos-diretos">Custos diretos</h2>
+
+<h3 class="custos-subgrupo" id="filamentos-grupo">1 · Filamentos</h3>
 <section class="secao custos-secao" id="filamentos" aria-labelledby="titulo-filamentos">
-  <h3 id="titulo-filamentos">Material (Filamento)</h3>
-  <ul class="custos-lista">
-    {% for f in filamentos %}
-    {% set escopo = "filamento-" ~ f.id %}
-    <li class="custos-item" id="filamento-{{ f.id }}">
-      {% if escopo in estado.abertos %}
-      {{ abrir_form("/custos/filamentos/" ~ f.id, escopo) }}
-      <p class="custos-item-nome"><strong>{{ f.nome }}</strong>{% if f.abrange %} <span class="custos-dica">— {{ f.abrange }}</span>{% endif %}</p>
-      {{ campo(escopo, "valor_kg", "Valor", "R$/kg", valor_do_campo(f.valor_kg, "moeda")) }}
-      {{ botoes("filamentos") }}
-      {% else %}
-      <div class="custos-item-corpo">
-        <div class="custos-item-titulo">
-          <strong class="custos-item-nome">{{ f.nome }}</strong>
-          {% if f.abrange %}<span class="custos-dica">{{ f.abrange }}</span>{% endif %}
-        </div>
-        <p class="custos-valor">{{ f.valor_kg | custo }}<span class="custos-unidade">/kg</span></p>
-        <a class="botao botao-secundario custos-editar" href="/custos?editar=filamento-{{ f.id }}#filamento-{{ f.id }}"
-          aria-label="Editar valor de {{ f.nome }}">Editar</a>
-      </div>
-      {% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-
-<section class="secao custos-secao" id="custo-medio-kg" aria-labelledby="titulo-custo-medio-kg">
-  <h3 id="titulo-custo-medio-kg">Custo médio por kg (compras do estoque)</h3>
-  <p class="custos-dica">Média ponderada pelo peso comprado: total pago nos rolos ÷ kg comprados. O frete não entra. Só leitura: muda quando as compras mudam.</p>
-  {% if custo_medio_kg is none %}
-  <p class="custos-aviso" role="status">Não foi possível carregar as compras do estoque agora.</p>
+  {{ cabecalho("titulo-filamentos", "Filamentos", "Custo direto · variável", "R$/kg e R$/g",
+       etiquetas=False, titulo_visivel=False,
+       criterio="o valor principal de cada card é o custo/kg definido por você; sem valor definido, fica “A definir” (nunca se usa o calculado em silêncio). O calculado é a média ponderada pelo peso líquido comprado (rolos × peso do rolo), nunca média simples, e não muda com o valor definido. PETG reúne todos os tipos; o PLA fica separado em Sólido, Velvet, Silk e Multicolor (Bicolor/Duocolor e Tricolor); outros materiais cadastrados, como TPU, ganham o seu card. O frete fica na compra. A energia elétrica fica em Outros custos diretos.") }}
+  {% if insumos is none %}
+  <p class="custos-aviso" role="status">{{ msg_estoque }}</p>
   {% else %}
-  <ul class="custos-lista">
-    {% for g in custo_medio_kg %}
-    <li class="custos-item">
-      <div class="custos-item-corpo">
-        <div class="custos-item-titulo">
-          <strong class="custos-item-nome">{{ g.titulo }}</strong>
-          <span class="custos-dica">{% if g.compras %}{{ g.kg_comprados | numero }} kg em {{ g.compras }} {{ "compra" if g.compras == 1 else "compras" }}{% else %}Nenhuma compra registrada{% endif %}</span>
-        </div>
-        <p class="custos-valor">{% if g.custo_kg is none %}—{% else %}{{ g.custo_kg | custo_aprox }}<span class="custos-unidade">/kg</span>{% endif %}</p>
-      </div>
-    </li>
-    {% endfor %}
+  <ul class="custos-cartoes custos-cartoes-fil">
+    {% for i in filamentos_em_ordem %}{{ cartao_filamento(i) }}{% endfor %}
   </ul>
   {% endif %}
 </section>
 
-<section class="secao custos-secao" id="energia" aria-labelledby="titulo-energia">
-  <h3 id="titulo-energia">Energia elétrica</h3>
-  <p class="custos-dica">Impressora Bambu Lab A1. O custo por hora é calculado: tarifa (R$/kWh) × consumo (W) ÷ 1.000.</p>
-  {% call valores("energia", "energia", "tarifa e consumo da energia elétrica") %}
-    <div class="custos-calculado">
-      <dt>Energia por hora (calculado)</dt>
-      <dd>{% if energia_hora is not none %}{{ energia_hora | custo }}<span class="custos-unidade">/h</span>{% else %}—{% endif %}</dd>
+<h3 class="custos-subgrupo" id="acessorios-embalagens-grupo">2 · Acessórios e embalagens</h3>
+<section class="secao custos-secao" id="insumos" aria-labelledby="titulo-acessorios">
+  {{ cabecalho("titulo-acessorios", "Custo médio por unidade", "Custo direto · variável", "R$/un", "Calculado (compras)",
+       etiquetas=False, titulo_visivel=False,
+       criterio="Quantidade é o saldo disponível, somando os lotes do mesmo item. O custo unitário é a média ponderada de todas as compras do item, inclusive lotes já consumidos: soma dos valores comprados ÷ soma das unidades compradas (não é média simples dos preços). O frete fica na compra e não entra. Acessórios e embalagens não se misturam. No pedido: custo unitário × quantidade utilizada. Passe o mouse (ou toque) no custo unitário para ver o histórico de compras: data, quantidade e valor pago. Ajustes manuais antigos continuam guardados, mas não substituem este cálculo.") }}
+  {% if insumos is none %}
+  <p class="custos-aviso" role="status">{{ msg_estoque }}</p>
+  {% else %}
+  <div class="custos-duas" id="acessorios-embalagens">
+    <div id="acessorios">
+      <h5 class="custos-categoria">Acessórios</h5>
+      {% if insumos[1]["acessorio"] %}{{ tabela_insumos(insumos[1]["acessorio"], "Acessórios · custo médio por unidade") }}
+      {% else %}<p class="custos-vazio">Nenhum acessório cadastrado nas compras do estoque.</p>{% endif %}
+    </div>
+    <div id="embalagens">
+      <h5 class="custos-categoria">Embalagens</h5>
+      {% if insumos[1]["embalagem"] %}{{ tabela_insumos(insumos[1]["embalagem"], "Embalagens · custo médio por unidade") }}
+      {% else %}<p class="custos-vazio">Nenhuma embalagem cadastrada nas compras do estoque.</p>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<h3 class="custos-subgrupo" id="outros-diretos">3 · Outros custos diretos</h3>
+<section class="secao custos-secao" id="outros-cards" aria-labelledby="titulo-outros">
+  <h4 id="titulo-outros" class="visualmente-oculto">Outros custos diretos</h4>
+  <ul class="custos-cartoes custos-cartoes-fil">
+    {{ cartao_energia() }}
+    {{ cartao_perda() }}
+    {{ cartao_mdo() }}
+  </ul>
+</section>
+
+{# ================= CUSTOS INDIRETOS ================= #}
+<h2 class="custos-grupo" id="custos-indiretos">Custos indiretos</h2>
+
+<section class="secao custos-secao" id="indiretos-cards" aria-labelledby="titulo-indiretos">
+  <h4 id="titulo-indiretos" class="visualmente-oculto">Custos indiretos da máquina</h4>
+  <ul class="custos-cartoes custos-cartoes-fil">
+    {{ cartao_depreciacao() }}
+    {{ cartao_manutencao() }}
+  </ul>
+</section>
+
+<div class="custos-grade">
+<section class="secao custos-secao" id="horas" aria-labelledby="titulo-horas">
+  {{ cabecalho("titulo-horas", "Horas impressas por mês", "Referência de produção", "h/mês", "Parâmetro editável",
+       criterio="uma única referência, compartilhada por energia e depreciação (mudar aqui recalcula as duas).",
+       editar="/custos?editar=valores-horas#horas", editar_desc="as horas impressas por mês") }}
+  {% call valores("horas", "horas", "as horas impressas por mês", botao=False) %}
+    <div>
+      <dt>Data-base</dt>
+      <dd>{% if horas_data_base %}{{ horas_data_base | data }}{% else %}—{% endif %}</dd>
     </div>
   {% endcall %}
-</section>
-
-<section class="secao custos-secao" id="perdas" aria-labelledby="titulo-perdas">
-  <h3 id="titulo-perdas">Perdas</h3>
-  {{ valores("perdas", "perdas", "o percentual de perdas") }}
-</section>
-
-{{ itens_secao("acessorios", "Acessórios", "acessório", "Nenhum acessório cadastrado.") }}
-
-{{ itens_secao("embalagens", "Embalagens", "embalagem", "Nenhuma embalagem cadastrada.") }}
-
-<h2 class="custos-grupo" id="custos-indiretos">Custos Indiretos</h2>
-
-<div class="custos-par">
-  <section class="secao custos-secao" id="mdo" aria-labelledby="titulo-mdo">
-    <h3 id="titulo-mdo">Mão de Obra (MDO)</h3>
-    <p class="custos-dica">Somada separadamente: não está embutida na manutenção nem na depreciação.</p>
-    {{ valores("mdo", "mdo", "a Mão de Obra") }}
-  </section>
-
-  <section class="secao custos-secao" id="manutencao" aria-labelledby="titulo-manutencao">
-    <h3 id="titulo-manutencao">Manutenção</h3>
-    <p class="custos-dica">Custo de manutenção por hora de impressão. Enquanto estiver “A definir”, ele não entra na soma.</p>
-    {{ valores("manutencao", "manutencao", "a Manutenção") }}
-  </section>
-</div>
-
-<section class="secao custos-secao" id="depreciacao" aria-labelledby="titulo-depreciacao">
-  <h3 id="titulo-depreciacao">Depreciação</h3>
-  <p class="custos-dica">Valor por hora = (valor de aquisição − valor residual) ÷ (vida útil em anos × 12 × dias por mês × horas por dia). Ele é calculado a partir dos critérios abaixo.</p>
-  {% call valores("depreciacao", "depreciacao", "os critérios da depreciação") %}
-    {% if depreciacao is not none %}
-    <div class="custos-calculado"><dt>Horas mensais (dias × horas)</dt><dd>{{ depreciacao.horas_mensais | numero }}<span class="custos-unidade"> h</span></dd></div>
-    <div class="custos-calculado"><dt>Depreciação mensal</dt><dd>{{ depreciacao.mensal | custo_aprox }}<span class="custos-unidade">/mês</span></dd></div>
-    <div class="custos-calculado custos-destaque"><dt>Depreciação por hora (calculado)</dt><dd>{{ depreciacao.por_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
-    {% endif %}
-  {% endcall %}
+  <p class="{% if horas_vencida %}custos-aviso{% else %}custos-dica{% endif %}" role="status">
+    {% if horas_vencida %}Revisão trimestral vencida em {{ horas_proxima | data }}. {% endif %}
+    Revise esta referência a cada trimestre{% if horas_proxima and not horas_vencida %} (próxima revisão até {{ horas_proxima | data }}){% endif %}: ela muda o custo por hora de energia e de depreciação.
+  </p>
 </section>
 
 <section class="secao custos-secao custos-resumo" id="resumo" aria-labelledby="titulo-resumo">
-  <h3 id="titulo-resumo">Custo por hora</h3>
-  <p class="custos-dica">Energia + MDO + Depreciação + Manutenção, somadas separadamente.</p>
-  {% if total_hora is not none %}
+  <div class="custos-cab">
+    <div class="custos-cab-titulo"><h4 id="titulo-resumo">Subtotal por hora da máquina</h4></div>
+    <details class="custos-detalhes">
+      <summary>Ver detalhes</summary>
+      <p class="custos-dica">Energia + depreciação + manutenção, em R$/h, usando o valor utilizado de cada uma (a energia entra aqui por ser hora de máquina). Não inclui a perda de material (R$/g) nem a MDO (pessoas) nem custos mensais (R$/mês).</p>
+    </details>
+  </div>
+  {% if subtotal_hora is not none %}
   <dl class="custos-valores">
-    <div><dt>Energia elétrica</dt><dd>{{ energia_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
-    <div><dt>Mão de Obra (MDO)</dt><dd>{{ parametros["mdo_hora"] | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
-    <div><dt>Depreciação</dt><dd>{{ depreciacao.por_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
-    <div><dt>Manutenção</dt><dd>{% if parametros["manutencao_hora"] is none %}<span class="custos-pendente">A definir</span>{% else %}{{ parametros["manutencao_hora"] | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
     <div class="custos-total">
-      <dt>{{ "Total" if total_completo else "Subtotal por hora" }}</dt>
-      <dd>{{ total_hora | custo_aprox }}<span class="custos-unidade">/h</span>{% if not total_completo %}<span class="custos-unidade custos-nowrap"> (≈ {{ total_hora | custo_curto }}/h)</span>{% endif %}</dd>
+      <dt>{{ "Subtotal da máquina" if subtotal_completo else "Subtotal parcial da máquina" }}</dt>
+      <dd>{{ subtotal_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd>
     </div>
+    <div><dt>Energia elétrica</dt><dd>{{ energia.usado | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
+    <div><dt>Depreciação gerencial</dt><dd>{{ depreciacao_hora.usado | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
+    <div><dt>Manutenção</dt><dd>{% if manutencao.usado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ manutencao.usado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
   </dl>
-  {% if not total_completo %}
-  <p class="custos-aviso" role="status">Manutenção ainda não definida. Este é apenas um subtotal, não o custo por hora completo.</p>
+  {% if not subtotal_completo %}
+  <p class="custos-aviso" role="status">Manutenção ainda não definida: este é um subtotal parcial, não o custo completo da hora de máquina.</p>
   {% endif %}
   {% else %}
-  <p class="custos-vazio">Indisponível: falta algum dos valores acima.</p>
+  <p class="custos-vazio">Indisponível: falta energia ou depreciação.</p>
   {% endif %}
 </section>
+</div>
+
+{# ================= DESPESAS FIXAS E METAS ================= #}
+<h2 class="custos-grupo" id="fixos-metas">Despesas fixas e metas gerenciais</h2>
+
+<div class="custos-grade">
+<section class="secao custos-secao" id="mei" aria-labelledby="titulo-mei">
+  {{ cabecalho("titulo-mei", "MEI", "Despesa fixa indireta", "R$/mês", "Parâmetro editável",
+       criterio="valor mensal fixo, independente do volume produzido.",
+       editar="/custos?editar=valores-mei#mei", editar_desc="o valor do MEI") }}
+  {{ valores("mei", "mei", "o valor do MEI", botao=False) }}
+</section>
+
+<section class="secao custos-secao" id="retirada" aria-labelledby="titulo-retirada">
+  {{ cabecalho("titulo-retirada", "Retirada desejada", "Meta gerencial (não é custo)", "R$/mês", "Parâmetro editável",
+       criterio="meta mensal de retirada dos sócios. Não é somada ao custo de produção nem ao total mensal ao lado.",
+       editar="/custos?editar=valores-retirada#retirada", editar_desc="a retirada desejada") }}
+  {{ valores("retirada", "retirada", "a retirada desejada", botao=False) }}
+</section>
+
+<section class="secao custos-secao custos-resumo" id="total-mensal" aria-labelledby="titulo-total-mensal">
+  <div class="custos-cab">
+    <div class="custos-cab-titulo"><h4 id="titulo-total-mensal">Total mensal de custos fixos</h4></div>
+    <details class="custos-detalhes">
+      <summary>Ver detalhes</summary>
+      <p class="custos-dica">Em R$/mês, separado dos valores por hora e por grama. Hoje reúne só o MEI; a retirada desejada é meta e fica de fora.</p>
+    </details>
+  </div>
+  <dl class="custos-valores">
+    <div class="custos-total"><dt>Custos fixos indiretos</dt><dd>{% if total_mensal is not none %}{{ total_mensal | custo }}<span class="custos-unidade">/mês</span>{% else %}—{% endif %}</dd></div>
+    <div><dt>Meta de retirada (à parte)</dt><dd>{% if retirada is not none %}{{ retirada | custo }}<span class="custos-unidade">/mês</span>{% else %}—{% endif %}</dd></div>
+  </dl>
+</section>
+
+<section class="secao custos-secao" id="substituidos" aria-labelledby="titulo-substituidos">
+  <div class="custos-cab">
+    <div class="custos-cab-titulo"><h4 id="titulo-substituidos">Valores substituídos nesta revisão</h4></div>
+    <details class="custos-detalhes">
+      <summary>Ver detalhes</summary>
+      <p class="custos-dica">Pedidos e registros históricos não foram alterados. Só os parâmetros que ainda estavam no padrão antigo e nunca tinham sido editados foram trocados; o que foi editado à mão continua como estava.</p>
+      <ul class="custos-substituidos">
+        <li>Perda de material: 5% → 3%, só sobre o filamento.</li>
+        <li>Energia: 120 W × R$ 1,00/kWh → 40 kWh/mês × R$ 1,0393/kWh ÷ 305 h/mês (ajuste manual provisório de R$ 0,14/h).</li>
+        <li>Depreciação: R$ 6.000 em 12 h/dia × 30 dias → R$ 5.000 em 305 h/mês (ajuste manual provisório de R$ 0,27/h).</li>
+        <li>MDO: R$ 0,50 por hora de impressão → R$ 15,00 por hora de tempo ativo.</li>
+        <li>Manutenção e depreciação juntas (R$ 0,88/h) e os cadastros próprios de filamento, acessórios e embalagens: substituídos por Compras/Estoque; os registros antigos foram preservados no banco, sem uso na tela.</li>
+      </ul>
+    </details>
+  </div>
+</section>
+</div>
 
 {% endif %}
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/foto-previa.js') }}"></script>
+<script src="{{ url_for('static', path='js/custos-itens.js') }}" defer></script>
+<script src="{{ url_for('static', path='js/custos-filamentos.js') }}" defer></script>
 {% endblock %}

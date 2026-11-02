@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Manutenção · FormaHub 2.0{% endblock %}
+{% block main_classe %} container-pedidos container-manutencao{% endblock %}
+
+{% from "manutencao_macros.html" import linha_leitura, linha_edicao, bloco_indicadores with context %}
+
+{% block content %}
+<div class="consulta consulta-larga manutencao">
+
+<div class="pagina-topo">
+  <div>
+    <h1>Manutenção</h1>
+    <p>Cada linha é uma manutenção da máquina. Os custos alimentam o custo de manutenção por hora em Custos.</p>
+  </div>
+  <div class="pagina-topo-acoes">
+    <a class="botao botao-primario" id="manut-adicionar" href="/manutencao?editar=nova#manut-nova">Registrar manutenção</a>
+  </div>
+</div>
+
+{% if erro %}
+<div class="alerta alerta-erro" role="alert">{{ erro }}</div>
+{% else %}
+{% if sucesso %}<div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>{% endif %}
+{{ bloco_indicadores(ind) }}
+
+<p class="manut-ajuda" id="manut-ajuda">Dê dois cliques numa célula (ou toque nela, ou use Enter) para editar só aquele campo: Enter confirma, Esc cancela. O lápis da linha edita todos os campos.</p>
+
+<div id="manut-mensagem" class="producao-mensagem" aria-live="polite"></div>
+
+<div class="tabela-rolagem manut-rolagem">
+  <table class="tabela-pedidos manut-tabela" id="manut-tabela" data-csrf="{{ csrf }}">
+    <caption class="visualmente-oculto">Manutenções da máquina, da mais recente para a mais antiga</caption>
+    <thead>
+      <tr>
+        <th scope="col">Data</th>
+        <th scope="col">Tipo de manutenção</th>
+        <th scope="col">Tempo de máquina parada</th>
+        <th scope="col">Peça substituída</th>
+        <th scope="col" class="coluna-numero">Custo (R$)</th>
+        <th scope="col">Comentários</th>
+        <th scope="col">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if edicao and edicao.alvo == "nova" %}{{ linha_edicao(edicao) }}{% endif %}
+      {% for m in manutencoes %}
+      {% if edicao and edicao.alvo == m.id | string %}{{ linha_edicao(edicao) }}{% else %}{{ linha_leitura(m) }}{% endif %}
+      {% endfor %}
+      <tr class="manut-vazio"{% if manutencoes or (edicao and edicao.alvo == "nova") %} hidden{% endif %}>
+        <td colspan="7">Nenhuma manutenção registrada ainda. Use “Registrar manutenção” para criar a primeira.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/manutencao.js') }}" defer></script>
+{% endblock %}

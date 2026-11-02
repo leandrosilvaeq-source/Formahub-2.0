@@ -5,12 +5,13 @@ precisam viajar como texto nos dois sentidos: nada de float.
 """
 
 import json
+from datetime import date
 from decimal import Decimal
 
 import pytest
 from postgrest.exceptions import APIError
 
-from app.custos import CONSUMO, PERDA, TARIFA
+from app.custos import ENERGIA_MANUAL, HORAS_MES, MANUTENCAO, PERDA, TARIFA
 from app.custos_repositorio import (
     CustoRecusado,
     FalhaAoConsultarCustos,
@@ -20,46 +21,75 @@ from app.custos_repositorio import (
 from tests.test_pedidos_repositorio import ClienteSimulado
 
 LEITURA = {
-    "filamentos": [
-        {"id": 1, "nome": "PLA", "abrange": "Cores sólidas", "valor_kg": "100"},
-        {"id": 3, "nome": "PETG", "abrange": None, "valor_kg": "85.5000"},
-    ],
+    "filamentos": [{"id": 1, "nome": "PLA", "abrange": None, "valor_kg": "100"}],  # legado
+    "itens": [],  # legado
     "parametros": {
-        "energia_tarifa_kwh": "1",
-        "energia_consumo_w": "120",
-        "perda_percentual": "5",
-        "mdo_hora": "0.5",
-        "manutencao_depreciacao_hora": "0.88",
+        "energia_tarifa_kwh": "1.0393",
+        "perda_percentual": "3",
+        "horas_impressas_mes": "305",
+        "energia_hora_manual": "0.14",
+        "manutencao_hora": None,
     },
-    "itens": [
-        {
-            "id": 4,
-            "tipo": "acessorio",
-            "nome": "Imã",
-            "valor_compra": "10",
-            "quantidade": 3,
-            "custo_unitario": "3.3333333333333333",
-        }
+    "provisorios": ["energia_hora_manual"],
+    "datas": {"horas_impressas_mes": "2026-11-01"},
+    "ajustes": {"filamento:petg": "85.5000", "acessorio:Imã": "3.3333333333333333"},
+    "manutencao_gastos": [
+        {"id": 2, "data": "2026-10-20", "descricao": "Correia", "valor": "62.50"},
+        {"id": 1, "data": "2026-10-10", "descricao": "Bico", "valor": "62.50"},
     ],
+    "manutencao_sem_custo": ["2026-10-12"],
+    "manutencao_periodo": {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "250"},
 }
 
 
-def test_listar_converte_tudo_para_decimal_sem_perder_precisao():
+def test_listar_converte_tudo_para_decimal_e_data_sem_perder_precisao():
     cliente = ClienteSimulado(rpc={"listar_custos": LEITURA})
 
     custos = RepositorioCustosSupabase(cliente).listar()
 
     assert cliente.chamadas == [("rpc", ("listar_custos", {}))]
-    assert [(f.id, f.nome, f.abrange, f.valor_kg) for f in custos.filamentos] == [
-        (1, "PLA", "Cores sólidas", Decimal("100")),
-        (3, "PETG", None, Decimal("85.5000")),
+    assert custos.parametros[TARIFA] == Decimal("1.0393")
+    assert custos.parametros[PERDA] == Decimal("3")
+    assert custos.provisorios == {ENERGIA_MANUAL}
+    assert custos.datas == {HORAS_MES: date(2026, 11, 1)}
+    assert custos.ajustes == {
+        "filamento:petg": Decimal("85.5000"),
+        "acessorio:Imã": Decimal("3.3333333333333333"),
+    }
+    assert [(g.id, g.data, g.descricao, g.valor) for g in custos.gastos] == [
+        (2, date(2026, 10, 20), "Correia", Decimal("62.50")),
+        (1, date(2026, 10, 10), "Bico", Decimal("62.50")),
     ]
-    assert custos.parametros[TARIFA] == Decimal("1") and custos.parametros[CONSUMO] == Decimal(
-        "120"
+    assert custos.manutencoes_sem_custo == (date(2026, 10, 12),)
+    assert (custos.periodo.inicio, custos.periodo.fim, custos.periodo.horas) == (
+        date(2026, 10, 1),
+        date(2026, 10, 31),
+        Decimal("250"),
     )
-    (item,) = custos.itens
-    assert item.custo_unitario == Decimal("3.3333333333333333")  # texto -> Decimal, sem float
-    assert all(isinstance(f.valor_kg, Decimal) for f in custos.filamentos)
+    assert all(isinstance(v, Decimal) for v in custos.ajustes.values())
+
+
+def test_resposta_antiga_sem_manutencoes_sem_custo_continua_valida():
+    antiga = {k: v for k, v in LEITURA.items() if k != "manutencao_sem_custo"}
+
+    custos = RepositorioCustosSupabase(ClienteSimulado(rpc={"listar_custos": antiga})).listar()
+
+    assert custos.manutencoes_sem_custo == ()
+
+
+def test_sem_periodo_definido_vem_none():
+    cliente = ClienteSimulado(rpc={"listar_custos": {**LEITURA, "manutencao_periodo": None}})
+
+    assert RepositorioCustosSupabase(cliente).listar().periodo is None
+
+
+def test_manutencao_sem_valor_vem_como_none_e_nao_como_zero():
+    cliente = ClienteSimulado(rpc={"listar_custos": LEITURA})
+
+    custos = RepositorioCustosSupabase(cliente).listar()
+
+    assert custos.parametros[MANUTENCAO] is None
+    assert custos.parametros[MANUTENCAO] != Decimal(0)
 
 
 @pytest.mark.parametrize(
@@ -67,7 +97,8 @@ def test_listar_converte_tudo_para_decimal_sem_perder_precisao():
     [
         APIError({"message": "x", "code": "PGRST202"}),  # função ausente (migration pendente)
         ConnectionError("sem rede"),
-        {"formato": "antigo"},  # resposta sem os campos esperados
+        {"formato": "antigo"},  # resposta sem os campos novos (migration ainda não aplicada)
+        {k: v for k, v in LEITURA.items() if k != "ajustes"},
         None,
     ],
 )
@@ -78,35 +109,33 @@ def test_listar_com_falha_vira_falha_ao_consultar(resposta):
         RepositorioCustosSupabase(cliente).listar()
 
 
-def test_salvar_filamento_envia_valor_como_texto_e_usuario():
-    retorno = {"id": 1, "nome": "PLA", "abrange": None, "valor_kg": "99.9999"}
-    cliente = ClienteSimulado(rpc={"salvar_custo_filamento": retorno})
-
-    filamento = RepositorioCustosSupabase(cliente).salvar_filamento(1, Decimal("99.9999"), 2)
-
-    (_, (funcao, parametros)) = cliente.chamadas[0]
-    assert funcao == "salvar_custo_filamento"
-    assert parametros == {"p_id": 1, "p_valor_kg": "99.9999", "p_usuario_id": 2}
-    json.dumps(parametros)
-    assert filamento.valor_kg == Decimal("99.9999")
-
-
 def test_salvar_parametros_envia_so_as_chaves_alteradas_como_texto():
-    retorno = {"energia_tarifa_kwh": "0.95", "energia_consumo_w": "150"}
+    retorno = {"energia_tarifa_kwh": "0.95", "energia_consumo_kwh_mes": "42"}
     cliente = ClienteSimulado(rpc={"salvar_custos_parametros": retorno})
 
     atuais = RepositorioCustosSupabase(cliente).salvar_parametros(
-        {TARIFA: Decimal("0.95"), CONSUMO: Decimal("150")}, 3
+        {TARIFA: Decimal("0.95"), "energia_consumo_kwh_mes": Decimal("42")}, 3
     )
 
     (_, (funcao, parametros)) = cliente.chamadas[0]
     assert funcao == "salvar_custos_parametros"
     assert parametros == {
-        "p_valores": {"energia_tarifa_kwh": "0.95", "energia_consumo_w": "150"},
+        "p_valores": {"energia_tarifa_kwh": "0.95", "energia_consumo_kwh_mes": "42"},
         "p_usuario_id": 3,
     }
     json.dumps(parametros)
-    assert atuais == {TARIFA: Decimal("0.95"), CONSUMO: Decimal("150")}
+    assert atuais == {TARIFA: Decimal("0.95"), "energia_consumo_kwh_mes": Decimal("42")}
+
+
+def test_voltar_ao_calculado_envia_nulo_e_devolve_none():
+    cliente = ClienteSimulado(rpc={"salvar_custos_parametros": {ENERGIA_MANUAL: None}})
+
+    atuais = RepositorioCustosSupabase(cliente).salvar_parametros({ENERGIA_MANUAL: None}, 2)
+
+    (_, (funcao, parametros)) = cliente.chamadas[0]
+    assert parametros == {"p_valores": {ENERGIA_MANUAL: None}, "p_usuario_id": 2}
+    json.dumps(parametros)  # null no JSON, não a palavra "None" nem zero
+    assert atuais == {ENERGIA_MANUAL: None}
 
 
 def test_numeros_pequenos_e_grandes_nao_viram_notacao_cientifica():
@@ -117,33 +146,62 @@ def test_numeros_pequenos_e_grandes_nao_viram_notacao_cientifica():
     assert cliente.chamadas[0][1][1]["p_valores"] == {PERDA: "0.0000001"}
 
 
-def test_cadastrar_item_envia_id_nulo_e_valores_exatos():
-    retorno = {
-        "id": 9,
-        "tipo": "embalagem",
-        "nome": "Caixa P",
-        "valor_compra": "36.00",
-        "quantidade": 12,
-        "custo_unitario": "3.0000000000000000",
-    }
-    cliente = ClienteSimulado(rpc={"salvar_custo_item": retorno})
+def test_salvar_ajuste_de_insumo_envia_chave_valor_exato_e_usuario():
+    cliente = ClienteSimulado(rpc={"salvar_ajuste_insumo": {"filamento:petg": "90.5"}})
 
-    item = RepositorioCustosSupabase(cliente).salvar_item(
-        None, "embalagem", "Caixa P", Decimal("36.00"), 12, 1
+    RepositorioCustosSupabase(cliente).salvar_ajuste_insumo("filamento:petg", Decimal("90.50"), 2)
+
+    (_, (funcao, parametros)) = cliente.chamadas[0]
+    assert funcao == "salvar_ajuste_insumo"
+    assert parametros == {"p_chave": "filamento:petg", "p_valor": "90.50", "p_usuario_id": 2}
+    json.dumps(parametros)
+
+
+def test_voltar_o_insumo_ao_calculado_envia_valor_nulo():
+    cliente = ClienteSimulado(rpc={"salvar_ajuste_insumo": {}})
+
+    RepositorioCustosSupabase(cliente).salvar_ajuste_insumo("acessorio:Imã", None, 1)
+
+    assert cliente.chamadas[0][1][1] == {
+        "p_chave": "acessorio:Imã",
+        "p_valor": None,
+        "p_usuario_id": 1,
+    }
+
+
+def test_definir_periodo_de_manutencao():
+    retorno = {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "250.5"}
+    cliente = ClienteSimulado(rpc={"definir_periodo_manutencao": retorno})
+
+    periodo = RepositorioCustosSupabase(cliente).definir_periodo_manutencao(
+        date(2026, 10, 1), date(2026, 10, 31), Decimal("250.5"), 3
     )
 
     (_, (funcao, parametros)) = cliente.chamadas[0]
-    assert funcao == "salvar_custo_item"
+    assert funcao == "definir_periodo_manutencao"
     assert parametros == {
-        "p_id": None,
-        "p_tipo": "embalagem",
-        "p_nome": "Caixa P",
-        "p_valor_compra": "36.00",
-        "p_quantidade": 12,
-        "p_usuario_id": 1,
+        "p_inicio": "2026-10-01",
+        "p_fim": "2026-10-31",
+        "p_horas": "250.5",
+        "p_usuario_id": 3,
     }
-    json.dumps(parametros)
-    assert (item.id, item.custo_unitario) == (9, Decimal("3"))
+    assert periodo.horas == Decimal("250.5")
+
+
+CHAMADAS = {
+    "parametros": (
+        "salvar_custos_parametros",
+        lambda r: r.salvar_parametros({PERDA: Decimal("1")}, 1),
+    ),
+    "ajuste": (
+        "salvar_ajuste_insumo",
+        lambda r: r.salvar_ajuste_insumo("filamento:petg", Decimal("1"), 1),
+    ),
+    "periodo": (
+        "definir_periodo_manutencao",
+        lambda r: r.definir_periodo_manutencao(date(2026, 10, 1), date(2026, 10, 2), Decimal(1), 1),
+    ),
+}
 
 
 @pytest.mark.parametrize(
@@ -155,13 +213,13 @@ def test_cadastrar_item_envia_id_nulo_e_valores_exatos():
         ("PT403", "usuario"),
     ],
 )
-def test_codigos_do_banco_viram_motivos(codigo, motivo):
-    cliente = ClienteSimulado(
-        rpc={"salvar_custo_filamento": APIError({"message": "x", "code": codigo})}
-    )
+@pytest.mark.parametrize("operacao", list(CHAMADAS))
+def test_codigos_do_banco_viram_motivos(operacao, codigo, motivo):
+    funcao, chamar = CHAMADAS[operacao]
+    cliente = ClienteSimulado(rpc={funcao: APIError({"message": "x", "code": codigo})})
 
     with pytest.raises(CustoRecusado) as recusa:
-        RepositorioCustosSupabase(cliente).salvar_filamento(1, Decimal("1"), 1)
+        chamar(RepositorioCustosSupabase(cliente))
 
     assert recusa.value.motivo == motivo
 
@@ -175,67 +233,12 @@ def test_codigos_do_banco_viram_motivos(codigo, motivo):
         {"formato": "inesperado"},
     ],
 )
-@pytest.mark.parametrize("metodo", ["filamento", "parametros", "item"])
-def test_outras_falhas_viram_falha_ao_salvar(erro, metodo):
-    funcoes = {
-        "filamento": "salvar_custo_filamento",
-        "parametros": "salvar_custos_parametros",
-        "item": "salvar_custo_item",
-    }
-    cliente = ClienteSimulado(rpc={funcoes[metodo]: erro})
-    repo = RepositorioCustosSupabase(cliente)
-    chamadas = {
-        "filamento": lambda: repo.salvar_filamento(1, Decimal("1"), 1),
-        "parametros": lambda: repo.salvar_parametros({PERDA: Decimal("1")}, 1),
-        "item": lambda: repo.salvar_item(None, "acessorio", "A", Decimal("1"), 1, 1),
-    }
+@pytest.mark.parametrize("operacao", list(CHAMADAS))
+def test_outras_falhas_viram_falha_ao_salvar(erro, operacao):
+    funcao, chamar = CHAMADAS[operacao]
+    cliente = ClienteSimulado(rpc={funcao: erro})
 
+    if isinstance(erro, dict) and operacao == "ajuste":
+        pytest.skip("o ajuste de insumo não lê a resposta: só a falha de gravação importa")
     with pytest.raises(FalhaAoSalvarCustos):
-        chamadas[metodo]()
-
-
-def test_manutencao_sem_valor_vem_como_none_e_nao_como_zero():
-    leitura = {**LEITURA, "parametros": {**LEITURA["parametros"], "manutencao_hora": None}}
-    cliente = ClienteSimulado(rpc={"listar_custos": leitura})
-
-    custos = RepositorioCustosSupabase(cliente).listar()
-
-    assert custos.parametros["manutencao_hora"] is None
-    assert custos.parametros["manutencao_hora"] != Decimal(0)
-    assert custos.parametros[TARIFA] == Decimal("1")
-
-
-def test_salvar_manutencao_em_branco_envia_nulo_e_devolve_none():
-    cliente = ClienteSimulado(rpc={"salvar_custos_parametros": {"manutencao_hora": None}})
-
-    atuais = RepositorioCustosSupabase(cliente).salvar_parametros({"manutencao_hora": None}, 2)
-
-    (_, (funcao, parametros)) = cliente.chamadas[0]
-    assert funcao == "salvar_custos_parametros"
-    assert parametros == {"p_valores": {"manutencao_hora": None}, "p_usuario_id": 2}
-    json.dumps(parametros)  # null no JSON, não a palavra "None" nem zero
-    assert atuais == {"manutencao_hora": None}
-
-
-def test_salvar_criterios_da_depreciacao_envia_texto_exato():
-    chaves = {
-        "depreciacao_valor_aquisicao": Decimal("6000.00"),
-        "depreciacao_vida_util_anos": Decimal("5"),
-        "depreciacao_valor_residual": Decimal("0"),
-        "depreciacao_horas_dia": Decimal("12"),
-        "depreciacao_dias_mes": Decimal("30"),
-    }
-    retorno = {chave: str(valor) for chave, valor in chaves.items()}
-    cliente = ClienteSimulado(rpc={"salvar_custos_parametros": retorno})
-
-    atuais = RepositorioCustosSupabase(cliente).salvar_parametros(chaves, 1)
-
-    enviados = cliente.chamadas[0][1][1]["p_valores"]
-    assert enviados == {
-        "depreciacao_valor_aquisicao": "6000.00",
-        "depreciacao_vida_util_anos": "5",
-        "depreciacao_valor_residual": "0",
-        "depreciacao_horas_dia": "12",
-        "depreciacao_dias_mes": "30",
-    }
-    assert atuais == chaves
+        chamar(RepositorioCustosSupabase(cliente))

@@ -2908,6 +2908,79 @@ body:has(.container-pedidos) .deco-fundo { display: none; }
   border-top: 1px dashed var(--cor-borda);
 }
 
+/* Classificação, unidade e origem de cada custo */
+.custos-cab { margin-bottom: 0.35rem; }
+
+.custos-cab h3 { margin-bottom: 0.35rem; }
+
+.custos-etiquetas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.custos-etiqueta {
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: 999px;
+  background: var(--cor-superficie);
+  color: var(--cor-texto-suave);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.custos-origem {
+  border-color: var(--cor-primaria);
+  color: var(--cor-texto);
+}
+
+/* Ajuste manual: texto "Manual" e borda mais forte, não só cor. */
+.custos-origem-manual {
+  border-color: var(--coral-criativo);
+  border-width: 2px;
+}
+
+.custos-legenda {
+  margin-top: 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid var(--azul-ciano);
+  background: var(--cor-superficie);
+}
+
+.custos-item .custos-etiquetas { margin-top: 0.25rem; }
+.custos-item > .custos-item-dados { margin: 0.5rem 0; }
+.custos-item > .custos-dica { margin: 0 0 0.5rem; }
+
+.custos-form-acoes form { margin: 0; }
+
+.custos-referencias {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.5rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.custos-referencias li {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-campo);
+  background: var(--cor-fundo);
+}
+
+.custos-referencias strong { display: block; }
+
+.custos-substituidos { margin: 0; padding-left: 1.2rem; font-size: 0.875rem; }
+.custos-substituidos li { margin-bottom: 0.25rem; }
+
+.custos-secao .custos-lista { margin-top: 0.5rem; }
+.custos-secao .custos-editar,
+.custos-secao > .custos-form-acoes { margin-top: 0.25rem; }
+
 @media (min-width: 768px) {
   .custos-item-corpo { grid-template-columns: minmax(0, 1fr) auto auto; }
   .custos-item-corpo .custos-item-dados { grid-template-columns: repeat(3, minmax(7rem, auto)); }
@@ -2916,7 +2989,376 @@ body:has(.container-pedidos) .deco-fundo { display: none; }
   .custos-form-campos { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
   .custos-total { grid-column: span 2; }
   .custos-form-grade { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); }
-  .custos-bloco .custos-editar { justify-self: start; }
+  .custos-form-gasto { grid-template-columns: minmax(9rem, 1fr) minmax(0, 2fr) minmax(8rem, 1fr); }
+  .custos-bloco .custos-editar { justify-self: start; }}
+
+
+/* ---------- Custos compacto: largura útil, cards em colunas, detalhes recolhidos ---------- */
+.container-custos {
+  max-width: 2000px;
+  padding: 0 clamp(0.75rem, 1.2vw, 1.25rem);
+}
+
+body:has(.container-custos) .deco-fundo { display: none; }
+
+.custos .pagina-topo { margin-bottom: 0.5rem; }
+.custos .custos-grupo { margin: 0.9rem 0 0.4rem; font-size: 1.1rem; }
+.custos .custos-legenda { margin: 0 0 0.25rem; padding: 0.35rem 0.6rem; }
+
+/* Cards distribuídos em quantas colunas couberem (no celular, uma só). */
+.custos-grade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.custos .secao {
+  margin: 0;
+  padding: 0.55rem 0.7rem 0.65rem;
+}
+
+.custos-secao h3 { margin: 0; font-size: 0.95rem; }
+.custos-secao h4 { margin: 0.4rem 0 0; }
+.custos-dica { margin: 0 0 0.35rem; }
+.custos-vazio { margin: 0 0 0.4rem; }
+.custos-secao .custos-lista { margin: 0.4rem 0 0; gap: 0.4rem; }
+.custos-item { padding: 0.45rem 0.6rem; }
+
+/* Cabeçalho: título e etiquetas à esquerda, "Ver detalhes" à direita; aberto, ocupa a linha. */
+.custos-cab {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.15rem 0.5rem;
+  margin: 0 0 0.35rem;
+}
+
+.custos-cab-titulo { min-width: 0; }
+.custos-cab-titulo .custos-etiquetas { margin-top: 0.2rem; }
+.custos-cab .custos-detalhes[open] { grid-column: 1 / -1; }
+
+.custos-etiquetas { gap: 0.25rem; }
+.custos-etiqueta { padding: 0 0.45rem; font-size: 0.6875rem; }
+
+.custos-detalhes summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--alvo-toque);
+  padding: 0 0.4rem;
+  color: var(--cor-primaria);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.custos-detalhes[open] > summary { margin-bottom: 0.15rem; }
+.custos-detalhes > :not(summary) { margin-top: 0; }
+.custos-detalhes-item { margin-top: 0; }
+.custos-detalhes-item .custos-item-dados { margin: 0.3rem 0; }
+
+/* Rótulos e valores lado a lado quando couber. */
+.custos-valores,
+.custos-item-dados {
+  grid-template-columns: repeat(auto-fit, minmax(min(8.5rem, 100%), 1fr));
+  min-width: 0;
+  gap: 0.25rem 0.75rem;
+  margin: 0 0 0.35rem;
+}
+
+.custos-valores dt,
+.custos-item-dados dt { font-size: 0.6875rem; line-height: 1.2; }
+.custos-valores dd,
+.custos-item-dados dd { font-size: 0.9rem; }
+.custos-total dd { font-size: 1rem; }
+
+.custos-bloco-valores {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+}
+
+.custos-bloco-valores > .custos-valores { flex: 1 1 10rem; margin: 0; }
+.custos-bloco-valores > .custos-editar { margin: 0; }
+
+/* Insumo: nome + origem, valor utilizado e botão na mesma linha quando couber. */
+.custos-insumo-topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.2rem 0.75rem;
+}
+
+.custos-insumo-topo .custos-item-titulo { flex: 1 1 8rem; gap: 0.15rem; justify-items: start; }
+.custos-insumo-topo .custos-valores { flex: 0 0 auto; margin: 0; }
+.custos-insumo .custos-form-acoes { margin-top: 0.15rem; }
+
+.custos-principal { margin-bottom: 0.25rem; }
+.custos-form-acoes { gap: 0.4rem; }
+.custos-aviso { padding: 0.35rem 0.6rem; margin: 0 0 0.4rem; font-size: 0.8125rem; }
+.custos-referencias { margin-top: 0.4rem; gap: 0.35rem; }
+.custos-referencias li { padding: 0.25rem 0.5rem; }
+.custos-novo { margin-top: 0.4rem; padding-top: 0.5rem; }
+.custos-form-campos { gap: 0.4rem; }
+.custos-form { gap: 0.4rem; }
+
+@media (min-width: 768px) {
+  .custos-grade { grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); }
+  .custos-gastos { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+  .custos-form-gasto { grid-template-columns: minmax(8.5rem, 1fr) minmax(0, 2fr) minmax(7rem, 1fr); }
+}
+
+@media (min-width: 1500px) {
+  .custos-grade { grid-template-columns: repeat(auto-fit, minmax(23rem, 1fr)); }
+}
+
+/* ---------- Custos: subgrupos, cards com lápis e tabelas comparativas ---------- */
+.custos .custos-subgrupo {
+  margin: 0.7rem 0 0.35rem;
+  font-size: 0.98rem;
+  color: var(--cor-texto-suave);
+}
+
+.custos-subgrupo-nota { font-size: 0.75rem; font-weight: 400; }
+
+.custos-cab { grid-template-columns: minmax(0, 1fr) auto auto; }
+.custos-cab h4 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+.custos-secao h5 { margin: 0.4rem 0 0; font-size: 0.9rem; }
+.custos-cab-titulo h4 { margin: 0; }
+
+/* Lápis: discreto, mas com área clicável de 44 px. */
+.custos-lapis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--alvo-toque);
+  min-height: var(--alvo-toque);
+  margin: -0.4rem -0.2rem -0.4rem 0;
+  border-radius: var(--raio);
+  color: var(--cor-texto-suave);
+  text-decoration: none;
+}
+
+.custos-lapis:hover,
+.custos-lapis:focus-visible { color: var(--cor-primaria); background: color-mix(in srgb, var(--azul-ciano) 10%, transparent); }
+
+.custos-insumo-topo .custos-lapis { flex: 0 0 auto; margin: -0.4rem -0.3rem -0.4rem 0; }
+
+/* Cards de insumo (filamentos, acessórios, embalagens) em colunas. */
+.custos-cartoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(14rem, 100%), 1fr));
+  align-items: start;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0.6rem;
+  padding: 0;
+  list-style: none;
+}
+
+.custos-cartoes > .custos-item { min-width: 0; }
+.custos-cartoes .custos-item-nome { overflow-wrap: anywhere; }
+
+.custos-duas { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.25rem 1rem; }
+.custos-duas > * { min-width: 0; }
+.custos-categoria { margin: 0.2rem 0 0; font-size: 0.9rem; }
+
+/* Tabelas compactas: o rolar na horizontal fica dentro delas, nunca na página. */
+.custos-tabela-rolagem {
+  max-width: 100%;
+  margin: 0 0 0.4rem;
+  overflow-x: auto;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+}
+
+.custos-tabela { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+
+.custos-tabela caption {
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--cor-texto-suave);
+}
+
+.custos-tabela th,
+.custos-tabela td {
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  border-top: 1px solid var(--cor-borda);
+  vertical-align: middle;
+}
+
+.custos-tabela thead th { font-size: 0.75rem; color: var(--cor-texto-suave); background: color-mix(in srgb, var(--azul-marinho) 4%, var(--branco)); }
+.custos-tabela tbody th { font-weight: 600; overflow-wrap: anywhere; }
+.custos-tabela .numero { text-align: right; white-space: nowrap; }
+.custos-marca-manual { margin-left: 0.2rem; font-size: 0.6875rem; font-weight: 700; color: var(--cor-primaria); }
+
+#filamentos .custos-cartoes,
+#outros-cards .custos-cartoes,
+#indiretos-cards .custos-cartoes { grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); }
+/* Cards de filamento: altura única, nome, valor principal e unidade; detalhes no pé do card. */
+#filamentos .custos-cartoes,
+#outros-cards .custos-cartoes,
+#indiretos-cards .custos-cartoes { align-items: stretch; }
+
+.custos-fil {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0.7rem 0.3rem;
+  border: 1px solid var(--cor-borda);
+  border-top: 3px solid transparent;
+  border-image: var(--gradiente-marca) 1;
+  border-image-width: 3px 0 0 0;
+  border-radius: var(--raio-campo);
+  background: var(--cor-superficie);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 6%, transparent);
+}
+
+.custos-fil-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: var(--alvo-toque); margin: -0.2rem 0; }
+.custos-fil-nome { min-width: 0; font-family: var(--fonte-titulo); font-size: 0.9rem; color: var(--cor-texto); overflow-wrap: anywhere; }
+.custos-fil .custos-lapis { flex: 0 0 auto; margin: 0 -0.4rem 0 0; }
+
+.custos-fil-valor {
+  margin: 0;
+  font-family: var(--fonte-titulo);
+  font-size: 1.4rem;
+  line-height: 1.2;
+  color: var(--cor-primaria);
+}
+
+.custos-fil-valor .custos-unidade { margin-left: 0.2rem; font-size: 0.8125rem; }
+.custos-fil .custos-pendente { font-size: 1.1rem; }
+.custos-fil .custos-form-acoes { margin-top: 0.3rem; }
+.custos-voltar-valor { margin: 0.3rem 0 0; }
+.custos-fil .custos-detalhes { margin-top: auto; padding-top: 0.2rem; }
+.custos-fil .custos-detalhes summary { min-height: var(--alvo-toque); padding-left: 0; }
+
+/* Comparação do custo manual com o calculado (cor + texto) e edição no próprio lugar. */
+.custos-fil-valor-maior { color: var(--cor-sucesso); }
+.custos-fil-valor-menor { color: var(--cor-erro); }
+
+.custos-fil-comparacao { margin: 0.1rem 0 0; font-size: 0.75rem; font-weight: 700; color: var(--cor-texto-suave); }
+.custos-fil-comparacao-maior { color: var(--cor-sucesso); }
+.custos-fil-comparacao-menor {
+  padding: 0.15rem 0.4rem;
+  border-radius: var(--raio-campo);
+  background: var(--cor-erro-fundo);
+  color: var(--cor-erro);
+}
+
+.custos-fil-aviso { margin: 0.1rem 0 0; font-size: 0.75rem; font-weight: 700; color: var(--cor-sucesso); }
+.custos-fil-edicao { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; }
+
+.custos-fil-campo {
+  flex: 1 1 5rem;
+  min-width: 0;
+  min-height: var(--alvo-toque);
+  padding: 0 0.5rem;
+  border: 1px solid var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  background: var(--cor-superficie);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--cor-texto);
+}
+
+.custos-fil-campo[aria-invalid="true"] { border-color: var(--cor-erro); }
+
+.custos-fil-botao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--alvo-toque);
+  min-height: var(--alvo-toque);
+  padding: 0;
+  border: 0;
+  border-radius: var(--raio);
+  background: transparent;
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+}
+
+.custos-fil-ok { color: var(--cor-sucesso); }
+.custos-fil-botao:hover:not(:disabled),
+.custos-fil-botao:focus-visible { background: color-mix(in srgb, var(--azul-ciano) 10%, transparent); }
+.custos-fil-botao:disabled,
+.custos-fil-campo:disabled { opacity: 0.6; cursor: progress; }
+.custos-fil-progresso { flex: 1 0 100%; font-size: 0.75rem; color: var(--cor-texto-suave); }
+.custos-fil-progresso:empty { display: none; }
+.custos-fil-edicao .campo-erro { flex: 1 0 100%; margin: 0; font-size: 0.8125rem; }
+
+/* Acessórios e embalagens: o visual vem da Lista de Pedidos (.tabela-rolagem / .tabela-pedidos);
+   aqui só o que é próprio da seção, sem largura mínima (quatro colunas cabem no celular). */
+#insumos .tabela-pedidos { min-width: 0; }
+#insumos .tabela-rolagem { max-height: none; margin-bottom: 0.4rem; }
+#insumos .tabela-pedidos thead th { white-space: normal; }
+#insumos .tabela-pedidos th,
+#insumos .tabela-pedidos td { padding-left: 0.4rem; padding-right: 0.4rem; }
+#insumos .custos-col-foto { width: 3.5rem; }
+#insumos .tabela-pedidos tbody th { font-weight: 600; color: var(--cor-texto); overflow-wrap: anywhere; }
+#insumos .tabela-pedidos tbody td,
+#insumos .tabela-pedidos tbody th { vertical-align: middle; }
+#insumos .custos-item-nome { display: block; }
+#insumos .custos-item-origem { display: block; font-size: 0.75rem; font-weight: 400; color: var(--cor-texto-suave); }
+#insumos .tabela-pedidos .coluna-numero { white-space: normal; }
+#insumos .coluna-numero .custos-unidade { white-space: nowrap; }
+#insumos .custos-hist-gatilho {
+  min-height: var(--alvo-toque);
+  padding: 0 0.25rem;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+#insumos .custos-hist-gatilho:focus-visible { outline: 2px solid var(--cor-destaque); outline-offset: 2px; }
+.custos-hist {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  overflow: auto;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--azul-marinho) 18%, transparent);
+  font-size: 0.8125rem;
+}
+.custos-hist table { border-collapse: collapse; }
+.custos-hist th,
+.custos-hist td { padding: 0.2rem 0.6rem; text-align: left; white-space: nowrap; }
+.custos-hist thead th { font-size: 0.75rem; color: var(--cor-texto-suave); border-bottom: 1px solid var(--cor-borda); }
+.custos-hist .coluna-numero { text-align: right; font-variant-numeric: tabular-nums; }
+.custos-sem-foto {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border: 1px dashed var(--cor-borda-campo);
+  border-radius: var(--raio-campo);
+  color: var(--cor-texto-suave);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 599px) {
+  #filamentos .custos-cartoes,
+  #outros-cards .custos-cartoes,
+  #indiretos-cards .custos-cartoes { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (min-width: 900px) {
+  .custos-duas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 
@@ -3618,86 +4060,12 @@ body:has(.container-pedidos) .deco-fundo { display: none; }
   color: var(--cor-texto-suave);
 }
 
-.compras-lista,
-.compra-registro-itens,
-.compra-registro-fotos {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.compras-lista {
-  display: grid;
-  gap: 0.75rem;
-}
-
-.compra-registro {
-  display: grid;
-  gap: 0.6rem;
-  padding: 0.85rem var(--espaco);
-  border: 1px solid var(--cor-borda);
-  border-radius: var(--raio);
-  background: var(--cor-superficie);
-}
-
-.compra-registro p { margin: 0; }
-
-.compra-registro-cabecalho {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.25rem 1rem;
-}
-
-.compra-registro-data { font-weight: 700; }
-
-.compra-registro-local {
-  color: var(--cor-texto-suave);
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
-}
-
-.compra-registro-total {
-  font-family: var(--fonte-titulo);
-  font-size: 1.1rem;
-}
-
 .compra-registro-frete {
   display: block;
   color: var(--cor-texto-suave);
   font-family: var(--fonte);
   font-size: 0.75rem;
   text-align: right;
-}
-
-.compra-registro-itens {
-  display: grid;
-  gap: 0.2rem;
-  font-size: 0.9rem;
-}
-
-.compra-registro-itens li { overflow-wrap: anywhere; }
-
-.compra-registro-fotos {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.compra-registro-fotos img {
-  display: block;
-  width: 64px;
-  height: 64px;
-  object-fit: cover;
-  border: 1px solid var(--cor-borda-campo);
-  border-radius: var(--raio-campo);
-  background: var(--cor-fundo);
-}
-
-.compra-registro-fotos a:focus-visible {
-  outline: 3px solid var(--cor-foco-halo);
-  outline-offset: 2px;
-  border-radius: var(--raio-campo);
 }
 
 .compra-registro-sem-foto {
@@ -3708,6 +4076,90 @@ body:has(.container-pedidos) .deco-fundo { display: none; }
 
 @media (min-width: 640px) {
   .compras-resumo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1000px) {
+  .compras-resumo:not(.estoque-cards) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* Filtro de período: rótulo e seleção na mesma linha; sem JavaScript aparece o botão Filtrar */
+.compras-filtro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.compras-filtro label { font-weight: 600; }
+.compras-filtro select { width: auto; min-width: 11rem; max-width: 100%; }
+
+/* Tabela de compras: o estilo vem de .tabela-pedidos; só as colunas próprias */
+.tabela-pedidos.tabela-compras { min-width: 640px; }
+.tabela-compras-local { overflow-wrap: anywhere; }
+.tabela-compras-itens {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+.tabela-compras-fotos .foto-previa-botao { display: inline-block; margin: 0 0.35rem 0.25rem 0; }
+.tabela-compras .compra-registro-frete { white-space: nowrap; }
+
+.compras-paginas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  color: var(--cor-texto-suave);
+}
+
+/* Lupa da prévia das fotos (foto-previa.js): o quadro recorta a imagem ampliada */
+.foto-previa-quadro {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--raio-campo);
+  background: color-mix(in srgb, var(--azul-marinho) 4%, var(--branco));
+}
+.foto-previa-quadro img {
+  height: 100%;
+  border-radius: 0;
+  transform-origin: var(--lupa-x, 50%) var(--lupa-y, 50%);
+  transition: transform 0.1s ease-out;
+}
+.foto-previa-quadro.ampliado { cursor: zoom-in; }
+.foto-previa-quadro.ampliado img { transform: scale(var(--lupa-zoom, 2.5)); }
+.foto-previa-quadro.fixa { touch-action: none; }
+.foto-previa-lupa {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--alvo-toque);
+  height: var(--alvo-toque);
+  padding: 0;
+  border: 1px solid var(--cor-borda);
+  border-radius: 50%;
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+  cursor: pointer;
+}
+.foto-previa-lupa[aria-pressed="true"] {
+  border-color: var(--cor-destaque);
+  background: color-mix(in srgb, var(--cor-destaque) 14%, var(--cor-superficie));
+}
+.foto-previa-lupa svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 /* ==========================================================
@@ -3827,3 +4279,190 @@ body:has(.container-pedidos) .deco-fundo { display: none; }
 .item-imagem-atual .campo-texto { width: auto; min-height: 0; padding: 0.2rem 0.4rem; }
 
 .acao-perigo { color: var(--cor-erro); }
+
+/* ==========================================================
+   Manutenção: indicadores e tabela editável na própria linha.
+   O visual vem da Lista de Pedidos (.tabela-rolagem / .tabela-pedidos).
+   ========================================================== */
+.manut-indicadores {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.manut-indicador {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.15rem;
+  min-width: 12rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--cor-superficie);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 6%, transparent);
+}
+
+.manut-indicador-rotulo { font-size: 0.8rem; font-weight: 700; color: var(--cor-texto-suave); }
+
+.manut-indicador-valor {
+  font-family: var(--fonte-titulo);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.manut-indicador-nota { font-size: 0.75rem; color: var(--cor-texto-suave); }
+
+/* position: os rótulos ocultos (absolute) ficam contidos na rolagem da tabela, sem alargar a página. */
+.manut-rolagem { position: relative; max-height: none; }
+.manut-tabela { min-width: 1020px; }
+.manut-tabela td { vertical-align: top; }
+.manut-tabela .coluna-numero { text-align: right; }
+.manut-tabela thead th.coluna-numero { text-align: right; }
+
+.manut-duracao { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.manut-nulo { color: var(--cor-texto-suave); }
+.manut-tabela td[data-campo="pecas"] { max-width: 16rem; overflow-wrap: anywhere; }
+.manut-col-coment { min-width: 13rem; max-width: 24rem; }
+.manut-comentario { display: block; overflow-wrap: anywhere; color: var(--cor-texto-suave); }
+.manut-col-acoes { white-space: nowrap; }
+.manut-col-acoes .custos-lapis { margin: -0.3rem 0; }
+.manut-vazio td { padding: 1.5rem 1rem; text-align: center; color: var(--cor-texto-suave); }
+
+/* Linha em edição: campos no lugar dos textos, realçada com o azul da marca. */
+.manut-tabela tr.manut-editando td { background: color-mix(in srgb, var(--azul-ciano) 7%, var(--branco)); }
+.manut-tabela tr.manut-editando:hover td { background: color-mix(in srgb, var(--azul-ciano) 7%, var(--branco)); }
+
+/* Campos integrados às células: fundo da tabela, sem caixa branca nem borda permanente. O foco
+   aparece como um traço discreto na base do campo. */
+.manut-editando input,
+.manut-editando select,
+.manut-editando textarea,
+.manut-celula-campo {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--alvo-toque);
+  padding: 0 0.15rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cor-texto);
+  font: inherit;
+  font-size: 0.95rem;
+  box-shadow: inset 0 -1px 0 transparent;
+  outline: none;
+  transition: box-shadow 0.12s ease;
+}
+
+.manut-editando textarea,
+textarea.manut-celula-campo { min-height: 3.5rem; padding: 0.5rem 0.15rem; resize: vertical; line-height: 1.4; }
+
+.manut-editando input::placeholder,
+.manut-editando textarea::placeholder,
+.manut-celula-campo::placeholder { color: var(--cor-texto-suave); opacity: 0.75; }
+
+.manut-editando input:focus,
+.manut-editando select:focus,
+.manut-editando textarea:focus,
+.manut-celula-campo:focus { box-shadow: inset 0 -2px 0 var(--cor-destaque-frio); }
+
+.manut-editando [aria-invalid="true"],
+.manut-celula-campo[aria-invalid="true"] { box-shadow: inset 0 -2px 0 var(--cor-erro); }
+.manut-editando :disabled,
+.manut-celula-campo:disabled { opacity: 0.6; cursor: progress; }
+
+/* Células editáveis: cursor e foco discretos; a célula aberta ganha o azul da marca. */
+.manut-tabela td[data-campo] { cursor: cell; touch-action: manipulation; }
+.manut-tabela td[data-campo]:focus-visible { outline: 0; box-shadow: inset 0 -2px 0 var(--cor-destaque-frio); }
+.manut-tabela td.manut-celula-editando { background: color-mix(in srgb, var(--azul-ciano) 7%, var(--branco)); cursor: auto; }
+.manut-auditoria { display: block; margin-top: 0.15rem; font-size: 0.7rem; color: var(--cor-texto-suave); white-space: normal; }
+.manut-alerta { color: var(--cor-erro); font-weight: 700; }
+.manut-dica { margin: 0; font-size: 0.7rem; color: var(--cor-texto-suave); }
+.manut-ajuda { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--cor-texto-suave); }
+.manut-comentario { white-space: pre-line; }
+
+/* Rótulo de cada campo: só para leitor de tela no computador (a coluna já diz o que é); visível no celular. */
+.manut-rotulo {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.manut-col-custo input { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+
+.manut-erro, .manut-falha { margin: 0.25rem 0 0; font-size: 0.8rem; }
+.manut-erro[hidden], .manut-falha[hidden] { display: none; }
+.manut-form { display: inline-flex; gap: 0.1rem; }
+.manut-progresso { margin: 0.2rem 0 0; font-size: 0.75rem; color: var(--cor-texto-suave); white-space: normal; }
+.manut-progresso:empty { display: none; }
+.manut-editando .custos-fil-botao { text-decoration: none; }
+
+/* Celular: cada manutenção vira um bloco com rótulo e valor; na edição, o rótulo fica acima do campo. */
+@media (max-width: 760px) {
+  .manut-indicador { flex: 1 1 100%; }
+  .manut-tabela { min-width: 0; }
+  .manut-tabela thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .manut-tabela,
+  .manut-tabela tbody,
+  .manut-tabela tr,
+  .manut-tabela td { display: block; }
+  .manut-tabela tr { padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--cor-borda); }
+  .manut-tabela tbody tr:last-child { border-bottom: 0; }
+  .manut-tabela td,
+  .manut-tabela .coluna-numero {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    max-width: none;
+    padding: 0.3rem 0;
+    border: 0;
+    text-align: right;
+    white-space: normal;
+  }
+  .manut-tabela td::before {
+    content: attr(data-rotulo);
+    flex: 0 0 7.5rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--cor-texto-suave);
+    text-align: left;
+  }
+  .manut-tabela tbody tr:hover td { background: transparent; }
+  .manut-tabela tr.manut-editando td,
+  .manut-tabela tr.manut-editando:hover td { background: transparent; }
+  .manut-tabela tr.manut-editando { background: color-mix(in srgb, var(--azul-ciano) 7%, var(--branco)); }
+  .manut-vazio td::before { content: none; }
+  .manut-tabela td[data-campo="pecas"] { max-width: none; }
+  .manut-tabela td.manut-col-coment { display: block; min-width: 0; text-align: left; }
+  .manut-tabela td.manut-col-coment::before { display: block; margin-bottom: 0.15rem; }
+  .manut-col-acoes { justify-content: flex-end; }
+  .manut-editando td,
+  .manut-tabela td.manut-celula-editando { flex-direction: column; align-items: stretch; text-align: left; }
+  .manut-editando td::before,
+  .manut-tabela td.manut-celula-editando::before { content: none; }
+  .manut-editando .manut-col-acoes { flex-direction: row; justify-content: flex-end; flex-wrap: wrap; }
+  .manut-rotulo {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0 0 0.2rem;
+    overflow: visible;
+    clip-path: none;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--cor-texto-suave);
+  }
+}

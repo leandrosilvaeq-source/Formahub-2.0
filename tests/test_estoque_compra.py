@@ -188,7 +188,7 @@ def test_compra_com_as_tres_categorias_e_varias_linhas(estoque):
 
     html = client.get(resposta.json()["destino"]).text
     assert "Compra registrada. Os itens já estão no estoque." in html
-    assert "10/09/2026" in html and 'id="compras-quantidade"' in html
+    assert "10/09/2026" in html and 'id="card-compras"' in html
     assert "rolos" in html and "un · " in html  # a compra aparece na lista de Compras
 
 
@@ -611,8 +611,7 @@ def test_repositorio_converte_a_listagem():
 
 def test_repositorio_converte_listar_compras():
     dados = {
-        "total_gasto": "493.70",
-        "quantidade": 2,
+        "meses": ["2026-09", "2026-08"],
         "compras": [
             {
                 "id": 2,
@@ -632,6 +631,7 @@ def test_repositorio_converte_listar_compras():
                         "marca": None,
                         "peso_rolo_g": None,
                         "nome": "Argola",
+                        "valor": "13.00",
                         "imagem_caminho": None,
                     }
                 ],
@@ -642,15 +642,26 @@ def test_repositorio_converte_listar_compras():
 
     compras = RepositorioEstoqueSupabase(cliente).listar_compras()
 
-    assert cliente.chamadas == [("listar_compras", {})]
-    assert (compras.total_gasto, compras.quantidade) == (Decimal("493.70"), 2)
-    (c,) = compras.recentes
+    assert cliente.chamadas == [("listar_compras", {})]  # sem período: todas
+    assert compras.meses == ("2026-09", "2026-08")
+    (c,) = compras.compras
+    assert c.itens[0].valor == Decimal("13.00")
     assert (c.data_compra, c.frete, c.total) == (
         date(2026, 9, 20),
         Decimal("12.50"),
         Decimal("13.50"),
     )
     assert (c.itens[0].nome, c.itens[0].peso_rolo_g) == ("Argola", None)
+
+
+def test_repositorio_listar_compras_envia_o_periodo():
+    cliente = _ClienteFalso({"meses": [], "compras": []})
+
+    RepositorioEstoqueSupabase(cliente).listar_compras(date(2026, 9, 1), date(2026, 10, 1))
+
+    assert cliente.chamadas == [
+        ("listar_compras", {"p_inicio": "2026-09-01", "p_fim": "2026-10-01"})
+    ]
 
 
 def test_repositorio_listar_compras_com_resposta_inesperada_falha():

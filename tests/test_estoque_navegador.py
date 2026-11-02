@@ -4,6 +4,7 @@ Inclui a janela Registrar Compra. Reaproveita o servidor e o navegador de test_n
 só dados fictícios em memória.
 """
 
+import time
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -26,9 +27,17 @@ pagina = nav.pagina
 LARGURAS = [360, 768, 1024, 1100, 1280, 1920]
 
 
+# PNG 1x1 em data URI: a foto carrega de verdade (sem rede) e o botão da prévia não é removido.
+PNG_1X1 = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/"
+    "iZk9HQAAAABJRU5ErkJggg=="
+)
+
+
 @pytest.fixture
 def estoque():
     repo = RepositorioEstoqueMemoria()
+    repo.assinar_imagens = lambda caminhos: {c: PNG_1X1 for c in caminhos if c in repo.imagens}
     app.dependency_overrides[get_repositorio_estoque] = lambda: repo
     return repo
 
@@ -143,9 +152,9 @@ def esperar_fim_do_envio(p):
 
 
 def cortados(p) -> list[str]:
-    """Textos que saem do próprio cartão da compra ou do card de resumo (cortes visuais)."""
+    """Textos que saem do próprio card de resumo (cortes visuais)."""
     return p.js(
-        """[...document.querySelectorAll('.compra-registro, .compras-card')].flatMap(caixa => {
+        """[...document.querySelectorAll('.compras-card')].flatMap(caixa => {
              const limite = caixa.getBoundingClientRect();
              return [...caixa.querySelectorAll('*')]
                .filter(el => {
@@ -209,16 +218,17 @@ def test_compras_sem_rolagem_horizontal_nem_cortes(pagina, com_compras, largura)
     assert cortados(pagina) == []
     assert pagina.js("document.querySelectorAll('.compra-registro').length") == 2
     assert pagina.js("document.querySelectorAll('[data-abrir-compra]').length") == 1
-    # Os cards e a lista vêm depois do botão, e a foto tem miniatura de 64 px.
+    # O filtro e os cards vêm depois do botão; a tabela rola por dentro, nunca a página.
     assert pagina.js(
         "document.querySelector('[data-abrir-compra]').getBoundingClientRect().bottom"
-        " <= document.querySelector('.compras-resumo').getBoundingClientRect().top"
+        " <= document.querySelector('.compras-filtro').getBoundingClientRect().top"
     )
     assert (
         pagina.js(
-            "document.querySelector('.compra-registro-fotos img').getBoundingClientRect().width"
+            "document.querySelector('.tabela-compras .pedido-tabela-foto')"
+            ".getBoundingClientRect().width"
         )
-        == 64
+        == 48
     )
 
 
@@ -231,8 +241,107 @@ def test_cards_lado_a_lado_no_desktop_e_empilhados_no_celular(pagina, com_compra
         "[...document.querySelectorAll('.compras-card')]"
         ".map(c => Math.round(c.getBoundingClientRect().top))"
     )
-    assert len(topos) == 2
+    assert len(topos) == 4
     assert (topos[0] == topos[1]) == (largura >= 640)
+    assert (len(set(topos)) == 1) == (largura >= 1000)  # os quatro numa só linha no desktop
+
+
+def test_filtro_de_periodo_troca_cards_e_tabela(pagina, com_compras):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    assert pagina.js("document.querySelectorAll('.compra-registro').length") == 2
+
+    pagina.js(
+        "(() => { const s = document.getElementById('compras-periodo');"
+        " s.value = '2026-09'; s.dispatchEvent(new Event('change', {bubbles: true})) })()"
+    )
+    nav.esperar(lambda: "periodo=2026-09" in pagina.js("location.search"))
+    nav.esperar(lambda: pagina.js("document.readyState") == "complete")
+
+    assert pagina.js("document.getElementById('compras-periodo').value") == "2026-09"
+    assert "Compras de Setembro/2026" in pagina.texto("#titulo-ultimas-compras")
+    assert sem_rolagem_horizontal(pagina)
+
+
+def esperar_foto(p):
+    nav.esperar(
+        lambda: p.js("document.querySelector('.tabela-compras .pedido-tabela-foto').complete")
+    )
+
+
+def previa_aberta(p):
+    return p.js("!!document.querySelector('.foto-previa')")
+
+
+def dentro_da_tela(p) -> bool:
+    return p.js(
+        "(() => { const r = document.querySelector('.foto-previa').getBoundingClientRect();"
+        " return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight })()"
+    )
+
+
+ESCALA = (
+    "new DOMMatrix(getComputedStyle(document.querySelector('.foto-previa-quadro img')).transform).a"
+)
+ORIGEM = "getComputedStyle(document.querySelector('.foto-previa-quadro img')).transformOrigin"
+
+
+def test_previa_abre_apos_2s_no_mouse_e_a_lupa_segue_o_cursor(pagina, com_compras):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    esperar_foto(pagina)
+    x, y = pagina.js(
+        "(() => { const r = document.querySelector('.foto-previa-botao').getBoundingClientRect();"
+        " return [r.left + r.width / 2, r.top + r.height / 2] })()"
+    )
+
+    pagina.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+    time.sleep(0.8)
+    assert not previa_aberta(pagina)  # antes de 2 s nada abre
+    nav.esperar(lambda: previa_aberta(pagina), tempo=4, mensagem="a prévia não abriu")
+    assert dentro_da_tela(pagina)
+    assert pagina.js(ESCALA) == 1
+
+    esq, topo = pagina.js(
+        "(() => { const r = document.querySelector('.foto-previa-quadro').getBoundingClientRect();"
+        " return [r.left, r.top] })()"
+    )
+    pagina.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=esq + 40, y=topo + 40)
+    nav.esperar(lambda: pagina.js(ESCALA) == 2.5, mensagem="a lupa não ampliou")
+    assert pagina.js(ORIGEM).startswith("40px 40px")  # o foco acompanha o cursor
+
+    pagina.cmd("Input.dispatchKeyEvent", type="keyDown", key="Escape", code="Escape")
+    nav.esperar(lambda: not previa_aberta(pagina))
+
+
+@pytest.mark.parametrize("largura", [360, 768])
+def test_previa_por_clique_ou_toque_tem_lupa_fechar_e_cabe_na_tela(pagina, com_compras, largura):
+    pagina.tela(largura, 700)
+    pagina.abrir("/compras")
+    esperar_foto(pagina)
+
+    pagina.clicar(".foto-previa-botao")
+    assert previa_aberta(pagina) and dentro_da_tela(pagina)
+    assert pagina.js("document.activeElement.className").startswith("foto-previa-fechar")
+    assert pagina.js("document.querySelector('.foto-previa-lupa').offsetWidth") >= 44
+
+    # A lupa fixa a ampliação (toque e teclado); as setas movem a área ampliada.
+    pagina.clicar(".foto-previa-lupa")
+    assert pagina.js("document.querySelector('.foto-previa-lupa').ariaPressed") == "true"
+    nav.esperar(lambda: pagina.js(ESCALA) == 2.5)
+    antes = pagina.js(ORIGEM)
+    tecla(pagina, "ArrowRight", codigo=39)
+    assert pagina.js(ORIGEM) != antes
+    pagina.clicar(".foto-previa-lupa")
+    nav.esperar(lambda: pagina.js(ESCALA) == 1)
+
+    pagina.clicar(".foto-previa-fechar")
+    assert not previa_aberta(pagina)
+    assert pagina.js("document.activeElement.className") == "foto-previa-botao"
+
+    pagina.clicar(".foto-previa-botao")
+    tecla(pagina, "Escape", codigo=27)
+    nav.esperar(lambda: not previa_aberta(pagina))
 
 
 @pytest.mark.parametrize("largura", LARGURAS)
@@ -255,7 +364,7 @@ def test_estado_vazio(pagina, estoque, largura):
 
     assert sem_rolagem_horizontal(pagina)
     assert "Nenhuma compra registrada" in pagina.texto(".compras")
-    assert pagina.texto("#compras-quantidade") == "0"
+    assert "0 compras" in pagina.texto("#card-compras")
 
 
 def test_edicao_pelo_navegador_so_tem_a_descricao(pagina, estoque):
@@ -550,12 +659,15 @@ def test_registrar_compra_com_as_tres_categorias_e_foto(pagina, estoque, largura
     assert [i.imagem_caminho is not None for i in c.itens] == [False, True, False]
     assert len(estoque.imagens) == 1
     # 3 x 89,90 + 14,00 + 10,00: a compra já aparece no resumo e na lista, com a foto do acessório.
-    assert pagina.texto("#compras-total") == "R$ 293,70"
-    assert pagina.texto("#compras-quantidade") == "1"
+    assert "R$ 293,70" in pagina.texto("#card-compras")
+    assert "1 compra" in pagina.texto("#card-compras")
+    assert "R$ 14,00" in pagina.texto("#card-acessorio")
     lista = pagina.texto("#ultimas-compras")
     assert "10/09/2026" in lista and "Loja Física · Papelaria Centro" in lista
     assert "3 rolos · PLA Silk Preto" in lista and "40 un · Argola" in lista
-    assert pagina.js("document.querySelectorAll('.compra-registro-fotos img').length") == 1
+    assert (
+        pagina.js("document.querySelectorAll('.tabela-compras .foto-previa-botao img').length") == 1
+    )
 
 
 def test_duplo_clique_grava_uma_vez(pagina, estoque):
@@ -1250,3 +1362,198 @@ def test_tela_estoque_sem_rolagem_horizontal_e_com_rotulos(pagina, com_compras, 
             " '::before').content"
         )
         assert rotulos not in ("none", "normal", '""')
+
+
+# ---------- Custos: tabelas de acessórios e embalagens com foto, prévia e lupa ----------
+
+
+@pytest.fixture
+def com_fotos_de_custos(estoque):
+    estoque.com_item("Imã", valor_total=Decimal("30"), imagem_caminho="compras/1/ima.png")
+    estoque.com_item("Fita dupla face", quantidade=4)  # sem foto
+    estoque.com_item("Caixa P", categoria="embalagem", imagem_caminho="compras/1/caixa.png")
+    estoque.imagens["compras/1/ima.png"] = b"x"
+    estoque.imagens["compras/1/caixa.png"] = b"x"
+    return estoque
+
+
+def esperar_foto_de_custos(p):
+    nav.esperar(
+        lambda: p.js(
+            "document.querySelector('.custos-tabela-insumos .pedido-tabela-foto').complete"
+        )
+    )
+
+
+def test_custos_tabela_de_itens_no_padrao_da_lista_de_pedidos(pagina, com_fotos_de_custos):
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    esperar_foto_de_custos(pagina)
+
+    colunas = pagina.js(
+        "[...document.querySelector('.custos-tabela-insumos thead').querySelectorAll('th')]"
+        ".map(th => th.textContent.trim())"
+    )
+    assert colunas == ["Foto", "Item", "Quantidade", "Custo unitário"]
+    assert pagina.js("document.querySelectorAll('.custos-tabela-insumos').length") == 2
+    botao = "document.querySelector('.custos-tabela-insumos .foto-previa-botao')"
+    miniatura = f"{botao}.getBoundingClientRect()"
+    assert pagina.js(f"{miniatura}.width") == 48 and pagina.js(f"{miniatura}.height") == 48
+    assert (
+        pagina.js("document.querySelectorAll('.custos-tabela-insumos .custos-sem-foto').length")
+        == 1
+    )
+    # Sem coluna Editar nem lápis; mesmo quadro e tabela da Lista de Pedidos.
+    assert (
+        pagina.js("document.querySelectorAll('.custos-tabela-insumos .custos-lapis').length") == 0
+    )
+    assert pagina.js(
+        "[...document.querySelectorAll('.custos-tabela-insumos')]"
+        ".every(t => t.classList.contains('tabela-pedidos')"
+        " && t.parentElement.classList.contains('tabela-rolagem'))"
+    )
+    assert (
+        pagina.js(
+            "getComputedStyle(document.querySelector('.custos-tabela-insumos thead th')).position"
+        )
+        == "sticky"
+    )
+    assert sem_rolagem_horizontal(pagina)
+
+
+def test_custos_previa_abre_no_mouse_com_lupa_sem_deslocar_a_tabela_e_fecha_com_esc(
+    pagina, com_fotos_de_custos
+):
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    esperar_foto_de_custos(pagina)
+    tabela = "document.querySelector('#insumos').getBoundingClientRect().height"
+    altura = pagina.js(tabela)
+    x, y = pagina.js(
+        "(() => { const r = document.querySelector('.custos-tabela-insumos .foto-previa-botao')"
+        ".getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2] })()"
+    )
+
+    pagina.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+    nav.esperar(lambda: previa_aberta(pagina), tempo=4, mensagem="a prévia não abriu")
+    assert dentro_da_tela(pagina) and pagina.js(ESCALA) == 1
+    assert pagina.js(tabela) == altura  # a prévia flutua: a tabela não se desloca
+
+    esq, topo = pagina.js(
+        "(() => { const r = document.querySelector('.foto-previa-quadro').getBoundingClientRect();"
+        " return [r.left, r.top] })()"
+    )
+    pagina.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=esq + 40, y=topo + 40)
+    nav.esperar(lambda: pagina.js(ESCALA) == 2.5, mensagem="a lupa não ampliou")
+    assert pagina.js(ORIGEM).startswith("40px 40px")  # o movimento do cursor revela os detalhes
+
+    pagina.cmd("Input.dispatchKeyEvent", type="keyDown", key="Escape", code="Escape")
+    nav.esperar(lambda: not previa_aberta(pagina))
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_custos_previa_por_toque_e_teclado_tem_lupa_fechar_e_cabe_na_tela(
+    pagina, com_fotos_de_custos, largura
+):
+    pagina.tela(largura, 700)
+    pagina.abrir("/custos")
+    esperar_foto_de_custos(pagina)
+    assert sem_rolagem_horizontal(pagina)
+
+    pagina.clicar(".custos-tabela-insumos .foto-previa-botao")
+    assert previa_aberta(pagina) and dentro_da_tela(pagina)
+    assert pagina.js("document.activeElement.className").startswith("foto-previa-fechar")
+    assert pagina.js("document.querySelector('.foto-previa-lupa').offsetWidth") >= 44
+    assert pagina.js("document.querySelector('.foto-previa-fechar').offsetWidth") >= 44
+
+    pagina.clicar(".foto-previa-lupa")  # botões: fixam o zoom; as setas movem a área ampliada
+    nav.esperar(lambda: pagina.js(ESCALA) == 2.5)
+    antes = pagina.js(ORIGEM)
+    tecla(pagina, "ArrowRight", codigo=39)
+    assert pagina.js(ORIGEM) != antes
+    pagina.clicar(".foto-previa-lupa")
+    nav.esperar(lambda: pagina.js(ESCALA) == 1)
+
+    pagina.clicar(".foto-previa-fechar")
+    assert not previa_aberta(pagina)
+    assert pagina.js("document.activeElement.className") == "foto-previa-botao"
+
+    pagina.clicar(".custos-tabela-insumos .foto-previa-botao")
+    tecla(pagina, "Escape", codigo=27)
+    nav.esperar(lambda: not previa_aberta(pagina))
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+def janela_de_historico(p) -> bool:
+    return p.js("!!document.querySelector('.custos-hist')")
+
+
+def historico_dentro_da_tela(p) -> bool:
+    return p.js(
+        "(() => { const r = document.querySelector('.custos-hist').getBoundingClientRect();"
+        " return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight })()"
+    )
+
+
+@pytest.fixture
+def com_historico(estoque):
+    estoque.com_item("Imã", quantidade=4, quantidade_comprada=10, valor_total=Decimal("30"))
+    estoque.com_item(
+        "Imã", quantidade=40, quantidade_comprada=40, valor_total=Decimal("1200.50"),
+        data_compra=date(2026, 10, 15),
+    )  # fmt: skip
+    estoque.com_item("Caixa P", categoria="embalagem", quantidade=4, valor_total=Decimal("10"))
+    return estoque
+
+
+def test_custos_historico_de_compras_ao_passar_o_mouse_no_custo_unitario(pagina, com_historico):
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    altura = pagina.js("document.querySelector('#insumos').getBoundingClientRect().height")
+    x, y = pagina.js(
+        "(() => { const r = document.querySelector('.custos-hist-gatilho').getBoundingClientRect();"
+        " return [r.left + r.width / 2, r.top + r.height / 2] })()"
+    )
+    assert not janela_de_historico(pagina)
+
+    pagina.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+    nav.esperar(lambda: janela_de_historico(pagina), tempo=3, mensagem="a janela não abriu")
+    assert historico_dentro_da_tela(pagina)
+    colunas = pagina.js(
+        "[...document.querySelectorAll('.custos-hist thead th')].map(th => th.textContent.trim())"
+    )
+    linhas = pagina.js(
+        "[...document.querySelectorAll('.custos-hist tbody tr')]"
+        ".map(tr => [...tr.children].map(td => td.textContent.trim()))"
+    )
+    assert colunas == ["Data", "Quantidade", "Valor"]
+    assert linhas == [["15/10/2026", "40", "R$ 1.200,50"], ["01/09/2026", "10", "R$ 30,00"]]
+    assert pagina.js("document.querySelector('#insumos').getBoundingClientRect().height") == altura
+
+    pagina.cmd("Input.dispatchMouseEvent", type="mouseMoved", x=5, y=5)
+    nav.esperar(lambda: not janela_de_historico(pagina), tempo=3, mensagem="a janela não fechou")
+
+
+@pytest.mark.parametrize("largura", [360, 768, 1280])
+def test_custos_historico_por_toque_ou_teclado_cabe_na_tela_e_fecha_com_esc(
+    pagina, com_historico, largura
+):
+    pagina.tela(largura, 700)
+    pagina.abrir("/custos")
+    assert pagina.js("document.querySelector('.custos-hist-gatilho').offsetHeight") >= 44
+
+    pagina.clicar(".custos-hist-gatilho")
+    assert janela_de_historico(pagina) and historico_dentro_da_tela(pagina)
+    assert pagina.js(
+        "document.querySelector('.custos-hist-gatilho').getAttribute('aria-describedby')"
+    )
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+    tecla(pagina, "Escape", codigo=27)
+    assert not janela_de_historico(pagina)
+    assert pagina.js("document.activeElement.className") == "custos-hist-gatilho"
+
+    pagina.clicar(".custos-hist-gatilho")  # alterna: abre e, ao tocar de novo, fecha
+    assert janela_de_historico(pagina)
+    pagina.clicar(".custos-hist-gatilho")
+    assert not janela_de_historico(pagina)

@@ -1,0 +1,274 @@
+{# Macros do card de custos reutilizadas pela página e pelo trecho devolvido ao salvar na hora. #}
+
+{# Campo de texto de um formulário de custos. `padrao` é o valor salvo; o que foi digitado (numa
+   tentativa recusada) tem prioridade. #}
+{% macro campo(escopo, nome, rotulo, unidade, padrao, modo="decimal", maximo=None, obrigatorio=True, placeholder="", dica="", tipo="text") -%}
+{% set id = escopo ~ "-" ~ nome %}
+{% set mensagem = estado.erro(escopo, nome) %}
+<div class="campo{% if mensagem %} tem-erro{% endif %}">
+  <label for="{{ id }}">{{ rotulo }}{% if unidade %} <span class="custos-unidade">({{ unidade }})</span>{% endif %}</label>
+  <input id="{{ id }}" name="{{ nome }}" type="{{ tipo }}"{% if tipo == "text" %} inputmode="{{ modo }}"{% endif %} autocomplete="off"
+    {%- if obrigatorio %} required{% endif %}
+    {%- if maximo %} maxlength="{{ maximo }}"{% endif %}
+    {%- if placeholder %} placeholder="{{ placeholder }}"{% endif %}
+    value="{{ estado.texto(escopo, nome, padrao) }}"
+    {%- if mensagem or dica %} aria-describedby="{% if dica %}{{ id }}-dica{% endif %}{% if dica and mensagem %} {% endif %}{% if mensagem %}{{ id }}-erro{% endif %}"{% endif %}
+    {%- if mensagem %} aria-invalid="true"{% endif %}>
+  {% if dica %}<p class="custos-dica" id="{{ id }}-dica">{{ dica }}</p>{% endif %}
+  {% if mensagem %}<p class="campo-erro" id="{{ id }}-erro">{{ mensagem }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
+{# Início e fim de um formulário de edição: CSRF, mensagem geral, Salvar e Cancelar. #}
+{% macro abrir_form(acao, escopo, classe="custos-form") -%}
+<form class="{{ classe }}" method="post" action="{{ acao }}" novalidate>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if estado.falhas.get(escopo) %}
+  <div class="alerta alerta-erro" role="alert">{{ estado.falhas[escopo] }}</div>
+  {% endif %}
+{%- endmacro %}
+
+{% macro botoes(ancora, rotulo_salvar="Salvar") -%}
+  <div class="custos-form-acoes">
+    <button type="submit" class="botao botao-primario">{{ rotulo_salvar }}</button>
+    <a class="botao botao-secundario" href="/custos#{{ ancora }}">Cancelar</a>
+  </div>
+</form>
+{%- endmacro %}
+
+{# Botão discreto de lápis: leva ao formulário de edição do card (área clicável de 44 px). #}
+{% macro lapis(href, descricao) -%}
+<a class="custos-lapis" href="{{ href }}" title="Editar" aria-label="Editar {{ descricao }}">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+</a>
+{%- endmacro %}
+
+{# Card de filamento: nome, custo/kg definido à mão e lápis; o calculado fica em "Ver detalhes". #}
+{% macro cartao_filamento(i) -%}
+{% set pos = todos_insumos.index(i) %}
+{% set escopo = "insumo-" ~ pos %}
+<li class="custos-item custos-fil" id="{{ escopo }}" data-chave="{{ i.chave }}" data-csrf="{{ csrf }}" data-titulo="{{ i.titulo }}">
+  <div class="custos-fil-topo">
+    <strong class="custos-fil-nome">{{ i.titulo }}</strong>
+    {{ lapis("/custos?editar=" ~ escopo ~ "#" ~ escopo, "o custo por kg de " ~ i.titulo) }}
+  </div>
+  <p class="custos-fil-valor custos-fil-valor-{{ i.comparacao or "neutro" }}" data-valor="{{ valor_do_campo(i.manual, "moeda") }}">
+    {%- if i.manual is none %}<span class="custos-pendente">A definir</span>
+    {%- else %}{{ i.manual | custo }}<span class="custos-unidade">/kg</span>{% endif -%}
+  </p>
+  {% if i.comparacao %}
+  <p class="custos-fil-comparacao custos-fil-comparacao-{{ i.comparacao }}" role="status">
+    {%- if i.comparacao == "maior" %}Acima do custo calculado
+    {%- elif i.comparacao == "igual" %}Igual ao custo calculado
+    {%- else %}Revisar custos: valor manual abaixo do custo calculado{% endif -%}
+  </p>
+  {% endif %}
+  {% if escopo in estado.abertos %}
+  {{ abrir_form("/custos/insumos/ajuste", escopo) }}
+  <input type="hidden" name="chave" value="{{ i.chave }}">
+  <div class="custos-form-campos">
+    {{ campo(escopo, "valor", "Custo por kg definido", "R$/kg", valor_do_campo(i.manual, "moeda"),
+         dica="Valor definido por você para esta categoria. Não altera as compras, o estoque nem o custo calculado.") }}
+  </div>
+  {{ botoes(escopo) }}
+  {% endif %}
+  <details class="custos-detalhes custos-detalhes-item"{% if escopo in estado.abertos %} open{% endif %}>
+    <summary>Ver detalhes</summary>
+    <dl class="custos-item-dados">
+      <div><dt>Custo/kg calculado</dt><dd>{% if i.calculado is none %}—{% else %}{{ i.calculado | custo_aprox }}<span class="custos-unidade">/kg</span>{% endif %}</dd></div>
+      <div><dt>Custo/g calculado</dt><dd>{% if i.calculado is none %}—{% else %}{{ (i.calculado / 1000) | custo_aprox }}<span class="custos-unidade">/g</span>{% endif %}</dd></div>
+    </dl>
+    <p class="custos-dica">Média ponderada das compras do estoque (não muda com o valor definido). Uso atual: ainda não é usado em pedidos nem em precificação; serve de referência nesta tela{% if i.chave in ("filamento:petg", "filamento:pla-multicolor") %} e de comparação com a média dos cards de filamento em Estoque{% endif %}.</p>
+  </details>
+</li>
+{%- endmacro %}
+
+{# Um ou mais valores únicos (uma chave de custos_parametros cada), com Editar/Salvar/Cancelar. #}
+{% macro valores(grupo, ancora, descricao_editar, botao=True) -%}
+{% set escopo = "valores-" ~ grupo %}
+{% if escopo in estado.abertos %}
+  {{ abrir_form("/custos/valores/" ~ grupo, escopo) }}
+  <div class="custos-form-campos">
+  {% for c in grupos[grupo] %}
+  {{ campo(escopo, c.nome, c.rotulo, c.unidade, valor_do_campo(parametros.get(c.chave), c.formato),
+       obrigatorio=not c.opcional, placeholder="A definir" if c.opcional else "",
+       dica="Deixe em branco para manter “A definir”. Zero é um valor." if c.opcional else "") }}
+  {% endfor %}
+  </div>
+  {{ botoes(ancora) }}
+{% else %}
+  <div class="custos-bloco-valores">
+  <dl class="custos-valores">
+    {% for c in grupos[grupo] %}
+    <div>
+      <dt>{{ c.rotulo }}</dt>
+      <dd>
+        {%- if c.chave not in parametros %}—
+        {%- elif parametros[c.chave] is none %}<span class="custos-pendente">A definir</span>
+        {%- elif c.formato == "moeda" %}{{ parametros[c.chave] | custo }}{% if "/" in c.unidade %}<span class="custos-unidade">/{{ c.unidade.split("/")[1] }}</span>{% endif %}
+        {%- else %}{{ parametros[c.chave] | numero }}<span class="custos-unidade">{{ "" if c.unidade == "%" else " " }}{{ c.unidade }}</span>{% endif -%}
+      </dd>
+    </div>
+    {% endfor %}
+    {% if caller is defined %}{{ caller() }}{% endif %}
+  </dl>
+  {% if botao %}
+  <a class="botao botao-secundario custos-editar" href="/custos?editar=valores-{{ grupo }}#{{ ancora }}"
+    aria-label="Editar {{ descricao_editar }}">Editar</a>
+  {% endif %}
+  </div>
+{% endif %}
+{%- endmacro %}
+
+{# Card de "Outros custos diretos" no padrão dos cards de Filamentos: nome, valor principal com a
+   unidade, lápis (edição no próprio card, por JavaScript) e "Ver detalhes" (o conteúdo vem do
+   bloco chamador). Sem JavaScript, o lápis abre o formulário comum logo abaixo. #}
+{% macro cartao_valor(id, titulo, grupo, tipo, usado, unidade, descricao, comparacao=None, aberto=False) -%}
+{% set c = grupos[grupo][0] %}
+{% set escopo = "valores-" ~ grupo %}
+<li class="custos-item custos-fil" id="{{ id }}" data-rota="/custos/valores/{{ grupo }}" data-campo="{{ c.nome }}" data-tipo="{{ tipo }}" data-csrf="{{ csrf }}" data-titulo="{{ titulo }}">
+  <div class="custos-fil-topo">
+    <strong class="custos-fil-nome">{{ titulo }}</strong>
+    {{ lapis("/custos?editar=" ~ escopo ~ "#" ~ id, descricao) }}
+  </div>
+  <p class="custos-fil-valor custos-fil-valor-{{ comparacao or "neutro" }}" data-valor="{{ valor_do_campo(usado, c.formato) }}">
+    {%- if usado is none %}<span class="custos-pendente">A definir</span>
+    {%- elif tipo == "percentual" %}{{ usado | numero }}<span class="custos-unidade">{{ unidade }}</span>
+    {%- else %}{{ usado | custo }}<span class="custos-unidade">{{ unidade }}</span>{% endif -%}
+  </p>
+  {% if comparacao %}
+  <p class="custos-fil-comparacao custos-fil-comparacao-{{ comparacao }}" role="status">
+    {%- if comparacao == "maior" %}Acima do custo calculado
+    {%- elif comparacao == "igual" %}Igual ao custo calculado
+    {%- else %}Revisar custos: valor manual abaixo do custo calculado{% endif -%}
+  </p>
+  {% endif %}
+  {% if escopo in estado.abertos %}
+  {{ abrir_form("/custos/valores/" ~ grupo, escopo) }}
+  <div class="custos-form-campos">
+    {{ campo(escopo, c.nome, c.rotulo, c.unidade, valor_do_campo(usado, c.formato)) }}
+  </div>
+  {{ botoes(id) }}
+  {% endif %}
+  <details class="custos-detalhes custos-detalhes-item"{% if aberto or escopo in estado.abertos %} open{% endif %}>
+    <summary>Ver detalhes</summary>
+    {{ caller() }}
+  </details>
+</li>
+{%- endmacro %}
+
+{# Nota do ajuste manual e "Voltar ao calculado" (por fetch, no próprio card), nos custos por hora
+   que têm um valor calculado de referência. #}
+{% macro ajuste_manual(grupo, custo, descricao) -%}
+{% if custo.manual is not none %}
+<p class="custos-dica">{% if custo.provisorio %}Ajuste manual provisório: valor arredondado adotado enquanto os critérios não são revistos. {% else %}Ajuste manual no lugar do valor calculado. {% endif %}O calculado segue como referência.</p>
+<form method="post" action="/custos/valores/{{ grupo }}/calculado" class="custos-voltar-valor">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit" class="botao botao-secundario" aria-label="Voltar {{ descricao }} ao valor calculado">Voltar ao calculado</button>
+</form>
+{% endif %}
+{%- endmacro %}
+
+{% macro cartao_energia() -%}
+{% call cartao_valor("energia", "Energia elétrica", "energia-ajuste", "moeda", energia.usado, "/h de máquina", "a energia elétrica",
+     comparacao=energia.comparacao, aberto=("valores-energia" in estado.abertos)) %}
+  <dl class="custos-item-dados">
+    <div><dt>Classificação</dt><dd>Custo direto · máquina</dd></div>
+    <div><dt>Unidade</dt><dd>R$/h de máquina</dd></div>
+    <div><dt>Origem</dt><dd>{{ energia.origem or "A definir" }}{% if energia.provisorio %} · provisório{% endif %}</dd></div>
+    <div class="custos-calculado"><dt>Calculado (referência)</dt><dd>{% if energia.calculado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ energia.calculado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
+  </dl>
+  <p class="custos-dica"><strong>Critério:</strong> consumo mensal (kWh) × tarifa (R$/kWh) ÷ horas impressas no mês.</p>
+  {{ ajuste_manual("energia-ajuste", energia, "a energia elétrica") }}
+  {% call valores("energia", "energia", "o consumo e a tarifa de energia") %}
+    <div><dt>Horas impressas no mês</dt><dd>{% if horas is not none %}{{ horas | numero }}<span class="custos-unidade"> h/mês</span>{% else %}—{% endif %}</dd></div>
+  {% endcall %}
+{% endcall %}
+{%- endmacro %}
+
+{% macro cartao_perda() -%}
+{% call cartao_valor("perdas", "Taxa de perda", "perdas", "percentual", perda, " %", "a taxa de perda de material") %}
+  <dl class="custos-item-dados">
+    <div><dt>Classificação</dt><dd>Custo direto · ajuste do filamento</dd></div>
+    <div><dt>Unidade</dt><dd>%</dd></div>
+    <div><dt>Origem</dt><dd>Parâmetro editável</dd></div>
+  </dl>
+  <p class="custos-dica"><strong>Critério:</strong> aplicada uma única vez, só sobre o custo do filamento: custo × (1 + perda). Não incide sobre energia, depreciação, manutenção, MDO nem acessórios.</p>
+{% endcall %}
+{%- endmacro %}
+
+{% macro cartao_mdo() -%}
+{% call cartao_valor("mdo", "MDO", "mdo", "moeda", mdo, "/h ativa", "a MDO") %}
+  <dl class="custos-item-dados">
+    <div><dt>Classificação</dt><dd>Custo direto · mão de obra</dd></div>
+    <div><dt>Unidade</dt><dd>R$/h de tempo ativo</dd></div>
+    <div><dt>Origem</dt><dd>Parâmetro editável</dd></div>
+  </dl>
+  <p class="custos-dica"><strong>Critério:</strong> mão de obra direta: valor por hora de trabalho ativo manual (preparação, acabamento, montagem e embalagem). A hora de impressão não gera MDO (evita contar duas vezes). Fica separada do subtotal da máquina.</p>
+  {% if mdo_referencias %}
+  <ul class="custos-referencias" aria-label="Referências de tempo ativo">
+    {% for minutos, valor in mdo_referencias %}
+    <li><span class="custos-unidade">{{ minutos }} min</span> <strong>{{ valor | custo_aprox }}</strong></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+{% endcall %}
+{%- endmacro %}
+
+{% macro cartao_depreciacao() -%}
+{% call cartao_valor("depreciacao", "Depreciação gerencial", "depreciacao-ajuste", "moeda", depreciacao_hora.usado, "/h", "a depreciação",
+     comparacao=depreciacao_hora.comparacao, aberto=("valores-depreciacao" in estado.abertos)) %}
+  <dl class="custos-item-dados">
+    <div><dt>Classificação</dt><dd>Custo indireto · máquina</dd></div>
+    <div><dt>Unidade</dt><dd>R$/h</dd></div>
+    <div><dt>Origem</dt><dd>{{ depreciacao_hora.origem or "A definir" }}{% if depreciacao_hora.provisorio %} · provisório{% endif %}</dd></div>
+    <div class="custos-calculado"><dt>Calculado (referência)</dt><dd>{% if depreciacao_hora.calculado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ depreciacao_hora.calculado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
+  </dl>
+  <p class="custos-dica"><strong>Critério:</strong> (aquisição − residual) ÷ (vida útil em anos × 12 × horas impressas no mês). Não é depreciação fiscal.</p>
+  {{ ajuste_manual("depreciacao-ajuste", depreciacao_hora, "a depreciação") }}
+  {% call valores("depreciacao", "depreciacao", "os critérios da depreciação") %}
+    {% if depreciacao is not none %}
+    <div class="custos-calculado"><dt>Depreciação mensal</dt><dd>{{ depreciacao.mensal | custo_aprox }}<span class="custos-unidade">/mês</span></dd></div>
+    {% endif %}
+    <div><dt>Horas impressas no mês</dt><dd>{% if horas is not none %}{{ horas | numero }}<span class="custos-unidade"> h/mês</span>{% else %}—{% endif %}</dd></div>
+  {% endcall %}
+{% endcall %}
+{%- endmacro %}
+
+{# Manutenção: o custo por hora vem dos gastos registrados na tela Manutenção (nenhum cadastro
+   duplicado aqui); só o período de referência e as horas impressas nele se editam neste card. #}
+{% macro cartao_manutencao() -%}
+{% call cartao_valor("manutencao", "Manutenção", "manutencao-ajuste", "moeda", manutencao.usado, "/h", "a manutenção",
+     comparacao=manutencao.comparacao, aberto=("manutencao-periodo" in estado.abertos)) %}
+  <dl class="custos-item-dados">
+    <div><dt>Classificação</dt><dd>Custo indireto · máquina</dd></div>
+    <div><dt>Unidade</dt><dd>R$/h</dd></div>
+    <div><dt>Origem</dt><dd>{{ manutencao.origem or "A definir" }}</dd></div>
+    <div class="custos-calculado"><dt>Calculado (referência)</dt><dd>{% if manutencao.calculado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ manutencao.calculado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
+    <div><dt>Período de referência</dt><dd>{% if periodo %}{{ periodo.inicio | data }} a {{ periodo.fim | data }}{% else %}<span class="custos-pendente">A definir</span>{% endif %}</dd></div>
+    <div><dt>Horas impressas no período</dt><dd>{% if periodo %}{{ periodo.horas | numero }}<span class="custos-unidade"> h</span>{% else %}—{% endif %}</dd></div>
+    <div><dt>Gastos no período</dt><dd>{% if gastos_periodo %}{{ total_gastos_periodo | custo }} <span class="custos-unidade">({{ gastos_periodo }} {{ "manutenção" if gastos_periodo == 1 else "manutenções" }})</span>{% else %}—{% endif %}</dd></div>
+  </dl>
+  <p class="custos-dica"><strong>Critério:</strong> gastos reais do período de referência ÷ horas impressas no mesmo período. Os gastos são os custos das manutenções registradas em <a href="/manutencao">Manutenção</a>; o tempo parado da máquina é outro indicador e nunca entra nesta divisão. Sem dados, fica “A definir” (não é zero).</p>
+  {% if sem_custo_periodo %}
+  <p class="custos-aviso" role="status">{{ sem_custo_periodo }} {{ "manutenção do período está" if sem_custo_periodo == 1 else "manutenções do período estão" }} com custo “A definir” e {{ "fica" if sem_custo_periodo == 1 else "ficam" }} fora desta soma: o custo por hora é um subtotal conhecido.</p>
+  {% endif %}
+  {% if manutencao.calculado is none and manutencao.manual is none %}
+  <p class="custos-aviso" role="status">Manutenção “A definir”: {% if not periodo %}informe o período e as horas impressas e registre os custos em Manutenção.{% else %}nenhum custo de manutenção registrado dentro do período. Isso não é tratado como zero.{% endif %} Ela fica fora do subtotal da máquina.</p>
+  {% endif %}
+  {{ ajuste_manual("manutencao-ajuste", manutencao, "a manutenção") }}
+  {% if "manutencao-periodo" in estado.abertos %}
+  {{ abrir_form("/custos/manutencao/periodo", "manutencao-periodo") }}
+  <h5>Período de referência</h5>
+  <div class="custos-form-campos">
+    {{ campo("manutencao-periodo", "inicio", "Início", "", periodo.inicio.isoformat() if periodo else "", tipo="date") }}
+    {{ campo("manutencao-periodo", "fim", "Fim", "", periodo.fim.isoformat() if periodo else "", tipo="date") }}
+    {{ campo("manutencao-periodo", "horas", "Horas impressas no período", "h", valor_do_campo(periodo.horas, "numero") if periodo else "") }}
+  </div>
+  {{ botoes("manutencao") }}
+  {% else %}
+  <a class="botao botao-secundario custos-editar" href="/custos?editar=manutencao-periodo#manutencao">{{ "Editar período e horas" if periodo else "Definir período e horas" }}</a>
+  <a class="botao botao-secundario custos-editar" href="/manutencao">Ver manutenções</a>
+  {% endif %}
+{% endcall %}
+{%- endmacro %}

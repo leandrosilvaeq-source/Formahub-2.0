@@ -1,0 +1,3 @@
+{# Trecho devolvido ao salvar um card por fetch: só o card, sem a página. #}
+{% from "custos_macros.html" import cartao_filamento, cartao_energia, cartao_depreciacao, cartao_manutencao, cartao_perda, cartao_mdo with context %}
+{% if cartao == "energia" %}{{ cartao_energia() }}{% elif cartao == "depreciacao" %}{{ cartao_depreciacao() }}{% elif cartao == "manutencao" %}{{ cartao_manutencao() }}{% elif cartao == "perdas" %}{{ cartao_perda() }}{% elif cartao == "mdo" %}{{ cartao_mdo() }}{% else %}{{ cartao_filamento(insumo) }}{% endif %}

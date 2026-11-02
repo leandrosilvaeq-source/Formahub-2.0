@@ -60,7 +60,10 @@ from app.estoque_compra import (
     cores_conhecidas,
     descrever_item,
     gravar_compra,
+    ler_periodo,
     local_da_compra,
+    resumir_compras,
+    rotulo_do_periodo,
     validar_compra,
 )
 from app.estoque_repositorio import (
@@ -91,6 +94,7 @@ PARAMETROS_CONSULTA = ("f_busca", "f_material", "f_tipo", "f_ordem") + tuple(
     f"{p}_{campo}" for p in ("a", "e") for campo in ("busca", "ordem")
 )
 
+COMPRAS_POR_PAGINA = 20
 MENSAGEM_INDISPONIVEL = "Não foi possível carregar as compras agora. Tente novamente em instantes."
 MENSAGEM_LOTE_INDISPONIVEL = (
     "Não foi possível carregar o estoque agora. Tente novamente em instantes."
@@ -163,20 +167,28 @@ def estoque(
 
 
 def _custos_de_referencia(repo: RepositorioCustos | None) -> dict[str, Decimal]:
-    """R$/kg de cada filamento na tela Custos; sem o banco, os cards ficam sem o alerta."""
+    """Ajuste manual do R$/kg de cada filamento na tela Custos.
+
+    Sem ajuste (o custo de Custos é a própria média das compras) ou sem o banco, o card não alerta.
+    """
     try:
         if repo is None:
             raise FalhaAoConsultarCustos
-        return {f.nome: f.valor_kg for f in repo.listar().filamentos}
+        ajustes = repo.listar().ajustes
     except FalhaAoConsultarCustos:
         return {}
+    return {
+        titulo.split(" (")[0]: ajustes[chave]
+        for chave, titulo, _material, _tipos in GRUPOS_CUSTO_KG
+        if chave in ajustes
+    }
 
 
 def _rolos_por_material(grupos) -> list[tuple[str, Decimal]]:
     """Rolos disponíveis de PLA, PETG e PLA Multicolor (mesmos grupos de Custos); sem os zerados."""
     ordem = {"PLA": 0, "PETG": 1, "PLA Multicolor": 2}
     resultado = []
-    for titulo, material, tipos in GRUPOS_CUSTO_KG:
+    for _chave, titulo, material, tipos in GRUPOS_CUSTO_KG:
         rolos = sum(
             (
                 g.rolos
@@ -220,7 +232,13 @@ def _fotos_dos_grupos(repo: RepositorioEstoque, grupos) -> dict[str, str]:
 
 
 @router.get("/compras", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
-def compras(request: Request, repo: RepositorioEstoque | None = Depends(get_repositorio_estoque)):
+def compras(
+    request: Request,
+    periodo: str = "todos",
+    pagina: str = "1",
+    repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+):
+    escolhido = ler_periodo(periodo)  # aaaa-mm; qualquer outro valor vale "Todos"
     contexto = {
         "erro": "",
         "sucesso": SUCESSO.get(request.query_params.get("salvo", ""), ""),
@@ -242,20 +260,34 @@ def compras(request: Request, repo: RepositorioEstoque | None = Depends(get_repo
     try:
         if repo is None:
             raise FalhaNoEstoque
-        historico = repo.listar_compras()
+        historico = repo.listar_compras(*(escolhido[1:] if escolhido else ()))
     except FalhaNoEstoque:
         contexto["erro"] = MENSAGEM_INDISPONIVEL
         return _pagina(request, "estoque/compras.html", contexto, status_code=503)
 
+    # Filtro: "Todos" + os meses com compras (o período pedido entra mesmo vazio).
+    meses = set(historico.meses) | ({escolhido[0]} if escolhido else set())
+    total_paginas = max(1, -(-len(historico.compras) // COMPRAS_POR_PAGINA))
+    numero = int(pagina) if re.fullmatch(r"[0-9]{1,6}", pagina) else 1
+    numero = min(max(numero, 1), total_paginas)
+    inicio = (numero - 1) * COMPRAS_POR_PAGINA
+
     contexto["cores"] = cores_conhecidas(_cores_salvas(repo))
-    contexto["resumo"] = historico
-    contexto["ultimas"] = _ultimas_compras(repo, historico.recentes)
+    contexto["periodo"] = escolhido[0] if escolhido else "todos"
+    contexto["periodo_rotulo"] = rotulo_do_periodo(escolhido[0]) if escolhido else ""
+    contexto["opcoes_periodo"] = [(m, rotulo_do_periodo(m)) for m in sorted(meses, reverse=True)]
+    contexto["resumo"] = resumir_compras(historico.compras)
+    contexto["linhas"] = _linhas_compras(
+        repo, historico.compras[inicio : inicio + COMPRAS_POR_PAGINA]
+    )
+    contexto["pagina"] = numero
+    contexto["total_paginas"] = total_paginas
     return _pagina(request, "estoque/compras.html", contexto)
 
 
-def _ultimas_compras(repo: RepositorioEstoque, recentes) -> list[dict]:
-    """Cada compra pronta para a tela: local, itens descritos e fotos (URLs assinadas)."""
-    caminhos = [i.imagem_caminho for c in recentes for i in c.itens if i.imagem_caminho]
+def _linhas_compras(repo: RepositorioEstoque, pagina) -> list[dict]:
+    """Cada compra da página pronta para a tabela (local, itens e fotos com URL assinada)."""
+    caminhos = [i.imagem_caminho for c in pagina for i in c.itens if i.imagem_caminho]
     try:
         urls = repo.assinar_imagens(caminhos)
     except FalhaNoEstoque:
@@ -272,8 +304,11 @@ def _ultimas_compras(repo: RepositorioEstoque, recentes) -> list[dict]:
                 for i in c.itens
                 if i.imagem_caminho in urls
             ],
+            "fotos_indisponiveis": any(
+                i.imagem_caminho and i.imagem_caminho not in urls for i in c.itens
+            ),
         }
-        for c in recentes
+        for c in pagina
     ]
 
 

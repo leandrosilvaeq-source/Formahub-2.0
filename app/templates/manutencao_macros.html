@@ -1,0 +1,130 @@
+{# Linhas da tabela de manutenção (leitura e edição) e indicadores. Usadas pela página e pelos
+   trechos devolvidos ao salvar na própria tabela (fetch). #}
+
+{% macro lapis(href, descricao) -%}
+<a class="custos-lapis manut-editar" href="{{ href }}" data-manut-editar title="Editar" aria-label="Editar {{ descricao }}">
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+</a>
+{%- endmacro %}
+
+{# Uma manutenção em modo leitura. Cada célula editável (data-campo) guarda o valor cru em
+   data-valor: o JavaScript edita só aquele campo (duplo clique, toque ou Enter) e reenvia o
+   restante da linha como está. A duração aparece sempre em horas totais e minutos; a auditoria
+   fica como linha pequena sob a data. #}
+{% macro celula(campo, valor, rotulo) -%}
+<td data-rotulo="{{ rotulo }}" data-campo="{{ campo }}" data-valor="{{ valor }}" tabindex="0" aria-describedby="manut-ajuda">
+  {{- caller() -}}
+</td>
+{%- endmacro %}
+
+{% macro linha_leitura(m) -%}
+{% set rotulo = (m.data | data_curta) ~ (" · " ~ TIPOS[m.tipo] if m.tipo else "") %}
+<tr id="manut-{{ m.id }}" data-id="{{ m.id }}" data-data="{{ m.data.isoformat() }}">
+  {% call celula("data", m.data.isoformat(), "Data") %}
+    <time datetime="{{ m.data.isoformat() }}">{{ m.data | data_curta }}</time>
+    <small class="manut-auditoria">{% if m.legado %}Gasto anterior · {% endif %}{% if m.atualizado_em and m.atualizado_em != m.criado_em %}Atualizado por {{ m.atualizado_por }} em {{ m.atualizado_em.strftime("%d/%m/%y %H:%M") }}{% else %}Registrado por {{ m.criado_por }}{% if m.criado_em %} em {{ m.criado_em.strftime("%d/%m/%y %H:%M") }}{% endif %}{% endif %}</small>
+  {% endcall %}
+  {% call celula("tipo", m.tipo or "", "Tipo de manutenção") %}{% if m.tipo %}{{ TIPOS[m.tipo] }}{% else %}<span class="manut-nulo">Não informado</span>{% endif %}{% endcall %}
+  {% call celula("tempo", (m.minutos_parados | duracao) if m.minutos_parados is not none else "", "Tempo de máquina parada") %}{% if m.minutos_parados is none %}<span class="manut-nulo">Não informado</span>{% else %}<span class="manut-duracao">{{ m.minutos_parados | duracao }}</span>{% endif %}{% endcall %}
+  {% call celula("pecas", m.pecas or "", "Peça substituída") %}{% if m.pecas %}{{ m.pecas }}{% elif m.troca_pecas %}<span class="manut-alerta">Troca marcada, sem nome da peça</span>{% else %}<span class="manut-nulo">Sem troca</span>{% endif %}{% endcall %}
+  {% call celula("custo", valor_custo(m.custo), "Custo (R$)") %}{% if m.custo is none %}<span class="custos-pendente">A definir</span>{% else %}{{ m.custo | brl }}{% endif %}{% endcall %}
+  {% call celula("comentarios", m.comentarios or "", "Comentários") %}{% if m.comentarios %}<span class="manut-comentario">{{ m.comentarios }}</span>{% else %}<span class="manut-nulo">—</span>{% endif %}{% endcall %}
+  <td data-rotulo="Ações" class="manut-col-acoes">{{ lapis("/manutencao?editar=" ~ m.id ~ "#manut-" ~ m.id, "a linha inteira da manutenção de " ~ rotulo) }}</td>
+</tr>
+{%- endmacro %}
+
+{# Mensagem de erro de um campo (ou de vários, como dias/horas/minutos). Fica sempre no HTML,
+   escondida, para o JavaScript preencher. #}
+{% macro erro_de(f, nomes, e) -%}
+{% set ns = namespace(mensagem="") %}
+{% for nome in nomes.split() %}{% if not ns.mensagem and e.get(nome) %}{% set ns.mensagem = e[nome] %}{% endif %}{% endfor %}
+<p class="campo-erro manut-erro" id="{{ f }}-{{ nomes.split()[0] }}-erro" data-erro-para="{{ nomes }}" role="alert"{% if not ns.mensagem %} hidden{% endif %}>{{ ns.mensagem }}</p>
+{%- endmacro %}
+
+{# Uma manutenção em edição (ou nova): os campos ocupam as próprias células, sem caixas nem bordas.
+   Os campos ficam ligados ao formulário da última célula pelo atributo form. #}
+{% macro linha_edicao(edicao) -%}
+{% set f = "manut-" ~ edicao.alvo %}
+{% set v = edicao.valores %}
+{% set e = edicao.erros %}
+{% set acao = "/manutencao" if edicao.alvo == "nova" else "/manutencao/" ~ edicao.alvo %}
+{% set descricao_titulo = "nova manutenção" if edicao.alvo == "nova" else "manutenção" %}
+<tr id="{{ f }}" class="manut-editando" data-alvo="{{ edicao.alvo }}"{% if edicao.alvo != "nova" %} data-id="{{ edicao.alvo }}"{% endif %} data-data="{{ v.data }}">
+  <td data-rotulo="Data">
+    <label class="manut-rotulo" for="{{ f }}-data">Data</label>
+    <input id="{{ f }}-data" name="data" type="date" form="{{ f }}-form" required value="{{ v.data }}"
+      {%- if e.data %} aria-invalid="true" aria-describedby="{{ f }}-data-erro"{% endif %}>
+    {{ erro_de(f, "data", e) }}
+  </td>
+  <td data-rotulo="Tipo de manutenção">
+    <label class="manut-rotulo" for="{{ f }}-tipo">Tipo de manutenção</label>
+    <select id="{{ f }}-tipo" name="tipo" form="{{ f }}-form" required
+      {%- if e.tipo %} aria-invalid="true" aria-describedby="{{ f }}-tipo-erro"{% endif %}>
+      <option value=""{% if not v.tipo %} selected{% endif %}>Escolha…</option>
+      {% for codigo, nome in TIPOS.items() %}<option value="{{ codigo }}"{% if v.tipo == codigo %} selected{% endif %}>{{ nome }}</option>{% endfor %}
+    </select>
+    {{ erro_de(f, "tipo", e) }}
+  </td>
+  <td data-rotulo="Tempo de máquina parada">
+    <label class="manut-rotulo" for="{{ f }}-tempo">Tempo de máquina parada</label>
+    <input id="{{ f }}-tempo" name="tempo" form="{{ f }}-form" type="text" autocomplete="off" maxlength="20" required
+      placeholder="00h00min" value="{{ v.tempo }}" aria-describedby="{{ f }}-tempo-dica{% if e.tempo %} {{ f }}-tempo-erro{% endif %}"
+      {%- if e.tempo %} aria-invalid="true"{% endif %}>
+    <p class="manut-dica" id="{{ f }}-tempo-dica">hh:mm, 27h15min ou 02d05h</p>
+    {{ erro_de(f, "tempo", e) }}
+  </td>
+  <td data-rotulo="Peça substituída">
+    <label class="manut-rotulo" for="{{ f }}-pecas">Peça substituída</label>
+    <input id="{{ f }}-pecas" name="pecas" form="{{ f }}-form" type="text" autocomplete="off" maxlength="{{ LIMITE_PECAS }}"
+      placeholder="Vazio = sem troca" value="{{ v.pecas }}"
+      {%- if e.pecas %} aria-invalid="true" aria-describedby="{{ f }}-pecas-erro"{% endif %}>
+    {{ erro_de(f, "pecas", e) }}
+  </td>
+  <td data-rotulo="Custo (R$)" class="manut-col-custo">
+    <label class="manut-rotulo" for="{{ f }}-custo">Custo (R$)</label>
+    <input id="{{ f }}-custo" name="custo" form="{{ f }}-form" type="text" inputmode="numeric" autocomplete="off" maxlength="24"
+      placeholder="A definir" value="{{ v.custo }}" data-mascara="moeda"
+      {%- if e.custo %} aria-invalid="true" aria-describedby="{{ f }}-custo-erro"{% endif %}>
+    {{ erro_de(f, "custo", e) }}
+  </td>
+  <td data-rotulo="Comentários" class="manut-col-coment">
+    <label class="manut-rotulo" for="{{ f }}-comentarios">Comentários</label>
+    <textarea id="{{ f }}-comentarios" name="comentarios" form="{{ f }}-form" rows="2" maxlength="{{ LIMITE_COMENTARIOS }}" placeholder="Opcional (Ctrl+Enter confirma)"
+      {%- if e.comentarios %} aria-invalid="true" aria-describedby="{{ f }}-comentarios-erro"{% endif %}>{{ v.comentarios }}</textarea>
+    {{ erro_de(f, "comentarios", e) }}
+  </td>
+  <td data-rotulo="Ações" class="manut-col-acoes">
+    <form id="{{ f }}-form" class="manut-form" method="post" action="{{ acao }}" novalidate>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="custos-fil-botao custos-fil-ok" aria-label="Salvar {{ descricao_titulo }}" title="Salvar (Enter)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </button>
+      <a class="custos-fil-botao manut-cancelar" href="/manutencao" aria-label="Cancelar a edição" title="Cancelar (Esc)">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </a>
+    </form>
+    <p class="manut-progresso" role="status"></p>
+    <p class="campo-erro manut-falha" role="alert"{% if not edicao.falha %} hidden{% endif %}>{{ edicao.falha }}</p>
+  </td>
+</tr>
+{%- endmacro %}
+
+{# Os três indicadores, sobre todos os registros. O custo é um subtotal conhecido quando alguma
+   manutenção ainda está com custo "A definir" (isso não é tratado como zero). #}
+{% macro bloco_indicadores(ind) -%}
+<div class="manut-indicadores" id="manut-indicadores">
+  <div class="manut-indicador">
+    <span class="manut-indicador-rotulo">Número de manutenções</span>
+    <strong class="manut-indicador-valor">{{ ind.numero }}</strong>
+  </div>
+  <div class="manut-indicador">
+    <span class="manut-indicador-rotulo">Horas paradas</span>
+    <strong class="manut-indicador-valor">{{ ind.minutos_parados | duracao }}</strong>
+  </div>
+  <div class="manut-indicador">
+    <span class="manut-indicador-rotulo">Custos com manutenção (R$){% if not ind.custo_completo %} · subtotal conhecido{% endif %}</span>
+    <strong class="manut-indicador-valor">{% if ind.custo_indefinido %}<span class="custos-pendente">A definir</span>{% else %}{{ ind.custo_conhecido | brl }}{% endif %}</strong>
+    {% if not ind.custo_completo %}<span class="manut-indicador-nota">{{ ind.sem_custo }} {{ "manutenção" if ind.sem_custo == 1 else "manutenções" }} com custo a definir fora da soma</span>{% endif %}
+  </div>
+</div>
+{%- endmacro %}

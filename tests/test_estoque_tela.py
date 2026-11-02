@@ -201,7 +201,12 @@ def card(html: str, rotulo: str) -> str:
 def test_card_fica_vermelho_com_alerta_quando_a_media_passa_do_valor_de_custos(
     estoque, repo_custos
 ):
-    # Custos: PLA R$ 100/kg, PLA Multicolor R$ 125/kg, PETG R$ 85/kg
+    # Ajustes manuais em Custos: PLA R$ 100/kg, PLA Multicolor R$ 125/kg, PETG R$ 85/kg
+    repo_custos.ajustes = {
+        "filamento:pla": Decimal("100"),
+        "filamento:pla-multicolor": Decimal("125"),
+        "filamento:petg": Decimal("85"),
+    }
     estoque.com_filamento(tipo="silk", valor_unitario=Decimal("100.01"))  # PLA acima
     estoque.com_filamento(tipo="bicolor", valor_unitario=Decimal("125"))  # Multicolor igual
     estoque.com_filamento(material="PETG", valor_unitario=Decimal("80"))  # PETG abaixo
@@ -216,6 +221,15 @@ def test_card_fica_vermelho_com_alerta_quando_a_media_passa_do_valor_de_custos(
     assert "compras-card-alerta" not in multicolor and "compras-card-ok" not in multicolor
     assert "do custo/kg em Custos" not in multicolor
     assert "Média ponderada" not in html
+
+
+def test_sem_ajuste_manual_em_custos_o_card_nao_alerta(estoque, repo_custos):
+    # Sem ajuste, o custo/kg de Custos é a própria média das compras: nada a comparar.
+    estoque.com_filamento(tipo="silk", valor_unitario=Decimal("100.01"))
+
+    pla = card(client.get("/estoque").text, "Custo/kg PLA")
+
+    assert "compras-card-alerta" not in pla and "do custo/kg em Custos" not in pla
 
 
 def test_sem_media_nao_ha_alerta(estoque):

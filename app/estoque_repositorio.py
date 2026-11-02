@@ -139,6 +139,7 @@ class ItemCompraListado:
     marca: str | None
     peso_rolo_g: Decimal | None
     nome: str | None
+    valor: Decimal  # filamento: rolos x valor unitário; acessório e embalagem: valor total
     imagem_caminho: str | None
 
 
@@ -155,19 +156,21 @@ class CompraListada:
 
 @dataclass(frozen=True)
 class Compras:
-    """Resumo de TODO o histórico e as compras mais recentes (data decrescente, depois id)."""
+    """Todas as compras do período (data decrescente, depois id) e os meses que têm compras."""
 
-    total_gasto: Decimal  # itens + frete de todas as compras
-    quantidade: int  # número de compras registradas
-    recentes: tuple[CompraListada, ...]
+    meses: tuple[str, ...]  # aaaa-mm, do mais recente ao mais antigo (ignora o período pedido)
+    compras: tuple[CompraListada, ...]
 
 
 class RepositorioEstoque(Protocol):
     def listar_estoque(self) -> Estoque:
         """Todos os lotes (FalhaNoEstoque se o banco não responder)."""
 
-    def listar_compras(self) -> Compras:
-        """Resumo do histórico e últimas compras (FalhaNoEstoque se o banco não responder)."""
+    def listar_compras(self, inicio: date | None = None, fim: date | None = None) -> Compras:
+        """Compras de inicio (inclusive) até fim (exclusive); sem datas, todas.
+
+        FalhaNoEstoque se o banco não responder.
+        """
 
     def assinar_imagens(self, caminhos: list[str]) -> dict[str, str]:
         """Caminho -> URL assinada temporária, só para os arquivos que existem."""
@@ -262,13 +265,15 @@ class RepositorioEstoqueSupabase:
             logger.error("Resposta inesperada de listar_estoque: %s", type(erro).__name__)
             raise FalhaNoEstoque from None
 
-    def listar_compras(self) -> Compras:
-        dados = self._rpc("listar_compras", {})
+    def listar_compras(self, inicio: date | None = None, fim: date | None = None) -> Compras:
+        parametros = {}
+        if inicio is not None and fim is not None:
+            parametros = {"p_inicio": inicio.isoformat(), "p_fim": fim.isoformat()}
+        dados = self._rpc("listar_compras", parametros)
         try:
             return Compras(
-                total_gasto=Decimal(dados["total_gasto"]),
-                quantidade=int(dados["quantidade"]),
-                recentes=tuple(
+                meses=tuple(str(m) for m in dados["meses"]),
+                compras=tuple(
                     CompraListada(
                         id=c["id"],
                         data_compra=date.fromisoformat(c["data_compra"]),
@@ -289,6 +294,7 @@ class RepositorioEstoqueSupabase:
                                     None if i["peso_rolo_g"] is None else Decimal(i["peso_rolo_g"])
                                 ),
                                 nome=i["nome"],
+                                valor=Decimal(i["valor"]),
                                 imagem_caminho=i["imagem_caminho"],
                             )
                             for i in c["itens"]

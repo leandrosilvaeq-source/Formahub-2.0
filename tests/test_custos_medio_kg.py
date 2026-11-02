@@ -58,11 +58,18 @@ def test_tela_mostra_a_media_de_cada_grupo():
 
     html = client.get("/custos").text
 
-    assert "Custo médio por kg (compras do estoque)" in html
-    assert "PLA Multicolor (Bicolor, Tricolor)" in html
-    assert "R$ 125,00" in html and "Nenhuma compra registrada" in html
-    assert html.index('id="filamentos"') < html.index('id="custo-medio-kg"')
-    assert html.index('id="custo-medio-kg"') < html.index('id="energia"')
+    assert "PLA Multicolor" in html and "PLA Sólido" in html
+    assert "R$ 125,00" in html and "—</dd>" in html
+    assert html.index('id="filamentos"') < html.index('id="energia"')
+
+
+def test_peso_comprado_e_saldo_aparecem_separados_por_grupo():
+    repo = estoque_com_compras()
+
+    petg, pla, _ = custo_medio_por_kg(repo.listar_estoque().filamentos)
+
+    assert (pla.kg_comprados, pla.saldo_kg) == (3, Decimal("1.5"))  # 2 + 1 kg comprados; 0,5 + 1
+    assert (petg.kg_comprados, petg.saldo_kg) == (0, 0)
 
 
 def test_tela_continua_sem_o_estoque():
@@ -74,4 +81,4 @@ def test_tela_continua_sem_o_estoque():
 
     assert resposta.status_code == 200
     assert "Não foi possível carregar as compras do estoque agora." in resposta.text
-    assert 'id="filamentos"' in resposta.text
+    assert 'id="energia"' in resposta.text

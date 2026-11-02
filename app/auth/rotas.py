@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from app.auth import sessoes
@@ -62,7 +62,28 @@ def exigir_usuario(request: Request, repo: RepositorioAuth = Depends(get_reposit
     return sessao.usuario
 
 
+def _tela_de_retorno(request: Request) -> str:
+    """Tela que reabre depois do login de uma edição por fetch (só as que editam no lugar)."""
+    return "/manutencao" if request.url.path.startswith("/manutencao") else "/custos"
+
+
 def tratar_nao_autenticado(request: Request, erro: NaoAutenticado) -> Response:
+    if request.method == "POST" and request.headers.get("x-requested-with") == "fetch":
+        # Edição no próprio card (fetch): o JavaScript precisa saber, sem seguir redirecionamento,
+        # que foi a sessão que acabou. A autenticação é a mesma: nada é executado sem sessão.
+        resposta = JSONResponse(
+            {
+                "ok": False,
+                "salvo": False,
+                "expirou": True,
+                "login": "/entrar?" + urlencode({"next": _tela_de_retorno(request)}),
+                "erro": "Sua sessão expirou. Entre de novo; o valor digitado será mantido.",
+            },
+            status_code=401,
+            headers={"Cache-Control": "no-store"},
+        )
+        resposta.delete_cookie(sessoes.COOKIE_SESSAO, path="/")
+        return resposta
     resposta = RedirectResponse(
         "/entrar?" + urlencode({"next": sessoes.caminho_interno_seguro(erro.destino)}),
         status_code=303,

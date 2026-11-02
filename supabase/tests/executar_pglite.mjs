@@ -2,11 +2,13 @@
 // (PGlite) e roda os arquivos de teste. Nada se conecta ao banco remoto nem grava em disco.
 //
 // Uso (na raiz do projeto, depois de `npm install`):
-//   npm run test:sql                                    -> custos_test.sql e estoque_test.sql
+//   npm run test:sql        -> custos_test, custos_gestao_test, manutencoes_test e estoque_test
 //   node supabase/tests/executar_pglite.mjs <teste.sql> [...]
 //   node supabase/tests/executar_pglite.mjs --chamadas entrada.json --listagem saida.json
 //     Executa as chamadas RPC [{funcao, parametros}] por nome de parâmetro (como o PostgREST)
 //     num estoque vazio (sem compras) e grava o resultado de listar_estoque() em saida.json.
+//   node supabase/tests/executar_pglite.mjs --custos saida.json
+//     Grava em saida.json a resposta real de listar_custos() logo depois das migrations.
 //
 // Cada arquivo de teste precisa terminar devolvendo uma linha com a coluna `resultado`
 // terminada em ': ok' (ex.: 'estoque_test: ok'); qualquer erro, ou outro resultado, interrompe
@@ -23,16 +25,22 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PADRAO = ["supabase/tests/custos_test.sql", "supabase/tests/estoque_test.sql"];
+const PADRAO = [
+  "supabase/tests/custos_test.sql",
+  "supabase/tests/custos_gestao_test.sql",
+  "supabase/tests/manutencoes_test.sql",
+  "supabase/tests/estoque_test.sql",
+];
 
 function lerArgumentos(argv) {
-  const opcoes = { testes: [], chamadas: null, listagem: null };
+  const opcoes = { testes: [], chamadas: null, listagem: null, custos: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--chamadas") opcoes.chamadas = argv[++i];
     else if (argv[i] === "--listagem") opcoes.listagem = argv[++i];
+    else if (argv[i] === "--custos") opcoes.custos = argv[++i];
     else opcoes.testes.push(argv[i]);
   }
-  if (!opcoes.testes.length && !opcoes.chamadas) opcoes.testes = PADRAO;
+  if (!opcoes.testes.length && !opcoes.chamadas && !opcoes.custos) opcoes.testes = PADRAO;
   if (Boolean(opcoes.chamadas) !== Boolean(opcoes.listagem)) {
     throw new Error("--chamadas e --listagem são usados juntos");
   }
@@ -105,6 +113,10 @@ try {
   const db = await prepararBanco();
   for (const arquivo of opcoes.testes) await rodarTeste(db, arquivo);
   if (opcoes.chamadas) await rodarChamadas(db, opcoes.chamadas, opcoes.listagem);
+  if (opcoes.custos) {
+    const { rows } = await db.query("select public.listar_custos() as dados");
+    fs.writeFileSync(opcoes.custos, JSON.stringify(rows[0].dados));
+  }
   await db.close();
 } catch (erro) {
   console.error(`ERRO: ${erro.message}${erro.where ? `\n${erro.where}` : ""}`);

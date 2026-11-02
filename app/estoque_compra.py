@@ -28,6 +28,7 @@ from app.estoque import (
     validar_tipo,
 )
 from app.estoque_repositorio import (
+    CompraListada,
     CompraParaGravar,
     FalhaNoEstoque,
     ItemCompraListado,
@@ -73,6 +74,60 @@ def descrever_item(item: ItemCompraListado) -> str:
     if item.peso_rolo_g is not None:
         partes.append(f"{formatar_numero(item.peso_rolo_g)} g")
     return " · ".join(partes)
+
+
+MESES = (
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+)
+PERIODO = re.compile(r"(\d{4})-(0[1-9]|1[0-2])")
+
+
+def ler_periodo(texto: str) -> tuple[str, date, date] | None:
+    """'2026-09' -> ('2026-09', 01/09/2026, 01/10/2026); 'todos' ou inválido -> None."""
+    achado = PERIODO.fullmatch(texto or "")
+    if not achado or int(achado[1]) < 1:
+        return None
+    ano, mes = int(achado[1]), int(achado[2])
+    proximo = date(ano + (mes == 12), mes % 12 + 1, 1)
+    return texto, date(ano, mes, 1), proximo
+
+
+def rotulo_do_periodo(periodo: str) -> str:
+    """'2026-09' -> 'Setembro/2026'."""
+    return f"{MESES[int(periodo[5:]) - 1]}/{periodo[:4]}"
+
+
+@dataclass(frozen=True)
+class ResumoCompras:
+    """Valor gasto e número de compras de um card."""
+
+    total: Decimal
+    quantidade: int
+
+
+def resumir_compras(compras: tuple[CompraListada, ...] | list[CompraListada]):
+    """Os quatro cards da tela, sobre todas as compras recebidas.
+
+    Compras: total das compras (itens + frete). Cada categoria: soma dos itens dela, sem ratear
+    o frete; uma compra com várias categorias conta em cada uma, mas só uma vez em Compras.
+    """
+    resumo = {"compras": ResumoCompras(sum((c.total for c in compras), Decimal(0)), len(compras))}
+    for categoria in ("filamento", "acessorio", "embalagem"):
+        itens = [i for c in compras for i in c.itens if i.categoria == categoria]
+        distintas = sum(any(i.categoria == categoria for i in c.itens) for c in compras)
+        resumo[categoria] = ResumoCompras(sum((i.valor for i in itens), Decimal(0)), distintas)
+    return resumo
 
 
 CATEGORIAS = {"filamento": "Filamento", "acessorio": "Acessório", "embalagem": "Embalagem"}
