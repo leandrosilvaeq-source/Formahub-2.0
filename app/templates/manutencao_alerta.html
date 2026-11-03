@@ -1,0 +1,6 @@
+{# Alerta mensal de lubrificação: na tela de Manutenção e, com o link, na página inicial. #}
+{% macro alerta_lubrificacao(desde, link=false) -%}
+<div class="alerta alerta-aviso" role="status" id="manut-alerta-lubrificacao">
+  <span>Lubrificação mensal dos eixos X e Y pendente desde {{ desde | data_curta }}. Para encerrar o alerta, registre uma manutenção Preventiva com “limpeza dos eixos X e Y” ou “lubrificação dos eixos X e Y” nos comentários.{% if link %} <a href="/manutencao">Ver manutenção</a>{% endif %}</span>
+</div>
+{%- endmacro %}

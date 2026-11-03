@@ -11,7 +11,6 @@
 <div class="pagina-topo">
   <div>
     <h1>Manutenção</h1>
-    <p>Cada linha é uma manutenção da máquina. Os custos alimentam o custo de manutenção por hora em Custos.</p>
   </div>
   <div class="pagina-topo-acoes">
     <a class="botao botao-primario" id="manut-adicionar" href="/manutencao?editar=nova#manut-nova">Registrar manutenção</a>
@@ -22,9 +21,9 @@
 <div class="alerta alerta-erro" role="alert">{{ erro }}</div>
 {% else %}
 {% if sucesso %}<div class="alerta alerta-sucesso" role="status">{{ sucesso }}</div>{% endif %}
-{{ bloco_indicadores(ind) }}
+{{ bloco_indicadores(ind, lubrificacao_desde, base_manutencao, csrf) }}
 
-<p class="manut-ajuda" id="manut-ajuda">Dê dois cliques numa célula (ou toque nela, ou use Enter) para editar só aquele campo: Enter confirma, Esc cancela. O lápis da linha edita todos os campos.</p>
+<p class="visualmente-oculto" id="manut-ajuda">Dê dois cliques numa célula (ou toque nela, ou use Enter) para editar só aquele campo: Enter confirma, Esc cancela. O lápis da linha edita todos os campos.</p>
 
 <div id="manut-mensagem" class="producao-mensagem" aria-live="polite"></div>
 

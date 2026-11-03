@@ -7,6 +7,13 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from app.custos import MANUTENCAO, custo_de_manutencao, formatar_custo_aprox
+from app.custos_repositorio import (
+    FalhaAoConsultarCustos,
+    GastoManutencao,
+    PeriodoManutencao,
+)
+from app.estoque_repositorio import get_repositorio_estoque
 from app.main import app
 from app.manutencao import (
     formatar_data_curta,
@@ -16,6 +23,8 @@ from app.manutencao import (
     ler_data,
     ler_duracao,
     ler_formulario,
+    lubrificacao_pendente_desde,
+    registra_lubrificacao,
 )
 from app.manutencao_repositorio import (
     FalhaAoConsultarManutencao,
@@ -23,10 +32,16 @@ from app.manutencao_repositorio import (
     Manutencao,
     ManutencaoRecusada,
 )
+from tests.fake_estoque import RepositorioEstoqueMemoria
 
 client = TestClient(app)
 CSRF = "csrf-de-teste"
 FETCH = {"X-Requested-With": "fetch"}
+
+
+@pytest.fixture
+def estoque_vazio():
+    app.dependency_overrides[get_repositorio_estoque] = RepositorioEstoqueMemoria
 
 
 def formulario(**extra):
@@ -245,7 +260,8 @@ def test_pagina_vazia_mostra_indicadores_zerados_e_o_botao():
         and "Adicionar manutenção" not in html
         and "Nenhuma manutenção registrada ainda" in html
     )
-    assert re.search(r"Número de manutenções\s*</span>\s*<strong[^>]*>0<", html)
+    assert re.search(r">Manutenções\s*</span>\s*<strong[^>]*>0<", html)
+    assert "Número de manutenções" not in html and "Os custos alimentam" not in html
     assert "Horas paradas" in html and "Custos com manutenção (R$)" in html
     assert "subtotal conhecido" not in html
     for coluna in (
@@ -258,7 +274,8 @@ def test_pagina_vazia_mostra_indicadores_zerados_e_o_botao():
         "Ações",
     ):
         assert f">{coluna}</th>" in html
-    assert "Troca de peças?" not in html and "Ver detalhes" not in html
+    tabela = html[html.index('id="manut-tabela"') :]
+    assert "Troca de peças?" not in html and "Ver detalhes" not in tabela
 
 
 def test_pagina_mostra_registros_formatados_e_indicadores(repo_manutencao):
@@ -289,11 +306,11 @@ def test_pagina_mostra_registros_formatados_e_indicadores(repo_manutencao):
     assert "A definir" in texto3 and "00h30min" in texto3 and "Sem troca" in texto3
     assert "01h30min" in texto1 and "Bico, correia" in texto1 and "Sem troca" not in texto1
     assert "R$ 62,50" in texto1 and "Obs 1" in texto1
-    assert "Registrado por Leandro em 10/10/26 09:00" in texto1
+    assert "Registrado por" not in texto1 and "Atualizado por" not in texto1
 
     inicio = html.index('id="manut-indicadores"')
-    indicadores_html = texto(html[inicio : html.index('id="manut-mensagem"')])
-    assert "Número de manutenções 3" in indicadores_html
+    indicadores_html = texto(html[inicio : html.index('id="manut-ajuda"')])
+    assert "Manutenções 3" in indicadores_html
     assert "Horas paradas 28h30min" in indicadores_html  # 90 + 1590 + 30 = 1710 min
     assert "Custos com manutenção (R$) · subtotal conhecido R$ 62,50" in indicadores_html
     assert "1 manutenção com custo a definir fora da soma" in indicadores_html
@@ -316,6 +333,324 @@ def test_gasto_antigo_aparece_sem_tipo_nem_tempo(repo_manutencao):
 
     assert "Não informado" in linha and "Gasto anterior" in linha
     assert "Lubrificante" in linha
+
+
+# ---------- Custo de manutenção por hora ----------
+
+
+def com_referencia(repo_custos, manual=None, sem_custo=()):
+    repo_custos.periodo = PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal("902.4"))
+    repo_custos.gastos = [
+        GastoManutencao(1, date(2026, 10, 29), "Corretiva", Decimal("107.62")),
+        GastoManutencao(2, date(2026, 10, 27), "Preventiva", Decimal("0")),
+        GastoManutencao(3, date(2026, 8, 2), "Fora do período", Decimal("500")),
+    ]
+    repo_custos.manutencoes_sem_custo = sem_custo
+    repo_custos.parametros[MANUTENCAO] = manual
+
+
+def cartao_custos():
+    html = client.get("/custos").text
+    inicio = html.index('<li class="custos-item custos-fil" id="manutencao"')
+    return html[inicio : html.index("</li>", inicio)]
+
+
+def test_custo_por_hora_usa_decimal_e_so_arredonda_na_exibicao(repo_custos):
+    com_referencia(repo_custos)
+
+    base, custo = custo_de_manutencao(repo_custos.listar())
+
+    assert str(base.calculado).startswith("0.119259751773049645390070921985")  # sem arredondar
+    assert base.situacao == "completo"
+    assert base.total == Decimal("107.62") and base.quantidade == 2  # o gasto de agosto fica fora
+    assert formatar_custo_aprox(base.calculado) == "≈ R$ 0,1193"
+    assert custo.calculado == base.calculado
+
+
+def test_custo_por_hora_e_o_mesmo_em_manutencao_e_em_custos(repo_custos, estoque_vazio):
+    com_referencia(repo_custos)
+
+    card = texto(client.get("/manutencao").text)
+
+    assert "Custo com manutenção (R$/h) R$0,12" in card  # mesma base; duas casas só na exibição
+    assert "03/08/2026 a 01/11/2026" in card and "902,4 h" in card and "R$ 107,62" in card
+    assert "Calculado (referência) ≈ R$ 0,1193 /h" in texto(cartao_custos())
+
+
+def test_card_recalcula_ao_salvar_na_propria_tabela(repo_custos):
+    com_referencia(repo_custos)
+    repo_custos.gastos[0] = GastoManutencao(1, date(2026, 10, 29), "Corretiva", Decimal("902.4"))
+
+    corpo = enviar().json()
+
+    assert "Custo com manutenção (R$/h) R$1,00" in texto(corpo["indicadores"])
+
+
+def test_card_formata_milhar_e_so_oferece_definir_sem_periodo(repo_custos):
+    html = client.get("/manutencao").text
+    assert "Ver detalhes" in html and "Ver critérios" not in html
+    assert "Definir período e horas" in html  # sem período: o caminho para defini-lo continua
+
+    repo_custos.periodo = PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal(1))
+    repo_custos.gastos = [GastoManutencao(1, date(2026, 10, 29), "Peça", Decimal("1234.5"))]
+    html = client.get("/manutencao").text
+
+    assert "Custo com manutenção (R$/h) R$1.234,50" in texto(html)
+    assert "Editar período e horas" not in html and "Definir período e horas" not in html
+
+
+@pytest.mark.parametrize(
+    ("preparo", "esperado"),
+    [
+        (lambda r: None, "Defina o período e as horas impressas."),
+        (
+            lambda r: setattr(
+                r, "periodo", PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal(0))
+            ),
+            "Defina o período e as horas impressas.",
+        ),
+        (
+            lambda r: setattr(
+                r, "periodo", PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal(10))
+            ),
+            "Nenhum custo registrado no período.",
+        ),
+    ],
+)
+def test_card_indisponivel_sem_periodo_horas_ou_gastos(repo_custos, preparo, esperado):
+    preparo(repo_custos)
+
+    html = texto(client.get("/manutencao").text)
+
+    assert "Custo com manutenção (R$/h) Indisponível" in html and esperado in html
+
+
+def test_card_sinaliza_calculo_incompleto_com_custo_a_definir(repo_custos):
+    com_referencia(repo_custos, sem_custo=(date(2026, 10, 1), date(2020, 1, 1)))
+
+    html = texto(client.get("/manutencao").text)
+
+    assert "Cálculo incompleto: 1 manutenção do período com custo “A definir”." in html
+
+
+def test_card_indisponivel_quando_custos_nao_responde(repo_custos):
+    repo_custos.falhar_em["listar"] = FalhaAoConsultarCustos()
+
+    resposta = client.get("/manutencao")
+
+    assert resposta.status_code == 200
+    assert "Não foi possível carregar o período agora." in resposta.text
+
+
+def test_referencia_so_e_gravada_ao_confirmar_e_preserva_o_manual(repo_custos, estoque_vazio):
+    repo_custos.parametros[MANUTENCAO] = Decimal("0.12")
+
+    html = client.get("/manutencao").text
+
+    assert "Confirmar referência" in html and "915" not in texto(html)
+    assert repo_custos.gravacoes == [] and repo_custos.periodo is None
+
+    resposta = client.post(
+        "/custos/manutencao/periodo",
+        data={"csrf": CSRF, "inicio": "2026-08-03", "fim": "2026-11-01", "horas": "902,4"},
+        follow_redirects=False,
+    )
+
+    assert resposta.status_code == 303
+    assert repo_custos.periodo == PeriodoManutencao(
+        date(2026, 8, 3), date(2026, 11, 1), Decimal("902.4")
+    )
+    assert repo_custos.parametros[MANUTENCAO] == Decimal("0.12")
+    assert "Confirmar referência" not in client.get("/manutencao").text
+
+
+def test_referencia_sai_do_card_com_o_formulario_de_periodo_aberto(repo_custos, estoque_vazio):
+    assert "Confirmar referência" in client.get("/custos").text
+
+    aberto = client.get("/custos", params={"editar": "manutencao-periodo"}).text
+
+    assert "Confirmar referência" not in aberto
+
+
+def test_referencia_nao_aparece_com_periodo_ja_definido(repo_custos, estoque_vazio):
+    repo_custos.periodo = PeriodoManutencao(date(2026, 1, 1), date(2026, 1, 31), Decimal(10))
+
+    assert "Confirmar referência" not in client.get("/custos").text
+    assert "Confirmar referência" not in client.get("/manutencao").text
+    assert repo_custos.gravacoes == []
+
+
+@pytest.mark.parametrize(
+    ("manual", "classe", "aviso"),
+    [
+        (Decimal("0.12"), "maior", False),
+        (Decimal("0.10"), "menor", True),
+        (None, "neutro", False),
+    ],
+)
+def test_comparacao_no_card_de_custos(repo_custos, estoque_vazio, manual, classe, aviso):
+    com_referencia(repo_custos, manual=manual)
+
+    card = cartao_custos()
+
+    assert f"custos-fil-valor-{classe}" in card
+    assert ("Revisar custo de manutenção: valor manual abaixo do custo calculado" in card) == aviso
+
+
+def test_manual_igual_ao_calculado_fica_neutro_sem_alerta(repo_custos, estoque_vazio):
+    com_referencia(repo_custos)
+    repo_custos.parametros[MANUTENCAO] = custo_de_manutencao(repo_custos.listar())[0].calculado
+
+    assert "custos-fil-valor-igual" in cartao_custos()
+    assert "Revisar custo de manutenção" not in client.get("/").text
+
+
+def test_custo_a_definir_tira_a_comparacao(repo_custos, estoque_vazio):
+    com_referencia(repo_custos, manual=Decimal("0.01"), sem_custo=(date(2026, 10, 1),))
+
+    card = cartao_custos()
+
+    assert "custos-fil-valor-neutro" in card and "Revisar custo de manutenção" not in card
+    assert "Cálculo incompleto" in card
+    assert "Revisar custo de manutenção" not in client.get("/").text
+
+
+def test_alerta_na_home_acompanha_os_valores_atuais(repo_custos):
+    com_referencia(repo_custos, manual=Decimal("0.10"))
+
+    resposta = client.get("/")
+    assert "manual R$ 0,10/h; calculado ≈ R$ 0,1193/h" in texto(resposta.text)
+    assert 'href="/custos#manutencao"' in resposta.text
+
+    repo_custos.parametros[MANUTENCAO] = Decimal("0.11")
+    assert "manual R$ 0,11" in texto(client.get("/").text)
+
+    repo_custos.parametros[MANUTENCAO] = Decimal("0.12")  # acima do calculado: sai
+    assert "Revisar custo de manutenção" not in client.get("/").text
+
+    repo_custos.parametros[MANUTENCAO] = None  # sem manual
+    assert "Revisar custo de manutenção" not in client.get("/").text
+
+
+def test_home_abre_sem_o_alerta_de_custo_se_custos_falhar(repo_custos):
+    com_referencia(repo_custos, manual=Decimal("0.10"))
+    repo_custos.falhar_em["listar"] = FalhaAoConsultarCustos()
+
+    resposta = client.get("/")
+
+    assert resposta.status_code == 200 and "Revisar custo de manutenção" not in resposta.text
+
+
+# ---------- Alerta de lubrificação ----------
+
+
+class Hoje(date):
+    """Fixa o "hoje" das rotas: o alerta depende do mês corrente."""
+
+    @classmethod
+    def today(cls):
+        return date(2026, 11, 2)
+
+
+@pytest.mark.parametrize(
+    "comentario",
+    [
+        "Limpeza Eixo X e Y",
+        "lubrificação dos eixos x e y",
+        "LUBRIFICACAO DOS EIXOS X E Y",
+        "Lubrificação do eixo X e eixo Y, sem folga",
+        "Eixos X e Y: limpeza",
+    ],
+)
+def test_comentario_que_registra_a_lubrificacao(comentario):
+    assert registra_lubrificacao(manutencao(tipo="preventiva", comentarios=comentario))
+
+
+@pytest.mark.parametrize(
+    ("tipo", "comentario"),
+    [
+        ("corretiva", "Lubrificação dos eixos X e Y"),  # só a preventiva encerra
+        (None, "Lubrificação dos eixos X e Y"),
+        ("preventiva", None),
+        ("preventiva", "Limpeza do bico"),
+        ("preventiva", "Troca dos eixos X e Y"),
+        ("preventiva", "Lubrificação do eixo Z"),
+    ],
+)
+def test_o_que_nao_registra_a_lubrificacao(tipo, comentario):
+    assert not registra_lubrificacao(manutencao(tipo=tipo, comentarios=comentario))
+
+
+def lubrificada(dia):
+    return manutencao(data=dia, tipo="preventiva", comentarios="Lubrificação dos eixos X e Y")
+
+
+@pytest.mark.parametrize(
+    ("registros", "hoje", "esperado"),
+    [
+        ([], date(2026, 10, 31), None),  # antes do início
+        ([], date(2026, 11, 1), date(2026, 11, 1)),  # começa no dia 01/11/2026
+        ([lubrificada(date(2026, 10, 27))], date(2026, 11, 2), date(2026, 11, 1)),  # outubro
+        ([lubrificada(date(2026, 11, 2))], date(2026, 11, 2), None),
+        ([lubrificada(date(2026, 11, 20))], date(2026, 11, 30), None),
+        ([lubrificada(date(2026, 11, 20))], date(2026, 12, 1), date(2026, 12, 1)),  # volta no mês
+        ([], date(2027, 1, 15), date(2026, 11, 1)),  # não sai sozinho com a virada do mês
+        ([lubrificada(date(2026, 11, 20))], date(2027, 2, 3), date(2026, 12, 1)),
+        ([lubrificada(date(2026, 12, 31))], date(2027, 1, 1), date(2027, 1, 1)),  # virada do ano
+        ([lubrificada(date(2026, 11, 30))], date(2026, 11, 2), date(2026, 11, 1)),  # data futura
+    ],
+)
+def test_lubrificacao_pendente_desde(registros, hoje, esperado):
+    assert lubrificacao_pendente_desde(registros, hoje) == esperado
+
+
+def test_pagina_mostra_o_alerta_enquanto_a_lubrificacao_esta_pendente(repo_manutencao, monkeypatch):
+    monkeypatch.setattr("app.manutencao_rotas.date", Hoje)
+
+    html = texto(client.get("/manutencao").text)
+    assert "Lubrificação mensal dos eixos X e Y pendente desde 01/11/26" in html
+
+    repo_manutencao.manutencoes = [lubrificada(date(2026, 11, 2))]
+    assert "Lubrificação mensal" not in client.get("/manutencao").text
+
+
+def test_pagina_inicial_mostra_o_alerta_com_link_ate_registrar(repo_manutencao, monkeypatch):
+    monkeypatch.setattr("app.main.date", Hoje)
+
+    resposta = client.get("/")
+    assert resposta.headers["cache-control"] == "no-store"
+    assert "pendente desde 01/11/26" in texto(resposta.text)
+    assert '<a href="/manutencao">Ver manutenção</a>' in resposta.text
+
+    repo_manutencao.manutencoes = [lubrificada(date(2026, 11, 2))]
+    assert "Lubrificação mensal" not in client.get("/").text
+
+
+def test_pagina_inicial_abre_sem_o_alerta_se_o_banco_falhar(repo_manutencao, monkeypatch):
+    monkeypatch.setattr("app.main.date", Hoje)
+    repo_manutencao.falhar_em["listar"] = FalhaAoConsultarManutencao()
+
+    resposta = client.get("/")
+
+    assert resposta.status_code == 200 and "Lubrificação mensal" not in resposta.text
+    assert "Ver manutenção" in resposta.text  # o card do módulo continua lá
+
+
+def test_salvar_a_preventiva_devolve_os_indicadores_sem_o_alerta(repo_manutencao, monkeypatch):
+    monkeypatch.setattr("app.manutencao_rotas.date", Hoje)
+
+    corretiva = enviar(
+        dados=formulario(data="2026-11-02", comentarios="Lubrificação dos eixos X e Y")
+    ).json()
+    assert 'id="manut-indicadores"' in corretiva["indicadores"]
+    assert "Lubrificação mensal" in corretiva["indicadores"]
+
+    preventiva = enviar(
+        dados=formulario(
+            data="2026-11-02", tipo="preventiva", comentarios="Limpeza dos eixos X e Y"
+        )
+    ).json()
+    assert preventiva["ok"] and "Lubrificação mensal" not in preventiva["indicadores"]
 
 
 def test_linha_em_edicao_pelo_servidor_sem_javascript(repo_manutencao):
@@ -387,7 +722,7 @@ def test_cadastro_por_fetch_grava_com_o_usuario_da_sessao(repo_manutencao):
     assert valores["minutos"] == 1590 and valores["pecas"] == "Bico"
     assert valores["custo"] == Decimal("62.50")
     assert 'id="manut-1"' in corpo["linha"] and "26h30min" in texto(corpo["linha"])
-    assert "Número de manutenções 1" in texto(corpo["indicadores"])
+    assert "Manutenções 1" in texto(corpo["indicadores"])
     assert corpo["data"] == "2026-10-10"
 
 

@@ -1,5 +1,7 @@
 {# Macros do card de custos reutilizadas pela página e pelo trecho devolvido ao salvar na hora. #}
 
+{% from "manutencao_referencia.html" import referencia_periodo %}
+
 {# Campo de texto de um formulário de custos. `padrao` é o valor salvo; o que foi digitado (numa
    tentativa recusada) tem prioridade. #}
 {% macro campo(escopo, nome, rotulo, unidade, padrao, modo="decimal", maximo=None, obrigatorio=True, placeholder="", dica="", tipo="text") -%}
@@ -77,8 +79,11 @@
     <dl class="custos-item-dados">
       <div><dt>Custo/kg calculado</dt><dd>{% if i.calculado is none %}—{% else %}{{ i.calculado | custo_aprox }}<span class="custos-unidade">/kg</span>{% endif %}</dd></div>
       <div><dt>Custo/g calculado</dt><dd>{% if i.calculado is none %}—{% else %}{{ (i.calculado / 1000) | custo_aprox }}<span class="custos-unidade">/g</span>{% endif %}</dd></div>
+      {% for titulo, custo_kg in i.por_tipo %}
+      <div><dt>{{ titulo }}</dt><dd>{% if custo_kg is none %}—{% else %}{{ custo_kg | custo_aprox }}<span class="custos-unidade">/kg</span>{% endif %}</dd></div>
+      {% endfor %}
     </dl>
-    <p class="custos-dica">Média ponderada das compras do estoque (não muda com o valor definido). Uso atual: ainda não é usado em pedidos nem em precificação; serve de referência nesta tela{% if i.chave in ("filamento:petg", "filamento:pla-multicolor") %} e de comparação com a média dos cards de filamento em Estoque{% endif %}.</p>
+    <p class="custos-dica">Média ponderada das compras do estoque (não muda com o valor definido). Uso atual: ainda não é usado em pedidos nem em precificação; serve de referência nesta tela{% if i.chave in ("filamento:petg", "filamento:pla", "filamento:pla-multicolor") %} e de comparação com a média dos cards de filamento em Estoque{% endif %}.</p>
   </details>
 </li>
 {%- endmacro %}
@@ -123,7 +128,7 @@
 {# Card de "Outros custos diretos" no padrão dos cards de Filamentos: nome, valor principal com a
    unidade, lápis (edição no próprio card, por JavaScript) e "Ver detalhes" (o conteúdo vem do
    bloco chamador). Sem JavaScript, o lápis abre o formulário comum logo abaixo. #}
-{% macro cartao_valor(id, titulo, grupo, tipo, usado, unidade, descricao, comparacao=None, aberto=False) -%}
+{% macro cartao_valor(id, titulo, grupo, tipo, usado, unidade, descricao, comparacao=None, aberto=False, aviso_menor="Revisar custos: valor manual abaixo do custo calculado") -%}
 {% set c = grupos[grupo][0] %}
 {% set escopo = "valores-" ~ grupo %}
 <li class="custos-item custos-fil" id="{{ id }}" data-rota="/custos/valores/{{ grupo }}" data-campo="{{ c.nome }}" data-tipo="{{ tipo }}" data-csrf="{{ csrf }}" data-titulo="{{ titulo }}">
@@ -140,7 +145,7 @@
   <p class="custos-fil-comparacao custos-fil-comparacao-{{ comparacao }}" role="status">
     {%- if comparacao == "maior" %}Acima do custo calculado
     {%- elif comparacao == "igual" %}Igual ao custo calculado
-    {%- else %}Revisar custos: valor manual abaixo do custo calculado{% endif -%}
+    {%- else %}{{ aviso_menor }}{% endif -%}
   </p>
   {% endif %}
   {% if escopo in estado.abertos %}
@@ -204,7 +209,7 @@
     <div><dt>Unidade</dt><dd>R$/h de tempo ativo</dd></div>
     <div><dt>Origem</dt><dd>Parâmetro editável</dd></div>
   </dl>
-  <p class="custos-dica"><strong>Critério:</strong> mão de obra direta: valor por hora de trabalho ativo manual (preparação, acabamento, montagem e embalagem). A hora de impressão não gera MDO (evita contar duas vezes). Fica separada do subtotal da máquina.</p>
+  <p class="custos-dica"><strong>Critério:</strong> mão de obra direta: valor por hora de trabalho ativo manual (preparação, acabamento, montagem e embalagem). A hora de impressão não gera MDO (evita contar duas vezes). Fica separada do Uso da Impressora.</p>
   {% if mdo_referencias %}
   <ul class="custos-referencias" aria-label="Referências de tempo ativo">
     {% for minutos, valor in mdo_referencias %}
@@ -235,11 +240,39 @@
 {% endcall %}
 {%- endmacro %}
 
+{# Uso da Impressora: a soma de energia, depreciação e manutenção (o valor utilizado em cada card), sem
+   edição própria. Com manutenção a definir ou incompleta, o valor é só um subtotal. #}
+{% macro cartao_uso_maquina() -%}
+{% set parcial = subtotal_hora is not none and (not subtotal_completo or (manutencao.manual is none and not manutencao.completo)) %}
+<li class="custos-item custos-fil" id="uso-maquina">
+  <div class="custos-fil-topo">
+    <strong class="custos-fil-nome">Uso da Impressora</strong>
+  </div>
+  <p class="custos-fil-valor custos-fil-valor-neutro">
+    {%- if subtotal_hora is none %}<span class="custos-pendente">A definir</span>
+    {%- else %}{{ subtotal_hora | brl }}<span class="custos-unidade">/h</span>{% endif -%}
+  </p>
+  {% if parcial %}
+  <p class="custos-fil-comparacao" role="status">Valor parcial: falta definir a manutenção.</p>
+  {% endif %}
+  <details class="custos-detalhes custos-detalhes-item">
+    <summary>Ver detalhes</summary>
+    <dl class="custos-item-dados">
+      {% for titulo, custo in (("Depreciação gerencial", depreciacao_hora), ("Manutenção", manutencao), ("Energia elétrica", energia)) %}
+      <div><dt>{{ titulo }}</dt><dd>{% if custo.usado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ custo.usado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
+      {% endfor %}
+    </dl>
+    <p class="custos-dica">Soma do valor utilizado em cada card (o manual, quando houver; senão, o calculado). Não inclui a MDO, a perda de material nem custos mensais. Para alterar, edite o card do custo.</p>
+  </details>
+</li>
+{%- endmacro %}
+
 {# Manutenção: o custo por hora vem dos gastos registrados na tela Manutenção (nenhum cadastro
    duplicado aqui); só o período de referência e as horas impressas nele se editam neste card. #}
 {% macro cartao_manutencao() -%}
 {% call cartao_valor("manutencao", "Manutenção", "manutencao-ajuste", "moeda", manutencao.usado, "/h", "a manutenção",
-     comparacao=manutencao.comparacao, aberto=("manutencao-periodo" in estado.abertos)) %}
+     comparacao=manutencao.comparacao, aberto=("manutencao-periodo" in estado.abertos or not periodo),
+     aviso_menor="Revisar custo de manutenção: valor manual abaixo do custo calculado") %}
   <dl class="custos-item-dados">
     <div><dt>Classificação</dt><dd>Custo indireto · máquina</dd></div>
     <div><dt>Unidade</dt><dd>R$/h</dd></div>
@@ -251,12 +284,13 @@
   </dl>
   <p class="custos-dica"><strong>Critério:</strong> gastos reais do período de referência ÷ horas impressas no mesmo período. Os gastos são os custos das manutenções registradas em <a href="/manutencao">Manutenção</a>; o tempo parado da máquina é outro indicador e nunca entra nesta divisão. Sem dados, fica “A definir” (não é zero).</p>
   {% if sem_custo_periodo %}
-  <p class="custos-aviso" role="status">{{ sem_custo_periodo }} {{ "manutenção do período está" if sem_custo_periodo == 1 else "manutenções do período estão" }} com custo “A definir” e {{ "fica" if sem_custo_periodo == 1 else "ficam" }} fora desta soma: o custo por hora é um subtotal conhecido.</p>
+  <p class="custos-aviso" role="status">{{ sem_custo_periodo }} {{ "manutenção do período está" if sem_custo_periodo == 1 else "manutenções do período estão" }} com custo “A definir” e {{ "fica" if sem_custo_periodo == 1 else "ficam" }} fora desta soma: o custo por hora é um subtotal conhecido. Cálculo incompleto: sem comparação com o valor manual.</p>
   {% endif %}
   {% if manutencao.calculado is none and manutencao.manual is none %}
-  <p class="custos-aviso" role="status">Manutenção “A definir”: {% if not periodo %}informe o período e as horas impressas e registre os custos em Manutenção.{% else %}nenhum custo de manutenção registrado dentro do período. Isso não é tratado como zero.{% endif %} Ela fica fora do subtotal da máquina.</p>
+  <p class="custos-aviso" role="status">Manutenção “A definir”: {% if not periodo %}informe o período e as horas impressas e registre os custos em Manutenção.{% else %}nenhum custo de manutenção registrado dentro do período. Isso não é tratado como zero.{% endif %} Ela fica fora do Uso da Impressora.</p>
   {% endif %}
   {{ ajuste_manual("manutencao-ajuste", manutencao, "a manutenção") }}
+  {% if not periodo and "manutencao-periodo" not in estado.abertos %}{{ referencia_periodo(csrf) }}{% endif %}
   {% if "manutencao-periodo" in estado.abertos %}
   {{ abrir_form("/custos/manutencao/periodo", "manutencao-periodo") }}
   <h5>Período de referência</h5>

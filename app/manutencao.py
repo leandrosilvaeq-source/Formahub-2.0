@@ -5,8 +5,9 @@ guardado como TOTAL EM MINUTOS (inteiro) e só vira texto na hora de mostrar.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.custos import ler_decimal
@@ -191,3 +192,43 @@ def indicadores(manutencoes) -> Indicadores:
 
 def formatar_custo(valor: Decimal | None) -> str:
     return "A definir" if valor is None else formatar_brl(valor)
+
+
+def formatar_custo_hora(valor: Decimal) -> str:
+    """'R$1.234,50': o cálculo não muda, só a exibição é arredondada a duas casas."""
+    return formatar_brl(valor).replace("R$ ", "R$")
+
+
+# ---------- Alerta mensal de lubrificação dos eixos X e Y ----------
+
+INICIO_LUBRIFICACAO = date(2026, 11, 1)
+_SERVICO_DOS_EIXOS = re.compile(r"\b(limpeza|lubrificacao)\b")
+_EIXOS_X_E_Y = re.compile(r"\beixos?\s+x\s+e\s+(eixo\s+)?y\b")
+
+
+def registra_lubrificacao(m) -> bool:
+    """Preventiva com "limpeza" ou "lubrificação" e "eixos X e Y" nos comentários.
+
+    Não diferencia maiúsculas nem acentos; aceita também "eixo X e Y" e "eixo X e eixo Y".
+    """
+    if m.tipo != "preventiva" or not m.comentarios:
+        return False
+    decomposto = unicodedata.normalize("NFKD", m.comentarios.casefold())
+    comentario = "".join(c for c in decomposto if not unicodedata.combining(c))
+    return bool(_SERVICO_DOS_EIXOS.search(comentario) and _EIXOS_X_E_Y.search(comentario))
+
+
+def lubrificacao_pendente_desde(manutencoes, hoje: date) -> date | None:
+    """Dia 1º do mês mais antigo sem lubrificação registrada, ou None se está em dia.
+
+    Vale a data da manutenção: cada mês precisa de um registro com data dentro dele, a partir de
+    INICIO_LUBRIFICACAO. Um registro com data futura ainda não conta.
+    """
+    if hoje < INICIO_LUBRIFICACAO:
+        return None
+    datas = [m.data for m in manutencoes if registra_lubrificacao(m) and m.data <= hoje]
+    ultima = max(datas, default=None)
+    if ultima is None or ultima < INICIO_LUBRIFICACAO:
+        return INICIO_LUBRIFICACAO
+    mes_seguinte = (ultima.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return mes_seguinte if mes_seguinte <= hoje else None

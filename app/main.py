@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -18,8 +19,21 @@ from app.auth.rotas import (
     tratar_servico_indisponivel,
 )
 from app.auth.rotas import router as rotas_auth
+from app.custos import card_pla, custo_de_manutencao, formatar_custo_aprox
+from app.custos_repositorio import (
+    FalhaAoConsultarCustos,
+    RepositorioCustos,
+    get_repositorio_custos,
+)
 from app.custos_rotas import router as rotas_custos
+from app.estoque_repositorio import FalhaNoEstoque, RepositorioEstoque, get_repositorio_estoque
 from app.estoque_rotas import router as rotas_estoque
+from app.manutencao import lubrificacao_pendente_desde
+from app.manutencao_repositorio import (
+    FalhaAoConsultarManutencao,
+    RepositorioManutencao,
+    get_repositorio_manutencao,
+)
 from app.manutencao_rotas import router as rotas_manutencao
 from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
@@ -93,6 +107,7 @@ app.add_exception_handler(NaoAutenticado, tratar_nao_autenticado)
 app.add_exception_handler(ServicoIndisponivel, tratar_servico_indisponivel)
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.filters["brl"] = formatar_brl
+templates.env.filters["custo_aprox"] = formatar_custo_aprox
 templates.env.filters["contato"] = lambda texto: formatar_contato(texto) if texto else "—"
 templates.env.filters["data_hora"] = lambda momento: momento.strftime("%d/%m/%Y às %H:%M")
 templates.env.filters["data_curta"] = formatar_data_curta
@@ -139,8 +154,38 @@ def health() -> dict[str, str]:
 
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(exigir_usuario)])
-def home(request: Request):
-    return templates.TemplateResponse(request, "index.html", {"modulos": MODULOS})
+def home(
+    request: Request,
+    repo: RepositorioManutencao | None = Depends(get_repositorio_manutencao),
+    repo_custos: RepositorioCustos | None = Depends(get_repositorio_custos),
+    repo_estoque: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+):
+    # A página inicial abre mesmo sem o banco: só fica sem os alertas.
+    try:
+        if repo is None:
+            raise FalhaAoConsultarManutencao
+        lubrificacao_desde = lubrificacao_pendente_desde(repo.listar(), date.today())
+    except FalhaAoConsultarManutencao:
+        lubrificacao_desde = None
+    custo_manutencao, pla, posicao_pla = None, None, None
+    try:
+        if repo_custos is None:
+            raise FalhaAoConsultarCustos
+        custos = repo_custos.listar()
+        custo_manutencao = custo_de_manutencao(custos)[1]
+        if repo_estoque is None:
+            raise FalhaNoEstoque
+        pla, posicao_pla = card_pla(repo_estoque.listar_estoque().filamentos, custos.ajustes)
+    except (FalhaAoConsultarCustos, FalhaNoEstoque):
+        pass
+    contexto = {
+        "modulos": MODULOS,
+        "lubrificacao_desde": lubrificacao_desde,
+        "custo_manutencao": custo_manutencao,
+        "pla": pla,
+        "posicao_pla": posicao_pla,
+    }
+    return _pagina_sem_cache(request, "index.html", contexto)
 
 
 def _tela_pedido(

@@ -3,7 +3,7 @@
 {% block title %}Custos · FormaHub 2.0{% endblock %}
 {% block main_classe %} container-custos{% endblock %}
 
-{% from "custos_macros.html" import campo, abrir_form, botoes, lapis, valores, cartao_filamento, cartao_energia, cartao_depreciacao, cartao_manutencao, cartao_perda, cartao_mdo with context %}
+{% from "custos_macros.html" import campo, abrir_form, botoes, lapis, valores, cartao_filamento, cartao_energia, cartao_depreciacao, cartao_manutencao, cartao_perda, cartao_mdo, cartao_uso_maquina with context %}
 
 {# Cabeçalho de cada item: título, classificação, unidade e origem; o critério (e o que mais vier
    no bloco chamador) fica em "Ver detalhes", recolhido, a menos que `aberto`. #}
@@ -91,7 +91,6 @@
 <div class="pagina-topo">
   <div>
     <h1>Custos</h1>
-    <p>Administração e gestão de custos: custos diretos, custos indiretos e despesas fixas mensais.</p>
   </div>
   <div class="pagina-topo-acoes">
     <a class="botao botao-secundario" href="/">Início</a>
@@ -111,26 +110,33 @@
 
 {% if parametros is defined %}
 
-<p class="custos-dica custos-legenda">Cada grandeza tem a sua unidade (R$/kg, R$/h, R$/mês) e <strong>não é somada com as outras</strong>: o subtotal por hora da máquina e o total mensal aparecem separados, e a mão de obra ativa fica à parte. O lápis de cada card edita o valor; nos valores vindos de Compras/Estoque ele é só um ajuste manual de referência e nunca altera compras ou saldos.</p>
-
 {# ================= CUSTOS DIRETOS ================= #}
-<h2 class="custos-grupo" id="custos-diretos">Custos diretos</h2>
+<h2 class="custos-grupo" id="custos-diretos">Filamento</h2>
 
-<h3 class="custos-subgrupo" id="filamentos-grupo">1 · Filamentos</h3>
 <section class="secao custos-secao" id="filamentos" aria-labelledby="titulo-filamentos">
   {{ cabecalho("titulo-filamentos", "Filamentos", "Custo direto · variável", "R$/kg e R$/g",
        etiquetas=False, titulo_visivel=False,
-       criterio="o valor principal de cada card é o custo/kg definido por você; sem valor definido, fica “A definir” (nunca se usa o calculado em silêncio). O calculado é a média ponderada pelo peso líquido comprado (rolos × peso do rolo), nunca média simples, e não muda com o valor definido. PETG reúne todos os tipos; o PLA fica separado em Sólido, Velvet, Silk e Multicolor (Bicolor/Duocolor e Tricolor); outros materiais cadastrados, como TPU, ganham o seu card. O frete fica na compra. A energia elétrica fica em Outros custos diretos.") }}
+       criterio="o valor principal de cada card é o custo/kg definido por você; sem valor definido, fica “A definir” (nunca se usa o calculado em silêncio). O calculado é a média ponderada pelo peso líquido comprado (rolos × peso do rolo), nunca média simples, e não muda com o valor definido. PETG reúne todos os tipos; o PLA reúne Sólido, Velvet e Silk, com o custo de cada um em “Ver detalhes”; o PLA Multicolor (Bicolor/Duocolor e Tricolor) fica à parte; outros materiais cadastrados, como TPU, ganham o seu card. O frete fica na compra. A energia elétrica fica em Outros custos diretos.") }}
   {% if insumos is none %}
   <p class="custos-aviso" role="status">{{ msg_estoque }}</p>
-  {% else %}
+  {% endif %}
   <ul class="custos-cartoes custos-cartoes-fil">
     {% for i in filamentos_em_ordem %}{{ cartao_filamento(i) }}{% endfor %}
+    {{ cartao_perda() }}
   </ul>
-  {% endif %}
 </section>
 
-<h3 class="custos-subgrupo" id="acessorios-embalagens-grupo">2 · Acessórios e embalagens</h3>
+<h2 class="custos-grupo" id="hora-maquina-grupo">Outros Custos</h2>
+
+<section class="secao custos-secao" id="hora-maquina" aria-labelledby="titulo-hora-maquina">
+  <h4 id="titulo-hora-maquina" class="visualmente-oculto">Outros Custos</h4>
+  <ul class="custos-cartoes custos-cartoes-fil">
+    {{ cartao_uso_maquina() }}
+    {{ cartao_mdo() }}
+  </ul>
+</section>
+
+<h3 class="custos-subgrupo" id="acessorios-embalagens-grupo">Acessórios e embalagens</h3>
 <section class="secao custos-secao" id="insumos" aria-labelledby="titulo-acessorios">
   {{ cabecalho("titulo-acessorios", "Custo médio por unidade", "Custo direto · variável", "R$/un", "Calculado (compras)",
        etiquetas=False, titulo_visivel=False,
@@ -153,13 +159,11 @@
   {% endif %}
 </section>
 
-<h3 class="custos-subgrupo" id="outros-diretos">3 · Outros custos diretos</h3>
+<h3 class="custos-subgrupo" id="outros-diretos">Outros custos diretos</h3>
 <section class="secao custos-secao" id="outros-cards" aria-labelledby="titulo-outros">
   <h4 id="titulo-outros" class="visualmente-oculto">Outros custos diretos</h4>
   <ul class="custos-cartoes custos-cartoes-fil">
     {{ cartao_energia() }}
-    {{ cartao_perda() }}
-    {{ cartao_mdo() }}
   </ul>
 </section>
 
@@ -189,32 +193,6 @@
     {% if horas_vencida %}Revisão trimestral vencida em {{ horas_proxima | data }}. {% endif %}
     Revise esta referência a cada trimestre{% if horas_proxima and not horas_vencida %} (próxima revisão até {{ horas_proxima | data }}){% endif %}: ela muda o custo por hora de energia e de depreciação.
   </p>
-</section>
-
-<section class="secao custos-secao custos-resumo" id="resumo" aria-labelledby="titulo-resumo">
-  <div class="custos-cab">
-    <div class="custos-cab-titulo"><h4 id="titulo-resumo">Subtotal por hora da máquina</h4></div>
-    <details class="custos-detalhes">
-      <summary>Ver detalhes</summary>
-      <p class="custos-dica">Energia + depreciação + manutenção, em R$/h, usando o valor utilizado de cada uma (a energia entra aqui por ser hora de máquina). Não inclui a perda de material (R$/g) nem a MDO (pessoas) nem custos mensais (R$/mês).</p>
-    </details>
-  </div>
-  {% if subtotal_hora is not none %}
-  <dl class="custos-valores">
-    <div class="custos-total">
-      <dt>{{ "Subtotal da máquina" if subtotal_completo else "Subtotal parcial da máquina" }}</dt>
-      <dd>{{ subtotal_hora | custo_aprox }}<span class="custos-unidade">/h</span></dd>
-    </div>
-    <div><dt>Energia elétrica</dt><dd>{{ energia.usado | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
-    <div><dt>Depreciação gerencial</dt><dd>{{ depreciacao_hora.usado | custo_aprox }}<span class="custos-unidade">/h</span></dd></div>
-    <div><dt>Manutenção</dt><dd>{% if manutencao.usado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ manutencao.usado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
-  </dl>
-  {% if not subtotal_completo %}
-  <p class="custos-aviso" role="status">Manutenção ainda não definida: este é um subtotal parcial, não o custo completo da hora de máquina.</p>
-  {% endif %}
-  {% else %}
-  <p class="custos-vazio">Indisponível: falta energia ou depreciação.</p>
-  {% endif %}
 </section>
 </div>
 

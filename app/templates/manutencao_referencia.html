@@ -1,0 +1,12 @@
+{# Referência inicial do custo de manutenção por hora: aparece só enquanto não há período definido
+   e nada é gravado até o clique. Usada nos cards de Manutenção e de Custos. #}
+{% macro referencia_periodo(csrf) -%}
+<form method="post" action="/custos/manutencao/periodo" class="manut-referencia">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="inicio" value="2026-08-03">
+  <input type="hidden" name="fim" value="2026-11-01">
+  <input type="hidden" name="horas" value="902,4">
+  <p class="custos-dica"><strong>Referência para confirmar:</strong> 03/08/2026 a 01/11/2026, com 902,4 horas impressas (37,6 dias). Nada é gravado até você confirmar.</p>
+  <button type="submit" class="botao botao-secundario">Confirmar referência</button>
+</form>
+{%- endmacro %}

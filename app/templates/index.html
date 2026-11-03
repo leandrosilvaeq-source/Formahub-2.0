@@ -1,10 +1,24 @@
 {% extends "base.html" %}
 
+{% from "manutencao_alerta.html" import alerta_lubrificacao %}
+
 {% block content %}
 <section class="apresentacao">
   <h1>FormaHub 2.0</h1>
   <p>Produtos, estoque e pedidos em um só lugar</p>
 </section>
+
+{% if lubrificacao_desde %}{{ alerta_lubrificacao(lubrificacao_desde, link=true) }}{% endif %}
+{% if custo_manutencao and custo_manutencao.comparacao == "menor" %}
+<div class="alerta alerta-aviso" role="status" id="custos-alerta-manutencao">
+  <span>Revisar custo de manutenção: valor manual abaixo do custo calculado (manual {{ custo_manutencao.manual | custo_aprox }}/h; calculado {{ custo_manutencao.calculado | custo_aprox }}/h). <a href="/custos#manutencao">Ver o card Manutenção em Custos</a></span>
+</div>
+{% endif %}
+{% if pla and pla.comparacao == "menor" %}
+<div class="alerta alerta-aviso" role="status" id="custos-alerta-pla">
+  <span>Revisar custo do PLA: valor manual abaixo do custo calculado (manual {{ pla.manual | custo_aprox }}/kg; calculado {{ pla.calculado | custo_aprox }}/kg). <a href="/custos#insumo-{{ posicao_pla }}">Ver o card PLA em Custos</a></span>
+</div>
+{% endif %}
 
 <section class="cards">
   {% for modulo in modulos %}

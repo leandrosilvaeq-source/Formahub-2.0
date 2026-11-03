@@ -1,6 +1,9 @@
 {# Linhas da tabela de manutenção (leitura e edição) e indicadores. Usadas pela página e pelos
    trechos devolvidos ao salvar na própria tabela (fetch). #}
 
+{% from "manutencao_alerta.html" import alerta_lubrificacao %}
+{% from "manutencao_referencia.html" import referencia_periodo %}
+
 {% macro lapis(href, descricao) -%}
 <a class="custos-lapis manut-editar" href="{{ href }}" data-manut-editar title="Editar" aria-label="Editar {{ descricao }}">
   <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
@@ -9,8 +12,7 @@
 
 {# Uma manutenção em modo leitura. Cada célula editável (data-campo) guarda o valor cru em
    data-valor: o JavaScript edita só aquele campo (duplo clique, toque ou Enter) e reenvia o
-   restante da linha como está. A duração aparece sempre em horas totais e minutos; a auditoria
-   fica como linha pequena sob a data. #}
+   restante da linha como está. A duração aparece sempre em horas totais e minutos. #}
 {% macro celula(campo, valor, rotulo) -%}
 <td data-rotulo="{{ rotulo }}" data-campo="{{ campo }}" data-valor="{{ valor }}" tabindex="0" aria-describedby="manut-ajuda">
   {{- caller() -}}
@@ -22,7 +24,7 @@
 <tr id="manut-{{ m.id }}" data-id="{{ m.id }}" data-data="{{ m.data.isoformat() }}">
   {% call celula("data", m.data.isoformat(), "Data") %}
     <time datetime="{{ m.data.isoformat() }}">{{ m.data | data_curta }}</time>
-    <small class="manut-auditoria">{% if m.legado %}Gasto anterior · {% endif %}{% if m.atualizado_em and m.atualizado_em != m.criado_em %}Atualizado por {{ m.atualizado_por }} em {{ m.atualizado_em.strftime("%d/%m/%y %H:%M") }}{% else %}Registrado por {{ m.criado_por }}{% if m.criado_em %} em {{ m.criado_em.strftime("%d/%m/%y %H:%M") }}{% endif %}{% endif %}</small>
+    {% if m.legado %}<small class="manut-auditoria">Gasto anterior</small>{% endif %}
   {% endcall %}
   {% call celula("tipo", m.tipo or "", "Tipo de manutenção") %}{% if m.tipo %}{{ TIPOS[m.tipo] }}{% else %}<span class="manut-nulo">Não informado</span>{% endif %}{% endcall %}
   {% call celula("tempo", (m.minutos_parados | duracao) if m.minutos_parados is not none else "", "Tempo de máquina parada") %}{% if m.minutos_parados is none %}<span class="manut-nulo">Não informado</span>{% else %}<span class="manut-duracao">{{ m.minutos_parados | duracao }}</span>{% endif %}{% endcall %}
@@ -109,12 +111,15 @@
 </tr>
 {%- endmacro %}
 
-{# Os três indicadores, sobre todos os registros. O custo é um subtotal conhecido quando alguma
-   manutenção ainda está com custo "A definir" (isso não é tratado como zero). #}
-{% macro bloco_indicadores(ind) -%}
-<div class="manut-indicadores" id="manut-indicadores">
+{# O alerta de lubrificação e os três indicadores, sobre todos os registros: o JavaScript troca o
+   bloco inteiro ao salvar. O custo é um subtotal conhecido quando alguma manutenção ainda está com
+   custo "A definir" (isso não é tratado como zero). #}
+{% macro bloco_indicadores(ind, lubrificacao_desde, base, csrf) -%}
+<div id="manut-indicadores">
+{% if lubrificacao_desde %}{{ alerta_lubrificacao(lubrificacao_desde) }}{% endif %}
+<div class="manut-indicadores">
   <div class="manut-indicador">
-    <span class="manut-indicador-rotulo">Número de manutenções</span>
+    <span class="manut-indicador-rotulo">Manutenções</span>
     <strong class="manut-indicador-valor">{{ ind.numero }}</strong>
   </div>
   <div class="manut-indicador">
@@ -124,7 +129,31 @@
   <div class="manut-indicador">
     <span class="manut-indicador-rotulo">Custos com manutenção (R$){% if not ind.custo_completo %} · subtotal conhecido{% endif %}</span>
     <strong class="manut-indicador-valor">{% if ind.custo_indefinido %}<span class="custos-pendente">A definir</span>{% else %}{{ ind.custo_conhecido | brl }}{% endif %}</strong>
-    {% if not ind.custo_completo %}<span class="manut-indicador-nota">{{ ind.sem_custo }} {{ "manutenção" if ind.sem_custo == 1 else "manutenções" }} com custo a definir fora da soma</span>{% endif %}
+    {% if not ind.custo_completo %}<div class="manut-indicador-rodape"><span class="manut-indicador-nota">{{ ind.sem_custo }} {{ "manutenção" if ind.sem_custo == 1 else "manutenções" }} com custo a definir fora da soma</span></div>{% endif %}
   </div>
+  <div class="manut-indicador" id="manut-custo-hora">
+    <span class="manut-indicador-rotulo">Custo com manutenção (R$/h)</span>
+    <strong class="manut-indicador-valor">{% if base and base.calculado is not none %}{{ base.calculado | custo_hora }}{% else %}<span class="custos-pendente">Indisponível</span>{% endif %}</strong>
+    <div class="manut-indicador-rodape">
+    {% if not base %}<span class="manut-indicador-nota">Não foi possível carregar o período agora.</span>
+    {% elif base.situacao == "sem_periodo" %}<span class="manut-indicador-nota">Defina o período e as horas impressas.</span>
+    {% elif base.situacao == "sem_gastos" %}<span class="manut-indicador-nota">Nenhum custo registrado no período. Isso não é tratado como zero.</span>
+    {% elif base.situacao == "incompleto" %}<span class="manut-indicador-nota">Cálculo incompleto: {{ base.sem_custo }} {{ "manutenção" if base.sem_custo == 1 else "manutenções" }} do período com custo “A definir”.</span>{% endif %}
+    {% if base %}
+    <details class="custos-detalhes">
+      <summary>Ver detalhes</summary>
+      <p class="custos-dica">Gastos de manutenção do período ÷ horas efetivamente impressas no mesmo período. O tempo parado nunca entra nesta divisão.</p>
+      <dl class="custos-item-dados">
+        <div><dt>Período</dt><dd>{% if base.periodo %}{{ base.periodo.inicio | data }} a {{ base.periodo.fim | data }}{% else %}—{% endif %}</dd></div>
+        <div><dt>Horas impressas</dt><dd>{% if base.periodo %}{{ base.periodo.horas | numero }} h{% else %}—{% endif %}</dd></div>
+        <div><dt>Gastos no período</dt><dd>{{ base.total | brl }}</dd></div>
+      </dl>
+      {% if not base.periodo %}<a href="/custos?editar=manutencao-periodo#manutencao">Definir período e horas</a>{% endif %}
+    </details>
+    {% if not base.periodo %}{{ referencia_periodo(csrf) }}{% endif %}
+    {% endif %}
+    </div>
+  </div>
+</div>
 </div>
 {%- endmacro %}

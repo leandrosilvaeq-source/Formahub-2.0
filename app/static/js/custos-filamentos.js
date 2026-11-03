@@ -155,6 +155,17 @@
     if (lapis) lapis.focus();
   }
 
+  // O card Uso da Impressora soma os custos por hora: acompanha a edição de cada um deles.
+  function atualizarUsoDeMaquina(html) {
+    const atual = document.getElementById("uso-maquina");
+    if (!html || !atual) return;
+    const molde = document.createElement("template");
+    molde.innerHTML = html.trim();
+    const novo = molde.content.firstElementChild;
+    novo.querySelector("details").open = atual.querySelector("details").open;
+    atual.replaceWith(novo);
+  }
+
   // Gravado, mas o servidor não devolveu o card: mostra o valor salvo e avisa, sem recarregar.
   function salvoSemCard(card, textoValor, dataValor) {
     const valorEl = card.querySelector(".custos-fil-valor");
@@ -242,6 +253,7 @@
       ocupar(true);
       const resultado = await enviar(card, valorDigitado());
       if (resultado.ok) {
+        atualizarUsoDeMaquina(resultado.uso_maquina);
         if (resultado.html) trocarCard(card, resultado.html);
         else {
           const textoCampo = percentual ? campo.value.trim() + " %" : campo.value;
@@ -327,6 +339,7 @@
       botaoVoltar.disabled = true;
       botaoVoltar.textContent = "Voltando…";
       const resultado = await enviar(card, undefined, form.getAttribute("action"));
+      if (resultado.ok) atualizarUsoDeMaquina(resultado.uso_maquina);
       if (resultado.ok && resultado.html) return trocarCard(card, resultado.html);
       if (resultado.expirou) return window.location.assign(resultado.login || "/entrar?next=%2Fcustos");
       card.dataset.salvando = "";

@@ -56,13 +56,18 @@ GRUPOS_CUSTO_KG = (
 )
 
 
-# Grupos de filamento da tela Custos (cards e tabela): PLA aberto por tipo, sem misturar categorias.
+# Grupos de filamento da tela Custos: o card PLA reúne Sólido, Velvet e Silk (a média do Estoque).
+CHAVE_PLA = "filamento:pla"
 GRUPOS_FILAMENTO = (
     ("filamento:petg", "PETG", "PETG", None),
+    (CHAVE_PLA, "PLA", "PLA", ("solido", "velvet", "silk")),
+    ("filamento:pla-multicolor", "PLA Multicolor", "PLA", ("bicolor", "tricolor")),
+)
+# O custo de cada tipo do card PLA, mostrado em "Ver detalhes".
+TIPOS_DO_PLA = (
     ("filamento:pla-solido", "PLA Sólido", "PLA", ("solido",)),
     ("filamento:pla-velvet", "PLA Velvet", "PLA", ("velvet",)),
     ("filamento:pla-silk", "PLA Silk", "PLA", ("silk",)),
-    ("filamento:pla-multicolor", "PLA Multicolor", "PLA", ("bicolor", "tricolor")),
 )
 
 
@@ -115,6 +120,18 @@ def custo_medio_por_kg(filamentos, grupos=GRUPOS_CUSTO_KG) -> list[CustoMedioKg]
     return resultado
 
 
+def comparar_manual(manual: Decimal | None, calculado: Decimal | None) -> str | None:
+    """Manual frente ao calculado ('menor', 'igual' ou 'maior'), em Decimal e sem arredondar.
+
+    Sem valor manual ou sem base calculada não há comparação (None).
+    """
+    if manual is None or calculado is None:
+        return None
+    if manual == calculado:
+        return "igual"
+    return "maior" if manual > calculado else "menor"
+
+
 @dataclass(frozen=True)
 class Insumo:
     """Um insumo (filamento, acessório ou embalagem) com o custo das compras e o ajuste manual."""
@@ -131,6 +148,8 @@ class Insumo:
     imagem_caminho: str | None = None  # foto da compra (bucket privado)
     # Compras do item, da mais recente para a mais antiga: (data, quantidade, valor pago).
     historico: tuple = ()
+    # Custo por kg de cada tipo reunido no card: (título, custo ou None se não houve compra).
+    por_tipo: tuple = ()
 
     @property
     def usado(self) -> Decimal | None:
@@ -138,15 +157,7 @@ class Insumo:
 
     @property
     def comparacao(self) -> str | None:
-        """Manual frente ao calculado ('menor', 'igual' ou 'maior'), em Decimal e sem arredondar.
-
-        Sem valor manual ou sem base calculada não há comparação (None).
-        """
-        if self.manual is None or self.calculado is None:
-            return None
-        if self.manual == self.calculado:
-            return "igual"
-        return "maior" if self.manual > self.calculado else "menor"
+        return comparar_manual(self.manual, self.calculado)
 
     @property
     def origem(self) -> str | None:
@@ -156,7 +167,7 @@ class Insumo:
 
 
 def grupos_de_filamento(filamentos) -> list[tuple]:
-    """Os cinco grupos fixos mais um por material adicional cadastrado (TPU, por exemplo)."""
+    """Os três grupos fixos mais um por material adicional cadastrado (TPU, por exemplo)."""
     fixos = {material for _chave, _titulo, material, _tipos in GRUPOS_FILAMENTO}
     extras = sorted({f.material for f in filamentos} - fixos, key=str.casefold)
     return [*GRUPOS_FILAMENTO, *((f"filamento:material:{m}", m, m, None) for m in extras)]
@@ -164,22 +175,31 @@ def grupos_de_filamento(filamentos) -> list[tuple]:
 
 def insumos_filamento(filamentos, ajustes: dict[str, Decimal]) -> list[Insumo]:
     """Os grupos de filamento, cada um com o ajuste manual (se houver)."""
+    por_tipo = tuple((g.titulo, g.custo_kg) for g in custo_medio_por_kg(filamentos, TIPOS_DO_PLA))
     return [
         Insumo(
             g.chave, g.titulo, "filamento", "kg", g.custo_kg, ajustes.get(g.chave),
             g.kg_comprados, g.saldo_kg, g.compras,
+            por_tipo=por_tipo if g.chave == CHAVE_PLA else (),
         )
         for g in custo_medio_por_kg(filamentos, grupos_de_filamento(filamentos))
     ]  # fmt: skip
 
 
+def card_pla(filamentos, ajustes: dict[str, Decimal]) -> tuple[Insumo, int]:
+    """(card PLA, posição que identifica o card na tela Custos, como em id="insumo-1")."""
+    insumos = insumos_filamento(filamentos, ajustes)
+    posicao = next(n for n, i in enumerate(insumos) if i.chave == CHAVE_PLA)
+    return insumos[posicao], posicao
+
+
 def ordem_de_exibicao(filamentos: list[Insumo]) -> list[Insumo]:
-    """Ordem dos cards: PLA Sólido, Velvet, Silk, Multicolor, PETG e depois os outros materiais.
+    """Ordem dos cards: PLA, PLA Multicolor, PETG e depois os outros materiais.
 
     Só a exibição muda: a posição (e o id do card) segue a ordem de GRUPOS_FILAMENTO.
     """
     chaves = [g[0] for g in GRUPOS_FILAMENTO]
-    pla = [i for i in filamentos if i.chave.startswith("filamento:pla-")]
+    pla = [i for i in filamentos if i.chave.startswith(CHAVE_PLA)]
     petg = [i for i in filamentos if i.chave == "filamento:petg"]
     outros = [i for i in filamentos if i.chave not in chaves]
     return [*pla, *petg, *outros]
@@ -401,6 +421,7 @@ class CustoHora:
     calculado: Decimal | None  # None = sem dados para calcular ("A definir")
     manual: Decimal | None = None
     provisorio: bool = False  # ajuste manual que entrou pela migration e ainda não foi revisto
+    completo: bool = True  # False: o calculado é só um subtotal conhecido
 
     @property
     def usado(self) -> Decimal | None:
@@ -408,15 +429,8 @@ class CustoHora:
 
     @property
     def comparacao(self) -> str | None:
-        """Manual frente ao calculado ('menor', 'igual' ou 'maior'), em Decimal e sem arredondar.
-
-        Sem ajuste manual ou sem base calculada não há comparação (None).
-        """
-        if self.manual is None or self.calculado is None:
-            return None
-        if self.manual == self.calculado:
-            return "igual"
-        return "maior" if self.manual > self.calculado else "menor"
+        """Comparação do ajuste manual; sem base completa (subtotal conhecido), nenhuma (None)."""
+        return comparar_manual(self.manual, self.calculado) if self.completo else None
 
     @property
     def origem(self) -> str | None:
@@ -466,6 +480,47 @@ def manutencao_por_hora(gastos, periodo) -> Decimal | None:
     with localcontext() as contexto:
         contexto.prec = 50
         return sum(no_periodo, Decimal(0)) / periodo.horas
+
+
+@dataclass(frozen=True)
+class BaseManutencao:
+    """Tudo o que forma o custo de manutenção por hora, o mesmo em todas as telas."""
+
+    periodo: object | None
+    calculado: Decimal | None
+    total: Decimal  # gastos com custo definido dentro do período
+    quantidade: int
+    sem_custo: int  # manutenções do período com custo "A definir"
+
+    @property
+    def situacao(self) -> str:
+        """'sem_periodo', 'incompleto' (há custo "A definir"), 'sem_gastos' ou 'completo'."""
+        if self.periodo is None or self.periodo.horas <= 0:
+            return "sem_periodo"
+        if self.sem_custo:
+            return "incompleto"
+        return "completo" if self.calculado is not None else "sem_gastos"
+
+
+def custo_de_manutencao(custos) -> tuple[BaseManutencao, CustoHora]:
+    """(base do cálculo, custo por hora com o ajuste manual) a partir dos custos salvos."""
+    periodo = custos.periodo
+    no_periodo = [
+        g.valor for g in custos.gastos if periodo and periodo.inicio <= g.data <= periodo.fim
+    ]
+    base = BaseManutencao(
+        periodo=periodo,
+        calculado=manutencao_por_hora(custos.gastos, periodo),
+        total=sum(no_periodo, Decimal(0)),
+        quantidade=len(no_periodo),
+        sem_custo=sum(
+            1
+            for d in custos.manutencoes_sem_custo
+            if periodo and periodo.inicio <= d <= periodo.fim
+        ),
+    )
+    manual = custos.parametros.get(MANUTENCAO)
+    return base, CustoHora(base.calculado, manual, completo=base.situacao == "completo")
 
 
 def mdo_referencias(mdo_hora: Decimal) -> list[tuple[int, Decimal]]:

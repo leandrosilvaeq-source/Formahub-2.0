@@ -19,16 +19,28 @@ from fastapi.templating import Jinja2Templates
 from app.auth import sessoes
 from app.auth.repositorio import Usuario
 from app.auth.rotas import exigir_usuario, origem_confiavel
-from app.custos import valor_do_campo
+from app.custos import (
+    custo_de_manutencao,
+    formatar_data,
+    formatar_numero,
+    valor_do_campo,
+)
+from app.custos_repositorio import (
+    FalhaAoConsultarCustos,
+    RepositorioCustos,
+    get_repositorio_custos,
+)
 from app.manutencao import (
     LIMITE_COMENTARIOS,
     LIMITE_PECAS,
     TIPOS,
     formatar_custo,
+    formatar_custo_hora,
     formatar_data_curta,
     formatar_duracao,
     indicadores,
     ler_formulario,
+    lubrificacao_pendente_desde,
 )
 from app.manutencao_repositorio import (
     FalhaAoConsultarManutencao,
@@ -60,6 +72,9 @@ templates.env.filters["brl"] = formatar_brl
 templates.env.filters["data_curta"] = formatar_data_curta
 templates.env.filters["duracao"] = formatar_duracao
 templates.env.filters["custo"] = formatar_custo
+templates.env.filters["custo_hora"] = formatar_custo_hora
+templates.env.filters["data"] = formatar_data
+templates.env.filters["numero"] = formatar_numero
 templates.env.globals["valor_custo"] = lambda c: valor_do_campo(c, "moeda")
 templates.env.globals.update(
     TIPOS=TIPOS, LIMITE_PECAS=LIMITE_PECAS, LIMITE_COMENTARIOS=LIMITE_COMENTARIOS
@@ -97,10 +112,27 @@ def _valores_da_manutencao(m: Manutencao | None) -> dict[str, str]:
     }
 
 
-def _contexto(manutencoes: list[Manutencao], request: Request, edicao: Edicao | None = None):
+def _base_manutencao(repo_custos: RepositorioCustos | None):
+    """A base do custo por hora, a mesma da tela Custos; None se não foi possível ler."""
+    try:
+        if repo_custos is None:
+            raise FalhaAoConsultarCustos
+        return custo_de_manutencao(repo_custos.listar())[0]
+    except FalhaAoConsultarCustos:
+        return None
+
+
+def _contexto(
+    manutencoes: list[Manutencao],
+    request: Request,
+    repo_custos: RepositorioCustos | None,
+    edicao: Edicao | None = None,
+):
     return {
         "manutencoes": manutencoes,
         "ind": indicadores(manutencoes),
+        "lubrificacao_desde": lubrificacao_pendente_desde(manutencoes, date.today()),
+        "base_manutencao": _base_manutencao(repo_custos),
         "edicao": edicao,
         "csrf": request.state.csrf,
         "erro": "",
@@ -139,11 +171,21 @@ def _linha_html(request: Request, m: Manutencao | None, edicao: Edicao | None = 
     )
 
 
-def _indicadores_html(request: Request, repo: RepositorioManutencao | None) -> str:
+def _indicadores_html(
+    request: Request, repo: RepositorioManutencao | None, repo_custos: RepositorioCustos | None
+) -> str:
     """Indicadores atualizados; vazio se não foi possível ler (a manutenção já foi gravada)."""
     try:
+        manutencoes = _listar(repo)
         return _fragmento(
-            request, "manutencao_indicadores.html", {"ind": indicadores(_listar(repo))}
+            request,
+            "manutencao_indicadores.html",
+            {
+                "ind": indicadores(manutencoes),
+                "lubrificacao_desde": lubrificacao_pendente_desde(manutencoes, date.today()),
+                "base_manutencao": _base_manutencao(repo_custos),
+                "csrf": request.state.csrf,
+            },
         )
     except FalhaAoConsultarManutencao:
         return ""
@@ -154,15 +196,16 @@ def manutencao(
     request: Request,
     usuario: Usuario = Depends(exigir_usuario),
     repo: RepositorioManutencao | None = Depends(get_repositorio_manutencao),
+    repo_custos: RepositorioCustos | None = Depends(get_repositorio_custos),
 ):
     try:
         manutencoes = _listar(repo)
     except FalhaAoConsultarManutencao:
-        contexto = _contexto([], request) | {"erro": MSG_CONSULTA}
+        contexto = _contexto([], request, None) | {"erro": MSG_CONSULTA}
         return _pagina(request, contexto, 503)
 
     # Sem JavaScript, o lápis e o botão levam a ?editar=<id> ou ?editar=nova.
-    contexto = _contexto(manutencoes, request)
+    contexto = _contexto(manutencoes, request, repo_custos)
     alvo = request.query_params.get("editar", "")
     if alvo == "nova":
         contexto["edicao"] = Edicao("nova", _valores_da_manutencao(None))
@@ -218,6 +261,7 @@ async def _salvar(
     alvo: str,
     usuario: Usuario,
     repo: RepositorioManutencao | None,
+    repo_custos: RepositorioCustos | None,
 ):
     dados = await _formulario(request)
     assincrono = request.headers.get("x-requested-with") == "fetch"
@@ -229,7 +273,7 @@ async def _salvar(
                 {"ok": False, "salvo": False, "erro": mensagem, "erros": erros or {}}, status
             )
         return _pagina_de_edicao(
-            request, repo, Edicao(alvo, digitado, erros or {}, mensagem), status
+            request, repo, repo_custos, Edicao(alvo, digitado, erros or {}, mensagem), status
         )
 
     if not _confiavel(request, dados):
@@ -260,7 +304,7 @@ async def _salvar(
         logger.error("Manutenção salva, mas a linha não foi montada: %s", type(erro).__name__)
         linha = ""
     try:
-        indicadores_html = _indicadores_html(request, repo)
+        indicadores_html = _indicadores_html(request, repo, repo_custos)
     except Exception as erro:
         logger.error("Manutenção salva, mas os indicadores falharam: %s", type(erro).__name__)
         indicadores_html = ""
@@ -276,13 +320,13 @@ async def _salvar(
     )
 
 
-def _pagina_de_edicao(request, repo, edicao: Edicao, status: int):
+def _pagina_de_edicao(request, repo, repo_custos, edicao: Edicao, status: int):
     """Página inteira com a linha em edição, o que foi digitado e os erros (sem JavaScript)."""
     try:
         manutencoes = _listar(repo)
     except FalhaAoConsultarManutencao:
-        return _pagina(request, _contexto([], request) | {"erro": MSG_CONSULTA}, 503)
-    return _pagina(request, _contexto(manutencoes, request, edicao), status)
+        return _pagina(request, _contexto([], request, None) | {"erro": MSG_CONSULTA}, 503)
+    return _pagina(request, _contexto(manutencoes, request, repo_custos, edicao), status)
 
 
 @router.post("/manutencao")
@@ -290,8 +334,9 @@ async def criar_manutencao(
     request: Request,
     usuario: Usuario = Depends(exigir_usuario),
     repo: RepositorioManutencao | None = Depends(get_repositorio_manutencao),
+    repo_custos: RepositorioCustos | None = Depends(get_repositorio_custos),
 ):
-    return await _salvar(request, "nova", usuario, repo)
+    return await _salvar(request, "nova", usuario, repo, repo_custos)
 
 
 @router.post("/manutencao/{manutencao_id}")
@@ -300,7 +345,8 @@ async def alterar_manutencao(
     manutencao_id: str,
     usuario: Usuario = Depends(exigir_usuario),
     repo: RepositorioManutencao | None = Depends(get_repositorio_manutencao),
+    repo_custos: RepositorioCustos | None = Depends(get_repositorio_custos),
 ):
     if not ID_MANUTENCAO.fullmatch(manutencao_id):
         raise HTTPException(status_code=404)
-    return await _salvar(request, manutencao_id, usuario, repo)
+    return await _salvar(request, manutencao_id, usuario, repo, repo_custos)

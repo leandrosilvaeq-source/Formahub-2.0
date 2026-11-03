@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.custos import (
     AQUISICAO,
     CONSUMO_KWH,
+    DEPRECIACAO_MANUAL,
     ENERGIA_MANUAL,
     HORAS_MES,
     MANUTENCAO,
@@ -51,7 +52,7 @@ from app.custos_repositorio import (
     GastoManutencao,
     PeriodoManutencao,
 )
-from app.estoque_repositorio import ItemEstoque, get_repositorio_estoque
+from app.estoque_repositorio import FalhaNoEstoque, ItemEstoque, get_repositorio_estoque
 from app.main import app
 from tests.fake_estoque import RepositorioEstoqueMemoria
 
@@ -232,15 +233,15 @@ def test_filamento_media_ponderada_pelo_peso_liquido_nao_media_simples():
         lote(tipo="solido", peso_comprado_g=Decimal("1000"), valor_unitario=Decimal("130")),
     ]
 
-    solido = next(i for i in insumos_filamento(lotes, {}) if i.chave == "filamento:pla-solido")
+    solido = next(i for i in insumos_filamento(lotes, {}) if i.chave == "filamento:pla")
 
     assert solido.calculado == Decimal("100")  # (3 x 90 + 1 x 130) / 4; a média simples daria 110
     assert (solido.comprado, solido.compras) == (4, 2)
 
 
-def test_pla_nao_mistura_solido_velvet_silk_e_multicolor():
+def test_pla_reune_solido_velvet_e_silk_sem_misturar_multicolor():
     lotes = [
-        lote(tipo="solido", valor_unitario=Decimal("90")),
+        lote(tipo="solido", peso_comprado_g=Decimal("2000"), valor_unitario=Decimal("90")),
         lote(tipo="velvet", valor_unitario=Decimal("100")),
         lote(tipo="silk", valor_unitario=Decimal("130")),
         lote(tipo="bicolor", valor_unitario=Decimal("140")),
@@ -248,15 +249,78 @@ def test_pla_nao_mistura_solido_velvet_silk_e_multicolor():
         lote(material="PETG", tipo="silk", valor_unitario=Decimal("70")),
     ]
 
-    custos = {i.titulo: i.calculado for i in insumos_filamento(lotes, {})}
+    insumos = {i.titulo: i for i in insumos_filamento(lotes, {})}
 
-    assert custos == {
+    assert {titulo: i.calculado for titulo, i in insumos.items()} == {
         "PETG": Decimal("70"),  # PETG reúne todos os tipos
-        "PLA Sólido": Decimal("90"),
-        "PLA Velvet": Decimal("100"),
-        "PLA Silk": Decimal("130"),
+        "PLA": Decimal("102.5"),  # ponderado pelo peso: (2 x 90 + 100 + 130) / 4
         "PLA Multicolor": Decimal("150"),  # bicolor + tricolor (pesos iguais)
     }
+    assert insumos["PLA"].por_tipo == (
+        ("PLA Sólido", Decimal("90")),
+        ("PLA Velvet", Decimal("100")),
+        ("PLA Silk", Decimal("130")),
+    )
+    assert insumos["PETG"].por_tipo == () and insumos["PLA Multicolor"].por_tipo == ()
+
+
+def test_card_pla_detalha_calculado_e_cada_tipo_sem_compra_com_travessao(estoque):
+    estoque.com_filamento(tipo="solido", valor_unitario=Decimal("90"))
+    estoque.com_filamento(tipo="velvet", valor_unitario=Decimal("110"))
+
+    detalhes = texto(card(pagina().text, 1))
+
+    assert "Custo/kg calculado R$ 100,00 /kg" in detalhes
+    assert "PLA Sólido R$ 90,00 /kg" in detalhes and "PLA Velvet R$ 110,00 /kg" in detalhes
+    assert "PLA Silk —" in detalhes
+
+
+@pytest.mark.parametrize(
+    ("manual", "classe", "alerta"),
+    [
+        ("110", "maior", False),
+        ("90", "menor", True),
+        ("100", "igual", False),
+        (None, "neutro", False),
+    ],
+)
+def test_comparacao_do_card_pla_e_alerta_na_pagina_inicial(
+    estoque, repo_custos, manual, classe, alerta
+):
+    estoque.com_filamento(tipo="solido", valor_unitario=Decimal("100"))
+    if manual:
+        repo_custos.ajustes["filamento:pla"] = Decimal(manual)
+
+    assert f"custos-fil-valor-{classe}" in card(pagina().text, 1)
+
+    inicio = client.get("/").text
+    assert ('id="custos-alerta-pla"' in inicio) == alerta
+    if alerta:
+        assert "manual R$ 90,00/kg; calculado R$ 100,00/kg" in texto(inicio)
+        assert 'href="/custos#insumo-1"' in inicio
+
+
+def test_alerta_do_pla_some_quando_o_valor_manual_e_corrigido(estoque, repo_custos):
+    estoque.com_filamento(tipo="solido", valor_unitario=Decimal("100"))
+    repo_custos.ajustes["filamento:pla"] = Decimal("90")
+    assert "Revisar custo do PLA" in client.get("/").text
+
+    enviar_fetch("/custos/insumos/ajuste", {"chave": "filamento:pla", "valor": "120,00"})
+
+    assert "Revisar custo do PLA" not in client.get("/").text
+
+
+def test_pagina_inicial_abre_sem_o_alerta_do_pla_se_o_estoque_falhar(repo_custos):
+    class EstoqueFora:
+        def listar_estoque(self):
+            raise FalhaNoEstoque
+
+    repo_custos.ajustes["filamento:pla"] = Decimal("90")
+    app.dependency_overrides[get_repositorio_estoque] = EstoqueFora
+
+    resposta = client.get("/")
+
+    assert resposta.status_code == 200 and "Revisar custo do PLA" not in resposta.text
 
 
 def test_materiais_adicionais_ganham_o_seu_card_de_filamento():
@@ -269,7 +333,7 @@ def test_materiais_adicionais_ganham_o_seu_card_de_filamento():
     insumos = insumos_filamento(lotes, {"filamento:material:TPU": Decimal("180")})
 
     assert [i.titulo for i in insumos] == [
-        "PETG", "PLA Sólido", "PLA Velvet", "PLA Silk", "PLA Multicolor", "TPU",
+        "PETG", "PLA", "PLA Multicolor", "TPU",
     ]  # fmt: skip
     tpu = insumos[-1]
     assert (tpu.chave, tpu.calculado, tpu.manual) == (
@@ -287,7 +351,7 @@ def test_filamento_peso_comprado_nao_se_confunde_com_saldo():
         valor_unitario=Decimal("100"),
     )
 
-    pla = next(i for i in insumos_filamento([consumido], {}) if i.chave == "filamento:pla-solido")
+    pla = next(i for i in insumos_filamento([consumido], {}) if i.chave == "filamento:pla")
 
     assert (pla.comprado, pla.saldo) == (2, Decimal("0.1"))
     assert pla.calculado == Decimal("100")  # o uso do estoque não muda o custo
@@ -377,15 +441,22 @@ def test_pagina_nao_fica_em_cache(estoque):
 def test_blocos_na_ordem_certa(estoque):
     html = pagina().text
 
-    for titulo in ("Custos diretos", "Custos indiretos", "Despesas fixas e metas gerenciais"):
+    for titulo in (
+        "Filamento",
+        "Outros Custos",
+        "Custos indiretos",
+        "Despesas fixas e metas gerenciais",
+    ):
         assert f">{titulo}</h2>" in html
     assert (
         html.index('id="custos-diretos"')
         < html.index('id="filamentos"')
+        < html.index('id="perdas"')
+        < html.index('id="hora-maquina"')
+        < html.index('id="uso-maquina"')
+        < html.index('id="mdo"')
         < html.index('id="insumos"')
         < html.index('id="energia"')
-        < html.index('id="perdas"')
-        < html.index('id="mdo"')
         < html.index('id="custos-indiretos"')
         < html.index('id="depreciacao"')
         < html.index('id="manutencao"')
@@ -418,11 +489,40 @@ def test_energia_fica_em_outros_custos_diretos_e_nao_na_secao_de_filamentos(esto
     html = pagina().text
 
     assert "Energia elétrica" not in secao(html, "filamentos")
-    assert (
-        html.index('id="outros-diretos"') < html.index('id="energia"') < html.index('id="perdas"')
-    )
+    assert html.index('id="outros-diretos"') < html.index('id="energia"')
     assert "Taxa de perda</strong>" in html and ">MDO</strong>" in html
     assert "Mão de obra direta (manual)" not in html
+
+
+def test_topo_sem_textos_explicativos_e_grupo_chamado_filamento(estoque):
+    html = pagina().text
+
+    assert "Administração e gestão de custos" not in html and "Cada grandeza" not in html
+    assert "1 · Filamentos" not in html and ">Custos diretos</h2>" not in html
+    assert ">Acessórios e embalagens</h3>" in html and ">Outros custos diretos</h3>" in html
+    assert '<h2 class="custos-grupo" id="custos-diretos">Filamento</h2>' in html
+
+
+def test_taxa_de_perda_fica_depois_dos_cards_de_material(estoque):
+    html = pagina().text
+    filamentos = html[html.index('id="filamentos"') : html.index('id="hora-maquina"')]
+
+    assert re.findall(r'class="custos-fil-nome">(.*?)</strong>', filamentos) == [
+        "PLA",
+        "PLA Multicolor",
+        "PETG",
+        "Taxa de perda",
+    ]
+
+
+def test_taxa_de_perda_continua_editavel_sem_o_estoque(estoque):
+    estoque.falhar = True
+
+    filamentos = pagina().text
+    filamentos = filamentos[filamentos.index('id="filamentos"') : filamentos.index('id="insumos"')]
+
+    assert "Não foi possível carregar as compras do estoque agora." in filamentos
+    assert 'id="perdas"' in filamentos and 'data-rota="/custos/valores/perdas"' in filamentos
 
 
 def test_entrega_e_taxas_de_venda_saem_da_interface_mas_os_dados_ficam(estoque, repo_custos):
@@ -518,14 +618,14 @@ def test_mei_e_retirada_ficam_separados(estoque):
     assert "Meta de retirada (à parte) R$ 500,00 /mês" in total
 
 
-def test_subtotal_da_maquina_e_total_mensal_separados_sem_somar_unidades(estoque):
+def test_uso_da_impressora_e_total_mensal_separados_sem_somar_unidades(estoque):
     html = pagina().text
-    resumo = secao(html, "resumo")
+    uso = cartao(html, "uso-maquina")
 
-    assert "Subtotal parcial da máquina R$ 0,41 /h" in resumo
-    assert "Manutenção A definir" in resumo
-    assert "MDO" in resumo and "R$ 15" not in resumo  # a MDO não entra no subtotal
-    assert "R$ 100" not in resumo and "R$ 500" not in resumo  # R$/mês fora do R$/h
+    assert "Uso da Impressora R$ 0,41 /h" in uso
+    assert "Manutenção A definir" in uso
+    assert "Não inclui a MDO" in uso and "R$ 15" not in uso  # a MDO não entra na soma
+    assert "R$ 100" not in uso and "R$ 500" not in uso  # R$/mês fora do R$/h
     assert "Total mensal de custos fixos" in html
 
 
@@ -572,15 +672,15 @@ def test_filamento_mostra_calculado_por_kg_e_por_grama_nos_detalhes(estoque):
 
 def test_valor_principal_e_so_o_manual_sem_manual_fica_a_definir(estoque, repo_custos):
     estoque.com_filamento(tipo="solido", valor_unitario=Decimal("90"))
-    estoque.com_filamento(tipo="silk", valor_unitario=Decimal("130"))
-    repo_custos.ajustes["filamento:pla-solido"] = Decimal("95")
+    estoque.com_filamento(tipo="bicolor", valor_unitario=Decimal("130"))
+    repo_custos.ajustes["filamento:pla"] = Decimal("95")
     html = pagina().text
 
-    solido = texto(card(html, 1)).split("Ver detalhes")[0]
-    silk = texto(card(html, 3)).split("Ver detalhes")[0]
+    pla = texto(card(html, 1)).split("Ver detalhes")[0]
+    multicolor = texto(card(html, 2)).split("Ver detalhes")[0]
 
-    assert "R$ 95,00 /kg" in solido and "A definir" not in solido
-    assert "A definir" in silk and "R$ 130" not in silk  # o calculado não entra no lugar
+    assert "R$ 95,00 /kg" in pla and "A definir" not in pla
+    assert "A definir" in multicolor and "R$ 130" not in multicolor  # o calculado não entra
     assert "Custo/kg calculado R$ 90,00 /kg" in texto(card(html, 1))  # o manual não o altera
 
 
@@ -598,37 +698,36 @@ def test_card_de_filamento_sem_origem_e_sem_dados_mostra_travessao(estoque):
 def test_detalhes_do_filamento_dizem_o_uso_real_do_custo(estoque):
     html = pagina().text
 
-    petg = texto(card(html, 0))
-    solido = texto(card(html, 1))
-    assert "ainda não é usado em pedidos nem em precificação" in petg
-    assert "comparação com a média dos cards de filamento em Estoque" in petg
-    assert "comparação" not in solido  # só PETG e PLA Multicolor são comparados no Estoque
+    for posicao in (0, 1, 2):  # PETG, PLA e PLA Multicolor são comparados no Estoque
+        detalhes = texto(card(html, posicao))
+        assert "ainda não é usado em pedidos nem em precificação" in detalhes
+        assert "comparação com a média dos cards de filamento em Estoque" in detalhes
 
 
 def test_filamentos_titulo_sem_etiquetas_e_cards_na_ordem_pedida(estoque):
     estoque.com_filamento(material="TPU", tipo="velvet", valor_unitario=Decimal("200"))
 
     html = pagina().text
-    secao_html = html[html.index('id="filamentos"') : html.index('id="insumos"')]
+    secao_html = html[html.index('id="filamentos"') : html.index('id="hora-maquina"')]
     nomes = re.findall(r'class="custos-fil-nome">(.*?)</strong>', secao_html)
 
     # O título da seção não aparece na tela (fica só para leitores de tela).
     assert 'id="titulo-filamentos" class="visualmente-oculto">Filamentos</h4>' in html
     cabecalho = secao_html[: secao_html.index("custos-cartoes")]
     assert "custos-etiqueta" not in cabecalho  # sem "Custo direto" nem "Unidade"
-    assert nomes == ["PLA Sólido", "PLA Velvet", "PLA Silk", "PLA Multicolor", "PETG", "TPU"]
+    assert nomes == ["PLA", "PLA Multicolor", "PETG", "TPU", "Taxa de perda"]
     assert 'id="insumo-1"' in secao_html and secao_html.index('id="insumo-1"') < secao_html.index(
         'id="insumo-0"'
     )  # a ordem é só visual: o id de cada card não muda
 
 
-def test_cinco_cards_fixos_mais_materiais_adicionais_sem_tabela(estoque):
+def test_tres_cards_fixos_mais_materiais_adicionais_sem_tabela(estoque):
     estoque.com_filamento(material="TPU", tipo="velvet", valor_unitario=Decimal("200"))
 
     html = pagina().text
 
-    filamentos = html[html.index('id="filamentos"') : html.index('id="insumos"')]
-    assert filamentos.count('class="custos-item custos-fil"') == 6
+    filamentos = html[html.index('id="filamentos"') : html.index('id="hora-maquina"')]
+    assert filamentos.count('class="custos-item custos-fil"') == 5  # com a taxa de perda
     assert ">TPU</strong>" in html and "custos-tabela-filamentos" not in html
 
 
@@ -897,7 +996,7 @@ def test_ajuste_manual_do_insumo_preserva_as_compras(estoque, repo_custos):
     assert repo_custos.gravacoes == [("ajuste", "filamento:petg", Decimal("90.50"), 1)]
     assert estoque.filamentos == antes  # compras e estoque intactos
     bloco = secao(pagina().text, "filamentos")
-    assert "Origem" not in bloco
+    assert "Origem" not in texto(card(pagina().text, 0))
     assert "Custo/kg calculado R$ 80,00 /kg" in bloco  # o calculado não muda com o manual
     assert "R$ 90,50 /kg" in texto(card(pagina().text, 0)).split("Ver detalhes")[0]
 
@@ -1092,13 +1191,14 @@ def test_voltar_ao_calculado_apaga_o_ajuste_e_nao_zera(estoque, repo_custos):
     assert "R$ 0,1363 /h de máquina" in bloco.split("Ver detalhes")[0]
 
 
-def test_voltar_ao_calculado_da_depreciacao_e_o_resumo_acompanha(estoque, repo_custos):
+def test_voltar_ao_calculado_da_depreciacao_e_o_uso_acompanha(estoque, repo_custos):
     enviar("/custos/valores/energia-ajuste/calculado")
     enviar("/custos/valores/depreciacao-ajuste/calculado")
 
-    resumo = secao(pagina().text, "resumo")
+    uso = cartao(pagina().text, "uso-maquina")
 
-    assert "Subtotal parcial da máquina ≈ R$ 0,4095 /h" in resumo  # 0,13630 + 0,27322
+    assert "Uso da Impressora R$ 0,41 /h" in uso  # 0,13630 + 0,27322
+    assert "≈ R$ 0,1363 /h" in uso and "≈ R$ 0,2732 /h" in uso
 
 
 def test_so_os_derivados_voltam_ao_calculado(estoque, repo_custos):
@@ -1127,8 +1227,8 @@ def test_manutencao_comeca_a_definir_e_fora_do_subtotal(estoque):
     html = pagina().text
 
     assert "A definir" in cartao(html, "manutencao")
-    assert "Ela fica fora do subtotal da máquina" in cartao(html, "manutencao")
-    assert "Subtotal parcial" in secao(html, "resumo")
+    assert "Ela fica fora do Uso da Impressora" in cartao(html, "manutencao")
+    assert "Valor parcial" in cartao(html, "uso-maquina")
 
 
 def gastos_das_manutencoes(repo_custos, *gastos):
@@ -1155,8 +1255,7 @@ def test_custo_por_hora_vem_das_manutencoes_do_periodo(estoque, repo_custos):
     assert "Calculado (referência) R$ 0,50 /h" in bloco  # R$ 125 / 250 h
     assert "Origem Calculado" in bloco
     assert "R$ 125,00 (2 manutenções)" in bloco
-    assert "Subtotal da máquina" in secao(html, "resumo")
-    assert "Subtotal parcial" not in secao(html, "resumo")
+    assert "Valor parcial" not in cartao(html, "uso-maquina")
 
 
 def test_custos_nao_tem_mais_cadastro_proprio_de_gasto_de_manutencao(estoque):
@@ -1222,7 +1321,7 @@ def test_ajuste_manual_da_manutencao_tem_precedencia(estoque, repo_custos):
     assert "Origem Manual" in bloco and bloco.split("Ver detalhes")[0].strip().endswith(
         "R$ 0,30 /h"
     )
-    assert "Subtotal da máquina R$ 0,71 /h" in secao(pagina().text, "resumo")
+    assert "Uso da Impressora R$ 0,71 /h" in cartao(pagina().text, "uso-maquina")
     enviar("/custos/valores/manutencao-ajuste/calculado")
     assert repo_custos.parametros[MANUTENCAO] is None
     assert "A definir" in cartao(pagina().text, "manutencao")
@@ -1256,14 +1355,14 @@ def test_periodo_pode_ter_horas_acima_de_um_mes(estoque, repo_custos):
 # ---------- Prevenção de dupla contagem ----------
 
 
-def test_subtotal_da_maquina_nao_inclui_mdo_perda_nem_valores_mensais(estoque, repo_custos):
+def test_uso_da_impressora_nao_inclui_mdo_perda_nem_valores_mensais(estoque, repo_custos):
     enviar("/custos/valores/mdo", {"mdo_hora": "99"})
     enviar("/custos/valores/perdas", {"perda_percentual": "50"})
     enviar("/custos/valores/mei", {"mei_mensal": "777"})
 
-    resumo = secao(pagina().text, "resumo")
+    uso = cartao(pagina().text, "uso-maquina")
 
-    assert "Subtotal parcial da máquina R$ 0,41 /h" in resumo  # só energia + depreciação
+    assert "Uso da Impressora R$ 0,41 /h" in uso  # só energia + depreciação
 
 
 def test_mdo_nao_usa_mais_o_valor_por_hora_de_impressao(estoque):
@@ -1299,9 +1398,9 @@ def test_comparacao_do_manual_com_o_calculado_em_decimal():
     lotes = [lote(tipo="solido", valor_unitario=Decimal("100"))]  # calculado: R$ 100/kg
 
     def comparar(manual):
-        ajustes = {} if manual is None else {"filamento:pla-solido": Decimal(manual)}
+        ajustes = {} if manual is None else {"filamento:pla": Decimal(manual)}
         return next(
-            i for i in insumos_filamento(lotes, ajustes) if i.chave == "filamento:pla-solido"
+            i for i in insumos_filamento(lotes, ajustes) if i.chave == "filamento:pla"
         ).comparacao
 
     assert comparar("90") == "menor"
@@ -1317,7 +1416,7 @@ def test_comparacao_nao_arredonda_antes_de_comparar():
     exato = insumos_filamento(lotes, {})[1].calculado  # 33,3333... (não termina)
 
     def comparar(manual):
-        i = insumos_filamento(lotes, {"filamento:pla-solido": manual})[1]
+        i = insumos_filamento(lotes, {"filamento:pla": manual})[1]
         return i.comparacao
 
     assert formatar_custo_aprox(Decimal("33.3333")).lstrip("≈ ") == formatar_custo_aprox(
@@ -1331,18 +1430,18 @@ def test_comparacao_nao_arredonda_antes_de_comparar():
 def test_cores_e_textos_de_comparacao_no_card(estoque, repo_custos):
     estoque.com_filamento(material="PETG", valor_unitario=Decimal("80"))
     estoque.com_filamento(tipo="solido", valor_unitario=Decimal("100"))
-    estoque.com_filamento(tipo="velvet", valor_unitario=Decimal("100"))
-    estoque.com_filamento(tipo="silk", valor_unitario=Decimal("100"))
+    estoque.com_filamento(material="ABS", valor_unitario=Decimal("100"))  # sem manual
+    estoque.com_filamento(material="TPU", valor_unitario=Decimal("100"))
     repo_custos.ajustes.update(
         {
             "filamento:petg": Decimal("70"),  # menor
-            "filamento:pla-solido": Decimal("120"),  # maior
-            "filamento:pla-velvet": Decimal("100"),  # igual
+            "filamento:pla": Decimal("120"),  # maior
+            "filamento:material:TPU": Decimal("100"),  # igual
             "filamento:pla-multicolor": Decimal("50"),  # sem base calculada
         }
     )
     html = pagina().text
-    cards = [card(html, n) for n in range(5)]
+    cards = [card(html, n) for n in (0, 1, 4, 3, 2)]
 
     assert "custos-fil-valor-menor" in cards[0]  # manual 70 < calculado 80: vermelho + aviso
     assert "Revisar custos: valor manual abaixo do custo calculado" in texto(cards[0])
@@ -1360,7 +1459,7 @@ def test_materiais_adicionais_tambem_comparam(estoque, repo_custos):
     estoque.com_filamento(material="TPU", tipo="velvet", valor_unitario=Decimal("200"))
     repo_custos.ajustes["filamento:material:TPU"] = Decimal("250")
 
-    tpu = card(pagina().text, 5)
+    tpu = card(pagina().text, 3)
 
     assert ">TPU</strong>" in tpu and "custos-fil-valor-maior" in tpu and "Revisar" not in tpu
     assert 'data-chave="filamento:material:TPU"' in tpu
@@ -1538,14 +1637,14 @@ def test_valor_fora_do_limite_ou_malformado_e_recusado(estoque, repo_custos, env
 
 def test_card_de_filamento_nao_tem_botao_remover_e_preserva_o_valor_salvo(estoque, repo_custos):
     estoque.com_filamento(tipo="solido")
-    repo_custos.ajustes["filamento:pla-solido"] = Decimal("120")
+    repo_custos.ajustes["filamento:pla"] = Decimal("120")
 
     html = pagina().text
     filamentos = html[html.index('id="filamentos"') : html.index('id="insumos"')]
 
     assert "Remover" not in filamentos and "/insumos/calculado" not in filamentos
     assert "R$ 120,00" in texto(card(html, 1)) and 'data-valor="120,00"' in card(html, 1)
-    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("120")}
+    assert repo_custos.ajustes == {"filamento:pla": Decimal("120")}
 
 
 @pytest.mark.sem_login
@@ -1606,16 +1705,122 @@ def test_pagina_carrega_o_script_da_edicao_no_lugar(estoque):
 # ---------- Outros custos diretos: cards como os de filamentos, edição no card ----------
 
 
-def test_outros_custos_diretos_sao_tres_cards_no_padrao_dos_filamentos(estoque):
+def com_manutencao_definida(repo_custos, manual="0.12"):
+    repo_custos.parametros[MANUTENCAO] = Decimal(manual)
+
+
+def test_bloco_de_subtotal_duplicado_saiu_da_tela(estoque):
+    html = pagina().text
+
+    assert 'id="resumo"' not in html and "Subtotal por hora da máquina" not in html
+    assert "Subtotal da máquina" not in html
+
+
+def test_secao_outros_custos_fica_entre_filamento_e_acessorios(estoque):
+    html = pagina().text
+    secao_html = html[html.index('id="hora-maquina"') : html.index('id="insumos"')]
+
+    assert ">Outros Custos</h2>" in html and "Hora da Máquina" not in html
+    assert re.findall(r'class="custos-fil-nome">(.*?)</strong>', secao_html) == [
+        "Uso da Impressora",
+        "MDO",
+    ]
+    assert html.index('id="filamentos"') < html.index('id="hora-maquina"')
+    assert html.index('id="hora-maquina"') < html.index('id="insumos"')
+
+
+def test_uso_de_maquina_soma_depreciacao_manutencao_e_energia(estoque, repo_custos):
+    com_manutencao_definida(repo_custos)  # energia 0,14 e depreciação 0,27 vêm dos valores iniciais
+
+    bloco = cartao(pagina().text, "uso-maquina")
+
+    principal, detalhes = bloco.split("Ver detalhes")
+    assert "Uso da Impressora R$ 0,53 /h" in principal and "R$/h" not in principal
+    assert "Depreciação gerencial R$ 0,27 /h" in detalhes
+    assert "Manutenção R$ 0,12 /h" in detalhes
+    assert "Energia elétrica R$ 0,14 /h" in detalhes
+    assert "Valor parcial" not in bloco and 'title="Editar"' not in bloco
+
+
+def test_uso_de_maquina_mostra_milhar_e_arredonda_so_na_exibicao(estoque, repo_custos):
+    repo_custos.parametros[ENERGIA_MANUAL] = Decimal("1000.1234")
+    repo_custos.parametros[DEPRECIACAO_MANUAL] = Decimal("234.2")
+    com_manutencao_definida(repo_custos, "0.4")
+
+    bloco = cartao(pagina().text, "uso-maquina")
+
+    assert "Uso da Impressora R$ 1.234,72 /h" in bloco  # 1.234,7234 só arredondado na tela
+    assert "Energia elétrica R$ 1.000,1234 /h" in bloco
+
+
+def test_uso_de_maquina_fica_parcial_sem_manutencao_definida(estoque):
+    bloco = cartao(pagina().text, "uso-maquina")
+
+    assert "R$ 0,41" in bloco and "Valor parcial: falta definir a manutenção." in bloco
+    assert "Manutenção A definir" in bloco
+
+
+def test_uso_de_maquina_parcial_com_custo_de_manutencao_a_definir(estoque, repo_custos):
+    repo_custos.periodo = PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal("100"))
+    repo_custos.gastos = [GastoManutencao(1, date(2026, 10, 1), "Peça", Decimal("10"))]
+    repo_custos.manutencoes_sem_custo = (date(2026, 10, 2),)
+
+    assert "Valor parcial" in cartao(pagina().text, "uso-maquina")
+
+    com_manutencao_definida(repo_custos)  # com o manual, o cálculo incompleto não entra na soma
+    assert "Valor parcial" not in cartao(pagina().text, "uso-maquina")
+
+
+def test_uso_de_maquina_a_definir_sem_energia_ou_depreciacao(estoque, repo_custos):
+    repo_custos.parametros[ENERGIA_MANUAL] = None
+    repo_custos.parametros.pop(TARIFA)
+
+    bloco = cartao(pagina().text, "uso-maquina")
+
+    assert "Uso da Impressora A definir" in bloco and "Energia elétrica A definir" in bloco
+
+
+@pytest.mark.parametrize(
+    ("grupo", "dados", "esperado"),
+    [
+        ("energia-ajuste", {"valor": "1,00"}, "R$ 1,39"),
+        ("depreciacao-ajuste", {"valor": "1,00"}, "R$ 1,26"),
+        ("manutencao-ajuste", {"valor": "1,00"}, "R$ 1,41"),
+    ],
+)
+def test_editar_um_custo_por_hora_devolve_o_uso_de_maquina_atualizado(
+    estoque, repo_custos, grupo, dados, esperado
+):
+    com_manutencao_definida(repo_custos)
+
+    corpo = enviar_fetch(f"/custos/valores/{grupo}", dados).json()
+
+    assert corpo["ok"] is True and 'id="uso-maquina"' in corpo["uso_maquina"]
+    assert f"Uso da Impressora {esperado} /h" in texto(corpo["uso_maquina"])
+
+
+def test_voltar_ao_calculado_tambem_atualiza_o_uso_de_maquina(estoque, repo_custos):
+    com_manutencao_definida(repo_custos)
+
+    corpo = enviar_fetch("/custos/valores/energia-ajuste/calculado", {}).json()
+
+    assert "Energia elétrica ≈ R$ 0,1363 /h" in texto(corpo["uso_maquina"])
+
+
+def test_editar_a_perda_nao_mexe_no_uso_de_maquina(estoque):
+    corpo = enviar_fetch("/custos/valores/perdas", {"perda_percentual": "4"}).json()
+
+    assert corpo["ok"] is True and "uso_maquina" not in corpo
+
+
+def test_outros_custos_diretos_ficou_so_com_a_energia_e_cards_no_padrao(estoque):
     html = pagina().text
     outros = html[html.index('id="outros-cards"') : html.index('id="custos-indiretos"')]
 
     assert re.findall(r'class="custos-fil-nome">(.*?)</strong>', outros) == [
         "Energia elétrica",
-        "Taxa de perda",
-        "MDO",
     ]
-    assert outros.count('class="custos-item custos-fil"') == 3
+    assert outros.count('class="custos-item custos-fil"') == 1
     assert "R$ 0,14" in cartao(html, "energia") and "/h de máquina" in cartao(html, "energia")
     assert "R$ 15,00" in cartao(html, "mdo") and "/h ativa" in cartao(html, "mdo")
     assert "3 %" in cartao(html, "perdas")

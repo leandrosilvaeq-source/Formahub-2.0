@@ -97,7 +97,8 @@ def test_listagem_real_do_banco_alimenta_o_repositorio_e_os_calculos(tmp_path):
     assert p[MANUTENCAO] is None  # "A definir": ausência de valor, não zero
     assert custos.provisorios == {ENERGIA_MANUAL, DEPRECIACAO_MANUAL}
     assert custos.datas[HORAS_MES] == date(2026, 11, 1)
-    assert custos.ajustes == {} and custos.gastos == [] and custos.periodo is None
+    assert custos.ajustes == {"filamento:pla": Decimal("100")}  # valor inicial do card PLA
+    assert custos.gastos == [] and custos.periodo is None
     # E os cálculos com esses valores batem com o pedido: ≈ 0,1363/h e ≈ 0,2732/h.
     energia = energia_por_hora(p["energia_consumo_kwh_mes"], p[TARIFA], p[HORAS_MES])
     deprec = depreciacao(

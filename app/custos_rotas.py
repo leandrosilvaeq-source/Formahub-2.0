@@ -29,7 +29,6 @@ from app.custos import (
     ENERGIA_MANUAL,
     GRUPOS,
     HORAS_MES,
-    MANUTENCAO,
     MDO,
     MEI,
     PERDA,
@@ -42,6 +41,7 @@ from app.custos import (
     VOLTAR_AO_CALCULADO,
     CustoHora,
     conferir_depreciacao,
+    custo_de_manutencao,
     depreciacao,
     energia_por_hora,
     formatar_custo,
@@ -55,7 +55,6 @@ from app.custos import (
     ler_data,
     ler_decimal,
     ler_horas_periodo,
-    manutencao_por_hora,
     mdo_referencias,
     ordem_de_exibicao,
     revisao_das_horas,
@@ -249,11 +248,7 @@ def _montar(custos: Custos, insumos, hoje: date | None = None, fotos=None) -> di
     )
 
     # Manutenção: custo/h = gastos do período / horas do mesmo período (sem dados: "A definir").
-    periodo = custos.periodo
-    gastos_periodo = [
-        g for g in custos.gastos if periodo and periodo.inicio <= g.data <= periodo.fim
-    ]
-    manutencao = CustoHora(manutencao_por_hora(custos.gastos, periodo), p.get(MANUTENCAO))
+    base_manutencao, manutencao = custo_de_manutencao(custos)
 
     subtotal, completo = subtotal_maquina(energia.usado, deprec_hora.usado, manutencao.usado)
     mdo = p.get(MDO)
@@ -275,16 +270,12 @@ def _montar(custos: Custos, insumos, hoje: date | None = None, fotos=None) -> di
         "depreciacao": deprec,
         "depreciacao_hora": deprec_hora,
         "manutencao": manutencao,
-        "periodo": periodo,
+        "periodo": custos.periodo,
         "gastos": custos.gastos,
-        "gastos_periodo": len(gastos_periodo),
-        "total_gastos_periodo": sum((g.valor for g in gastos_periodo), Decimal(0)),
+        "gastos_periodo": base_manutencao.quantidade,
+        "total_gastos_periodo": base_manutencao.total,
         # Manutenções do período com custo "A definir": ficam fora da soma (subtotal conhecido).
-        "sem_custo_periodo": sum(
-            1
-            for d in custos.manutencoes_sem_custo
-            if periodo and periodo.inicio <= d <= periodo.fim
-        ),
+        "sem_custo_periodo": base_manutencao.sem_custo,
         "subtotal_hora": subtotal,
         "subtotal_completo": completo,
         "mdo": mdo,
@@ -485,14 +476,18 @@ CARDS_NO_LUGAR = {
 }
 
 
-def _cartao_de_valor_html(request: Request, repo, grupo: str) -> str:
-    """O card (Energia, Taxa de perda ou MDO) já atualizado; vazio se não der para montar."""
+# Grupos que entram na soma do card Uso da Impressora: editá-los também atualiza esse card.
+SOMA_DA_MAQUINA = {"energia-ajuste", "depreciacao-ajuste", "manutencao-ajuste"}
+
+
+def _cartao_de_valor_html(request: Request, repo, cartao: str) -> str:
+    """O card pedido (Energia, Taxa de perda...) já atualizado; vazio se não der para montar."""
     try:
         custos_ = repo.listar()
     except FalhaAoConsultarCustos:
         return ""
     insumos = _insumos(request.state.estoque, custos_)
-    contexto = {"estado": Estado(), "csrf": request.state.csrf, "cartao": CARDS_NO_LUGAR[grupo]}
+    contexto = {"estado": Estado(), "csrf": request.state.csrf, "cartao": cartao}
     contexto.update(_montar(custos_, insumos))
     return templates.get_template("custos_cartao.html").render(contexto)
 
@@ -528,12 +523,15 @@ def _valores_assincrono(request, usuario, repo, grupo: str, dados, calculado: bo
         logger.error("Falha inesperada ao salvar o valor do card: %s", type(erro).__name__)
         return recusa(MSG_INDISPONIVEL, 500)
 
+    corpo = {"ok": True, "salvo": True}
     try:
-        html = _cartao_de_valor_html(request, repo, grupo)
+        corpo["html"] = _cartao_de_valor_html(request, repo, CARDS_NO_LUGAR[grupo])
+        if grupo in SOMA_DA_MAQUINA:
+            corpo["uso_maquina"] = _cartao_de_valor_html(request, repo, "uso_maquina")
     except Exception as erro:
         logger.error("Valor salvo, mas o card não foi montado: %s", type(erro).__name__)
-        html = ""
-    return _resposta_json({"ok": True, "salvo": True, "html": html})
+        corpo.setdefault("html", "")
+    return _resposta_json(corpo)
 
 
 def _resposta_json(corpo: dict, status: int = 200):

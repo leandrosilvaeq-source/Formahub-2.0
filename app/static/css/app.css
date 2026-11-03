@@ -50,6 +50,8 @@
   --cor-erro-fundo: #fdecea;
   --cor-sucesso: #1e7a46;
   --cor-sucesso-fundo: #e7f5ec;
+  --cor-aviso: #8a5a00;
+  --cor-aviso-fundo: #fff4dc;
 
   /* Etapas da produção (marcadores nos filtros e na tabela de pedidos) */
   --cor-etapa-fila: color-mix(in srgb, var(--azul-marinho) 40%, var(--branco));
@@ -481,6 +483,20 @@ main {
   background: var(--cor-erro);
   color: var(--cor-erro-fundo);
 }
+
+.alerta-aviso {
+  background: var(--cor-aviso-fundo);
+  border-color: var(--cor-aviso);
+  color: var(--cor-aviso);
+}
+
+.alerta-aviso::before {
+  content: "!";
+  background: var(--cor-aviso);
+  color: var(--cor-aviso-fundo);
+}
+
+.alerta-aviso a { color: inherit; text-decoration: underline; }
 
 /* ---------- Formulário ---------- */
 .pedido {
@@ -2943,13 +2959,6 @@ body:has(.container-pedidos) .deco-fundo { display: none; }
   border-width: 2px;
 }
 
-.custos-legenda {
-  margin-top: 0;
-  padding: 0.5rem 0.75rem;
-  border-left: 4px solid var(--azul-ciano);
-  background: var(--cor-superficie);
-}
-
 .custos-item .custos-etiquetas { margin-top: 0.25rem; }
 .custos-item > .custos-item-dados { margin: 0.5rem 0; }
 .custos-item > .custos-dica { margin: 0 0 0.5rem; }
@@ -3003,7 +3012,6 @@ body:has(.container-custos) .deco-fundo { display: none; }
 
 .custos .pagina-topo { margin-bottom: 0.5rem; }
 .custos .custos-grupo { margin: 0.9rem 0 0.4rem; font-size: 1.1rem; }
-.custos .custos-legenda { margin: 0 0 0.25rem; padding: 0.35rem 0.6rem; }
 
 /* Cards distribuídos em quantas colunas couberem (no celular, uma só). */
 .custos-grade {
@@ -3199,52 +3207,98 @@ body:has(.container-custos) .deco-fundo { display: none; }
 .custos-tabela .numero { text-align: right; white-space: nowrap; }
 .custos-marca-manual { margin-left: 0.2rem; font-size: 0.6875rem; font-weight: 700; color: var(--cor-primaria); }
 
+/* Cards de custo: colunas iguais e altura única, no mesmo padrão dos cards de Manutenção. Com um
+   "Ver detalhes" aberto, só a linha daquele card cresce. */
 #filamentos .custos-cartoes,
 #outros-cards .custos-cartoes,
-#indiretos-cards .custos-cartoes { grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); }
-/* Cards de filamento: altura única, nome, valor principal e unidade; detalhes no pé do card. */
-#filamentos .custos-cartoes,
-#outros-cards .custos-cartoes,
-#indiretos-cards .custos-cartoes { align-items: stretch; }
+#indiretos-cards .custos-cartoes,
+#hora-maquina .custos-cartoes {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: stretch;
+  gap: 0.75rem;
+}
 
+#filamentos .custos-cartoes:has(.custos-detalhes[open]),
+#outros-cards .custos-cartoes:has(.custos-detalhes[open]),
+#indiretos-cards .custos-cartoes:has(.custos-detalhes[open]),
+#hora-maquina .custos-cartoes:has(.custos-detalhes[open]) { grid-auto-rows: auto; }
+
+@media (max-width: 1199px) {
+  #filamentos .custos-cartoes,
+  #outros-cards .custos-cartoes,
+  #indiretos-cards .custos-cartoes,
+  #hora-maquina .custos-cartoes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Filamentos: uma linha só, mesmo com mais materiais (TPU, por exemplo); os cards dividem a largura. */
+@media (min-width: 1200px) {
+  #filamentos .custos-cartoes {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+}
+
+/* Nome no topo, valor no meio e o restante embaixo: a altura do nome é fixa, então os valores ficam
+   na mesma linha; a altura mínima deixa o valor no centro do card quando não há texto extra. */
 .custos-fil {
+  --custos-fil-faixa: 3.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
-  padding: 0.5rem 0.7rem 0.3rem;
+  min-height: calc(2 * (var(--custos-fil-faixa) + 0.8rem) + 2.1rem);
+  padding: 0.7rem;
   border: 1px solid var(--cor-borda);
-  border-top: 3px solid transparent;
-  border-image: var(--gradiente-marca) 1;
-  border-image-width: 3px 0 0 0;
-  border-radius: var(--raio-campo);
-  background: var(--cor-superficie);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 6%, transparent);
+  border-radius: var(--raio);
+  background: var(--gradiente-marca) top / 100% 3px no-repeat, var(--cor-superficie);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 7%, transparent);
 }
 
-.custos-fil-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-height: var(--alvo-toque); margin: -0.2rem 0; }
-.custos-fil-nome { min-width: 0; font-family: var(--fonte-titulo); font-size: 0.9rem; color: var(--cor-texto); overflow-wrap: anywhere; }
-.custos-fil .custos-lapis { flex: 0 0 auto; margin: 0 -0.4rem 0 0; }
+.custos-fil-topo { position: relative; display: flex; align-items: center; justify-content: center; min-height: var(--custos-fil-faixa); padding: 0 2.25rem; }
+.custos-fil-nome { min-width: 0; text-align: center; font-family: var(--fonte-titulo); font-size: 1.125rem; line-height: 1.25; color: var(--cor-texto); overflow-wrap: anywhere; }
+.custos-fil .custos-lapis { position: absolute; top: -0.4rem; right: -0.5rem; }
+#uso-maquina .custos-fil-topo { padding: 0; }  /* sem lápis: o título usa toda a largura */
 
 .custos-fil-valor {
   margin: 0;
+  text-align: center;
   font-family: var(--fonte-titulo);
-  font-size: 1.4rem;
+  font-size: 1.75rem;
   line-height: 1.2;
   color: var(--cor-primaria);
 }
 
-.custos-fil-valor .custos-unidade { margin-left: 0.2rem; font-size: 0.8125rem; }
-.custos-fil .custos-pendente { font-size: 1.1rem; }
+.custos-fil-valor .custos-unidade { margin-left: 0.2rem; font-size: 1rem; }
+.custos-fil .custos-pendente { font-size: 1.375rem; }
 .custos-fil .custos-form-acoes { margin-top: 0.3rem; }
 .custos-voltar-valor { margin: 0.3rem 0 0; }
-.custos-fil .custos-detalhes { margin-top: auto; padding-top: 0.2rem; }
-.custos-fil .custos-detalhes summary { min-height: var(--alvo-toque); padding-left: 0; }
+.custos-fil .custos-detalhes { margin-top: auto; padding-top: 0.2rem; text-align: center; }
+.custos-fil .custos-detalhes > :not(summary) { text-align: left; }
+.custos-fil .custos-detalhes summary { min-height: var(--alvo-toque); font-size: 0.9375rem; }
+.custos-fil .custos-dica { font-size: 1rem; }
+.custos-fil .custos-aviso { font-size: 1rem; }
+.custos-fil .custos-item-dados dt { font-size: 0.859rem; }
+.custos-fil .custos-item-dados dd { font-size: 1.125rem; }
+
+/* Com muitos materiais na linha, os cards estreitos reduzem o texto para o nome caber em duas linhas. */
+.custos-fil { container-type: inline-size; }
+
+@container (max-width: 11rem) {
+  .custos-fil-topo { padding: 0 1.5rem; }
+  .custos-fil-nome { font-size: 0.8rem; overflow-wrap: normal; }
+  .custos-fil-valor { font-size: 1.05rem; }
+  .custos-fil-valor .custos-unidade { font-size: 0.75rem; }
+  .custos-fil .custos-pendente { font-size: 0.875rem; }
+  .custos-fil-comparacao,
+  .custos-fil .custos-detalhes summary { font-size: 0.75rem; }
+}
 
 /* Comparação do custo manual com o calculado (cor + texto) e edição no próprio lugar. */
 .custos-fil-valor-maior { color: var(--cor-sucesso); }
 .custos-fil-valor-menor { color: var(--cor-erro); }
 
-.custos-fil-comparacao { margin: 0.1rem 0 0; font-size: 0.75rem; font-weight: 700; color: var(--cor-texto-suave); }
+.custos-fil-comparacao { margin: 0.1rem 0 0; text-align: center; font-size: 0.9375rem; font-weight: 700; color: var(--cor-texto-suave); }
 .custos-fil-comparacao-maior { color: var(--cor-sucesso); }
 .custos-fil-comparacao-menor {
   padding: 0.15rem 0.4rem;
@@ -3253,7 +3307,7 @@ body:has(.container-custos) .deco-fundo { display: none; }
   color: var(--cor-erro);
 }
 
-.custos-fil-aviso { margin: 0.1rem 0 0; font-size: 0.75rem; font-weight: 700; color: var(--cor-sucesso); }
+.custos-fil-aviso { margin: 0.1rem 0 0; text-align: center; font-size: 0.9375rem; font-weight: 700; color: var(--cor-sucesso); }
 .custos-fil-edicao { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem; }
 
 .custos-fil-campo {
@@ -3354,7 +3408,8 @@ body:has(.container-custos) .deco-fundo { display: none; }
 @media (max-width: 599px) {
   #filamentos .custos-cartoes,
   #outros-cards .custos-cartoes,
-  #indiretos-cards .custos-cartoes { grid-template-columns: minmax(0, 1fr); }
+  #indiretos-cards .custos-cartoes,
+  #hora-maquina .custos-cartoes { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (min-width: 900px) {
@@ -4284,37 +4339,57 @@ body:has(.container-custos) .deco-fundo { display: none; }
    Manutenção: indicadores e tabela editável na própria linha.
    O visual vem da Lista de Pedidos (.tabela-rolagem / .tabela-pedidos).
    ========================================================== */
+/* Colunas e linhas iguais: todos os cards com a mesma largura e a mesma altura. */
 .manut-indicadores {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 0.75rem;
   margin-bottom: 1.25rem;
 }
 
-.manut-indicador {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.15rem;
-  min-width: 12rem;
-  padding: 0.6rem 1.1rem;
-  border: 1px solid var(--cor-borda);
-  border-radius: var(--raio);
-  background: var(--cor-superficie);
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 6%, transparent);
+@media (max-width: 1199px) {
+  .manut-indicadores { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-.manut-indicador-rotulo { font-size: 0.8rem; font-weight: 700; color: var(--cor-texto-suave); }
+@media (max-width: 559px) {
+  .manut-indicadores { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Título no topo, valor no meio e o restante embaixo: as faixas de mesma altura mínima centralizam o
+   valor e o deixam na mesma linha nos cards; detalhes abertos só acrescentam altura abaixo dele. */
+.manut-indicador {
+  display: grid;
+  grid-template-rows: minmax(var(--alvo-toque), auto) auto minmax(var(--alvo-toque), auto);
+  align-content: start;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  background: var(--gradiente-marca) top / 100% 3px no-repeat, var(--cor-superficie);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--azul-marinho) 7%, transparent);
+}
+
+.manut-indicador-rotulo { align-self: center; text-align: center; font-size: 1rem; font-weight: 700; color: var(--cor-texto-suave); }
 
 .manut-indicador-valor {
+  text-align: center;
   font-family: var(--fonte-titulo);
-  font-size: 1.5rem;
+  font-size: 1.875rem;
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
 }
 
-.manut-indicador-nota { font-size: 0.75rem; color: var(--cor-texto-suave); }
+.manut-indicador-rodape { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; text-align: center; }
+.manut-indicador-nota { font-size: 0.9375rem; color: var(--cor-texto-suave); }
+.manut-indicador .custos-detalhes summary { font-size: 0.9375rem; }
+.manut-indicador .custos-detalhes > :not(summary) { text-align: left; }
+.manut-indicador .manut-referencia { text-align: left; }
+.manut-indicador .custos-dica { font-size: 1rem; }
+.manut-indicador .custos-item-dados dt { font-size: 0.859rem; }
+.manut-indicador .custos-item-dados dd { font-size: 1.125rem; }
+.manut-referencia { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; margin-top: 0.35rem; }
 
 /* position: os rótulos ocultos (absolute) ficam contidos na rolagem da tabela, sem alargar a página. */
 .manut-rolagem { position: relative; max-height: none; }
@@ -4381,7 +4456,6 @@ textarea.manut-celula-campo { min-height: 3.5rem; padding: 0.5rem 0.15rem; resiz
 .manut-auditoria { display: block; margin-top: 0.15rem; font-size: 0.7rem; color: var(--cor-texto-suave); white-space: normal; }
 .manut-alerta { color: var(--cor-erro); font-weight: 700; }
 .manut-dica { margin: 0; font-size: 0.7rem; color: var(--cor-texto-suave); }
-.manut-ajuda { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--cor-texto-suave); }
 .manut-comentario { white-space: pre-line; }
 
 /* Rótulo de cada campo: só para leitor de tela no computador (a coluna já diz o que é); visível no celular. */
@@ -4406,7 +4480,6 @@ textarea.manut-celula-campo { min-height: 3.5rem; padding: 0.5rem 0.15rem; resiz
 
 /* Celular: cada manutenção vira um bloco com rótulo e valor; na edição, o rótulo fica acima do campo. */
 @media (max-width: 760px) {
-  .manut-indicador { flex: 1 1 100%; }
   .manut-tabela { min-width: 0; }
   .manut-tabela thead {
     position: absolute;

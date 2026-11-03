@@ -1429,6 +1429,11 @@ def test_custos_previa_abre_no_mouse_com_lupa_sem_deslocar_a_tabela_e_fecha_com_
     esperar_foto_de_custos(pagina)
     tabela = "document.querySelector('#insumos').getBoundingClientRect().height"
     altura = pagina.js(tabela)
+    pagina.js(
+        "document.querySelector('.custos-tabela-insumos .foto-previa-botao')"
+        ".scrollIntoView({block: 'center', behavior: 'instant'})"
+    )
+    assentar_rolagem(pagina)
     x, y = pagina.js(
         "(() => { const r = document.querySelector('.custos-tabela-insumos .foto-previa-botao')"
         ".getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2] })()"
@@ -1510,6 +1515,11 @@ def test_custos_historico_de_compras_ao_passar_o_mouse_no_custo_unitario(pagina,
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
     altura = pagina.js("document.querySelector('#insumos').getBoundingClientRect().height")
+    pagina.js(
+        "document.querySelector('.custos-hist-gatilho')"
+        ".scrollIntoView({block: 'center', behavior: 'instant'})"
+    )
+    assentar_rolagem(pagina)
     x, y = pagina.js(
         "(() => { const r = document.querySelector('.custos-hist-gatilho').getBoundingClientRect();"
         " return [r.left + r.width / 2, r.top + r.height / 2] })()"
@@ -1534,6 +1544,70 @@ def test_custos_historico_de_compras_ao_passar_o_mouse_no_custo_unitario(pagina,
     nav.esperar(lambda: not janela_de_historico(pagina), tempo=3, mensagem="a janela não fechou")
 
 
+def assentar_rolagem(p):
+    """Espera o evento scroll: ele chega um quadro depois e fecha a prévia e o histórico."""
+    p.js("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))", aguardar=True)
+
+
+@pytest.mark.parametrize("largura", [1200, 1280, 1920])
+@pytest.mark.parametrize("materiais", [("TPU",), ("TPU", "ABS", "Nylon")])
+def test_custos_materiais_adicionais_ficam_na_mesma_linha_redimensionados(
+    pagina, repo_custos, largura, materiais
+):
+    estoque = nav.estoque_de_custos()
+    for material in materiais:
+        estoque.com_filamento(material=material, valor_unitario=Decimal("1234.56"))
+        repo_custos.ajustes[f"filamento:material:{material}"] = Decimal("1234.56")
+    pagina.tela(largura, 900)
+    pagina.abrir("/custos")
+
+    cards = pagina.js(
+        "[...document.querySelectorAll('#filamentos .custos-fil')].map(c => {"
+        " const a = c.getBoundingClientRect();"
+        " return {largura: Math.round(a.width), topo: Math.round(a.top),"
+        " valor: Math.round(c.querySelector('.custos-fil-valor').getBoundingClientRect().top),"
+        " cabe: c.scrollWidth <= c.clientWidth} })"
+    )
+
+    assert len(cards) == 4 + len(materiais), cards
+    for campo in ("largura", "topo", "valor"):
+        assert len({c[campo] for c in cards}) == 1, (campo, cards)
+    assert all(c["cabe"] for c in cards), cards
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+@pytest.mark.parametrize(("largura", "por_linha"), [(360, 1), (768, 2), (1280, 4), (1600, 4)])
+def test_custos_cards_iguais_com_valor_alinhado_e_centralizado(pagina, largura, por_linha):
+    medir = (
+        "[...document.querySelectorAll('#filamentos .custos-fil')]"
+        ".map(c => { const a = c.getBoundingClientRect();"
+        " const v = c.querySelector('.custos-fil-valor');"
+        " const r = document.createRange(); r.selectNodeContents(v);"
+        " const b = r.getBoundingClientRect(); const l = v.getBoundingClientRect();"
+        " return {largura: Math.round(a.width), topo: Math.round(a.top),"
+        " altura: Math.round(a.height), valor: Math.round(l.top),"
+        " nome: Math.round(c.querySelector('.custos-fil-topo').getBoundingClientRect().top),"
+        " dx: Math.abs((a.left + a.right - b.left - b.right) / 2)} })"
+    )
+    pagina.tela(largura, 900)
+    pagina.abrir("/custos")
+    cards = pagina.js(medir)
+
+    assert len(cards) == 4 and len({c["largura"] for c in cards}) == 1, cards  # com a perda
+    assert all(c["dx"] <= 1 for c in cards), cards
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+    for linha in {c["topo"] for c in cards}:
+        mesma = [c for c in cards if c["topo"] == linha]
+        assert len(mesma) <= por_linha
+        for campo in ("altura", "valor", "nome"):
+            assert len({c[campo] for c in mesma}) == 1, (campo, mesma)
+
+    pagina.js("document.querySelector('#perdas details').open = true")
+    # O valor não sai do lugar dentro do card.
+    for depois, antes in zip(pagina.js(medir), cards, strict=True):
+        assert abs((depois["valor"] - depois["topo"]) - (antes["valor"] - antes["topo"])) <= 1
+
+
 @pytest.mark.parametrize("largura", [360, 768, 1280])
 def test_custos_historico_por_toque_ou_teclado_cabe_na_tela_e_fecha_com_esc(
     pagina, com_historico, largura
@@ -1553,6 +1627,7 @@ def test_custos_historico_por_toque_ou_teclado_cabe_na_tela_e_fecha_com_esc(
     assert not janela_de_historico(pagina)
     assert pagina.js("document.activeElement.className") == "custos-hist-gatilho"
 
+    assentar_rolagem(pagina)  # o Esc devolve o foco ao botão, o que pode rolar a página
     pagina.clicar(".custos-hist-gatilho")  # alterna: abre e, ao tocar de novo, fecha
     assert janela_de_historico(pagina)
     pagina.clicar(".custos-hist-gatilho")

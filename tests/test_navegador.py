@@ -208,8 +208,14 @@ def pagina(servidor, tmp_path_factory):
     porta = None
     try:
         arquivo_porta = perfil / "DevToolsActivePort"
-        esperar(arquivo_porta.exists, mensagem="navegador não abriu a porta de depuração")
-        porta = esperar(lambda: arquivo_porta.read_text().split("\n")[0].strip())
+
+        def ler_porta():
+            try:
+                return arquivo_porta.read_text().split("\n")[0].strip()
+            except (FileNotFoundError, PermissionError):  # o navegador ainda está escrevendo
+                return ""
+
+        porta = esperar(ler_porta, mensagem="navegador não abriu a porta de depuração")
         with urllib.request.urlopen(f"http://127.0.0.1:{porta}/json/list") as r:
             aba = next(t for t in json.load(r) if t["type"] == "page")
         p = Pagina(aba["webSocketDebuggerUrl"], servidor)
@@ -2199,8 +2205,8 @@ def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos
     assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")  # valor principal
     assert "Manual · provisório" in texto_completo(pagina, "#energia")
     assert "Calculado (referência) ≈ R$ 0,2732/h" in texto_completo(pagina, "#depreciacao")
-    resumo = custos_texto(pagina, "#resumo")
-    assert "Subtotal parcial da máquina R$ 0,41/h" in resumo and "A definir" in resumo
+    uso = custos_texto(pagina, "#uso-maquina")
+    assert "Uso da Impressora R$ 0,41/h" in uso and "Valor parcial" in uso
     assert "Data-base 01/11/2026" in custos_texto(pagina, "#horas")
 
     # Formulário comum (sem JavaScript): o lápis edita no lugar, mas a página funciona sem ele.
@@ -2246,7 +2252,7 @@ def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos
     salvar_custo(pagina, "#insumo-1 form")
     assert pagina.texto(".alerta-sucesso").startswith("Ajuste manual do insumo salvo")
     assert "R$ 110,00/kg" in custos_texto(pagina, "#insumo-1")
-    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("110")}
+    assert repo_custos.ajustes == {"filamento:pla": Decimal("110")}
 
     # Manutenção: período de referência aqui; os gastos vêm das manutenções registradas na tela
     # Manutenção (R$ 120 / 240 h = R$ 0,50/h).
@@ -2263,7 +2269,7 @@ def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos
     manutencao = texto_completo(pagina, "#manutencao")
     assert "Calculado (referência) R$ 0,50/h" in manutencao
     assert "R$ 120,00 (1 manutenção)" in manutencao
-    assert "Subtotal da máquina" in custos_texto(pagina, "#resumo")
+    assert "Valor parcial" not in custos_texto(pagina, "#uso-maquina")
 
 
 def card_filamento(p, seletor="#insumo-1"):
@@ -2335,7 +2341,7 @@ def test_custos_filamento_edita_no_lugar_sem_recarregar(pagina, servidor, repo_c
     botao = "document.querySelector('#insumo-1 .custos-fil-ok')"
     pagina.js(f"(() => {{ const b = {botao}; b.click(); b.click() }})()")
     esperar(lambda: "R$ 130,00/kg" in card_filamento(pagina))
-    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("130.00")}
+    assert repo_custos.ajustes == {"filamento:pla": Decimal("130.00")}
     assert len(repo_custos.gravacoes) == 1 and repo_custos.gravacoes[0][3] == 1
     assert pagina.js("window.__marca") == "mesma-pagina" and pagina.js("location.search") == ""
     assert pagina.js("!!document.querySelector('#insumo-1 .custos-fil-edicao')") is False
@@ -2347,7 +2353,7 @@ def test_custos_filamento_mascara_monetaria_brasileira(pagina, servidor, repo_cu
     from decimal import Decimal
 
     estoque_de_custos()
-    repo_custos.ajustes["filamento:pla-solido"] = Decimal("120")
+    repo_custos.ajustes["filamento:pla"] = Decimal("120")
     repo_custos.ajustes["filamento:petg"] = Decimal("12.3456")  # 4 casas salvas
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
@@ -2390,7 +2396,7 @@ def test_custos_filamento_mascara_monetaria_brasileira(pagina, servidor, repo_cu
     colar(pagina, "#insumo-1-inline", "R$ 1.234,56")
     tecla(pagina, "Enter", "Enter", 13, "\r")
     esperar(lambda: "R$ 1.234,56/kg" in card_filamento(pagina))
-    assert repo_custos.ajustes["filamento:pla-solido"] == Decimal("1234.56")
+    assert repo_custos.ajustes["filamento:pla"] == Decimal("1234.56")
 
     # Valor salvo com 4 casas: a máscara usa as 4 e salvar sem mexer não altera nada.
     pagina.clicar("#insumo-0 .custos-lapis")
@@ -2404,21 +2410,21 @@ def test_custos_filamento_sem_botao_remover(pagina, servidor, repo_custos):
     from decimal import Decimal
 
     estoque_de_custos()
-    repo_custos.ajustes["filamento:pla-solido"] = Decimal("120")
+    repo_custos.ajustes["filamento:pla"] = Decimal("120")
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
 
     assert "R$ 120,00/kg" in card_filamento(pagina)
     assert pagina.js("document.querySelectorAll('#filamentos form').length") == 0
     assert "Remover" not in custos_texto(pagina, "#filamentos")
-    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("120")}  # valor preservado
+    assert repo_custos.ajustes == {"filamento:pla": Decimal("120")}  # valor preservado
 
 
 def test_custos_filamento_comparacao_com_cores_e_texto(pagina, servidor, repo_custos):
     from decimal import Decimal
 
     estoque_de_custos()  # PLA Sólido a R$ 100/kg
-    repo_custos.ajustes["filamento:pla-solido"] = Decimal("90")
+    repo_custos.ajustes["filamento:pla"] = Decimal("90")
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
     cor = "getComputedStyle(document.querySelector('#insumo-1 .custos-fil-valor')).color"
@@ -2467,7 +2473,7 @@ def test_custos_filamento_gravou_mas_card_falhou_nao_diz_que_nao_salvou(
     pagina.digitar("#insumo-1-inline", "13000")
     tecla(pagina, "Enter", "Enter", 13, "\r")
     esperar(lambda: "Valor salvo" in card_filamento(pagina))
-    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("130.00")}
+    assert repo_custos.ajustes == {"filamento:pla": Decimal("130.00")}
     assert "Não foi possível salvar" not in card_filamento(pagina)
     assert "R$ 130,00" in card_filamento(pagina)
     assert pagina.js("document.querySelectorAll('#insumo-1 .campo-erro').length") == 0
@@ -2480,7 +2486,7 @@ def test_custos_filamento_gravou_mas_card_falhou_nao_diz_que_nao_salvou(
     preencher(pagina, "#insumo-1-inline", "9000")
     tecla(pagina, "Enter", "Enter", 13, "\r")
     esperar(lambda: "R$ 90,00/kg" in card_filamento(pagina))
-    assert repo_custos.ajustes == {"filamento:pla-solido": Decimal("90.00")}
+    assert repo_custos.ajustes == {"filamento:pla": Decimal("90.00")}
     assert "Valor salvo" not in card_filamento(pagina)  # card refeito pelo servidor
     assert pagina.js("window.__marca") == "mesma-pagina"
 
@@ -2664,7 +2670,7 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
         "/custos",
         "/custos?editar=insumo-0",
         "/custos?editar=insumo-1",
-        "/custos?editar=insumo-3",
+        "/custos?editar=insumo-2",
         "/custos?editar=valores-energia",
         "/custos?editar=valores-energia-ajuste",
         "/custos?editar=valores-perdas",
@@ -2696,7 +2702,8 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
             "[...document.querySelectorAll('main h2')].map(h => h.textContent.trim())"
         )
         assert titulos == [
-            "Custos diretos",
+            "Filamento",
+            "Outros Custos",
             "Custos indiretos",
             "Despesas fixas e metas gerenciais",
         ], contexto
@@ -2707,7 +2714,7 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
             ".map(a => [a.title, a.getAttribute('aria-label').startsWith('Editar '),"
             " a.getBoundingClientRect().width >= 44])"
         )
-        assert len(lapis) >= 13 and all(item == ["Editar", True, True] for item in lapis), contexto
+        assert len(lapis) >= 11 and all(item == ["Editar", True, True] for item in lapis), contexto
         # Com todos os "Ver detalhes" abertos, nada corta nem estoura a largura.
         pagina.js("document.querySelectorAll('main details').forEach(d => { d.open = true })")
         assert pagina.js("document.documentElement.scrollWidth") <= largura, contexto

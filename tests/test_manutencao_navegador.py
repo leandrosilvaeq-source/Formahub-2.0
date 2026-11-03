@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.custos_repositorio import GastoManutencao, PeriodoManutencao
 from app.manutencao_repositorio import FalhaAoSalvarManutencao, Manutencao
 from tests import test_navegador as nav
 
@@ -45,6 +46,88 @@ def abrir(p, repo, *registros, largura=1280):
 
 def texto(p, seletor):
     return nav.custos_texto(p, seletor)
+
+
+@pytest.mark.parametrize("largura", [1280, 1600])
+def test_cards_titulos_e_valores_alinhados_na_horizontal(pagina, largura):
+    pagina.tela(largura, 900)
+    pagina.abrir("/manutencao")  # sem período: o card do custo por hora é o mais alto
+
+    for seletor in (".manut-indicador", ".manut-indicador-rotulo", ".manut-indicador-valor"):
+        topos = pagina.js(
+            f"[...document.querySelectorAll('{seletor}')]"
+            ".map(e => Math.round(e.getBoundingClientRect().top))"
+        )
+        assert len(topos) == 4 and len(set(topos)) == 1, (seletor, topos)
+
+
+@pytest.mark.parametrize("largura", [360, 1280])
+def test_valor_no_centro_do_card_e_fonte_maior(pagina, repo_custos, largura):
+    repo_custos.periodo = PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal("902.4"))
+    repo_custos.gastos = [GastoManutencao(1, date(2026, 10, 29), "Peça", Decimal("107.62"))]
+    pagina.tela(largura, 900)
+    pagina.abrir("/manutencao")
+
+    desvios = pagina.js(
+        "[...document.querySelectorAll('.manut-indicador')].map(c => {"
+        " const a = c.getBoundingClientRect();"
+        " const v = c.querySelector('.manut-indicador-valor');"
+        " const faixa = document.createRange(); faixa.selectNodeContents(v);"
+        " const b = faixa.getBoundingClientRect();"
+        " const linha = v.getBoundingClientRect();"
+        " return [Math.abs((a.left + a.right - b.left - b.right) / 2),"
+        " Math.abs((a.top + a.bottom - linha.top - linha.bottom) / 2)] })"
+    )
+    assert all(x <= 1 and y <= 1 for x, y in desvios), desvios
+    assert pagina.js(
+        "['.manut-indicador-rotulo', '.manut-indicador-valor']"
+        ".map(s => getComputedStyle(document.querySelector(s)).fontSize)"
+    ) == ["16px", "30px"]
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+
+@pytest.mark.parametrize(("largura", "por_linha"), [(360, 1), (768, 2), (1280, 4), (1600, 4)])
+def test_cards_com_a_mesma_largura_e_altura(pagina, repo_custos, largura, por_linha):
+    tamanhos = (
+        "[...document.querySelectorAll('.manut-indicador')].map(e => {"
+        " const r = e.getBoundingClientRect();"
+        " return [Math.round(r.width), Math.round(r.height), Math.round(r.top)] })"
+    )
+    pagina.tela(largura, 900)
+    pagina.abrir("/manutencao")  # sem período: o conteúdo do último card é o mais longo
+    medidas = pagina.js(tamanhos)
+
+    assert len({m[0] for m in medidas}) == 1 and len({m[1] for m in medidas}) == 1, medidas
+    assert len({m[2] for m in medidas}) == 4 // por_linha, medidas
+    assert pagina.js("document.documentElement.scrollWidth") <= largura
+
+    pagina.js("document.querySelector('#manut-custo-hora details').open = true")
+    medidas = pagina.js(tamanhos)
+    assert len({m[0] for m in medidas}) == 1 and len({m[1] for m in medidas}) == 1, medidas
+
+
+def test_abrir_detalhes_nao_dobra_a_altura_dos_cards(pagina, repo_custos):
+    repo_custos.periodo = PeriodoManutencao(date(2026, 8, 3), date(2026, 11, 1), Decimal("902.4"))
+    repo_custos.gastos = [GastoManutencao(1, date(2026, 10, 29), "Peça", Decimal("107.62"))]
+    pagina.tela(1280, 900)
+    pagina.abrir("/manutencao")
+    valores = (
+        "[...document.querySelectorAll('.manut-indicador-valor')]"
+        ".map(e => Math.round(e.getBoundingClientRect().top))"
+    )
+    antes = pagina.js(valores)
+
+    pagina.js("document.querySelector('#manut-custo-hora details').open = true")
+
+    assert pagina.js(valores) == antes  # os valores não saem do lugar
+
+
+def test_alerta_de_lubrificacao_na_pagina_inicial_cabe_no_celular(pagina):
+    pagina.tela(360, 800)
+    pagina.abrir("/")
+
+    assert pagina.js("!!document.querySelector('#manut-alerta-lubrificacao a')")
+    assert pagina.js("document.documentElement.scrollWidth") <= 360
 
 
 def existe(p, seletor):
@@ -138,7 +221,7 @@ def test_registrar_manutencao_cria_linha_editavel_e_salva_sem_recarregar(
     assert "Bico, correia GT2" in linha and "R$ 62,50" in linha
     assert "Manutenção salva." in pagina.texto("#manut-mensagem")
     indicadores = texto(pagina, "#manut-indicadores")
-    assert "Número de manutenções 1" in indicadores and "Horas paradas 26h30min" in indicadores
+    assert "Manutenções 1" in indicadores and "Horas paradas 26h30min" in indicadores
     assert "R$ 62,50" in indicadores and "subtotal conhecido" not in indicadores
     assert pagina.js("document.activeElement.className").startswith("custos-lapis")
 
@@ -563,6 +646,31 @@ def test_sessao_expirada_guarda_o_preenchimento_para_depois_do_login(
 
 
 # ---------- Custos: cards de Depreciação e Manutenção ----------
+
+
+def test_uso_de_maquina_acompanha_a_edicao_e_abre_os_detalhes(pagina, servidor, repo_custos):
+    nav.estoque_de_custos()
+    repo_custos.parametros["manutencao_hora"] = Decimal("0.12")
+    pagina.tela(1280, 900)
+    pagina.abrir("/custos")
+    pagina.js("window.__marca = 'mesma-pagina'")
+    assert "R$ 0,53" in texto(pagina, "#uso-maquina")
+    assert not pagina.js("document.querySelector('#uso-maquina details').open")
+    assert "Depreciação gerencial" not in texto(pagina, "#uso-maquina")  # só em "Ver detalhes"
+
+    pagina.clicar("#uso-maquina summary")
+    assert "Depreciação gerencial R$ 0,27/h" in texto(pagina, "#uso-maquina")
+
+    pagina.clicar("#depreciacao .custos-lapis")
+    pagina.digitar("#depreciacao-inline", "30")
+    enter(pagina)
+
+    esperar(lambda: "R$ 0,56" in texto(pagina, "#uso-maquina"))
+    assert "Depreciação gerencial R$ 0,30/h" in texto(pagina, "#uso-maquina")  # segue aberto
+    assert pagina.js("window.__marca") == "mesma-pagina"
+
+    pagina.js("document.querySelector('#depreciacao .custos-voltar-valor button').click()")
+    esperar(lambda: "≈ R$ 0,2732/h" in nav.texto_completo(pagina, "#uso-maquina"))
 
 
 def test_custos_indiretos_editam_no_lugar_e_voltam_ao_calculado(pagina, servidor, repo_custos):
