@@ -22,6 +22,8 @@ from app.core.config import ConfigError, get_supabase_admin_client
 
 BUCKET_IMAGENS = "compra-imagens"
 VALIDADE_URL_IMAGEM_SEGUNDOS = 600  # URL assinada da foto vale 10 minutos
+# Banco ainda sem a migration 20261022120000_filamento_multicolor: tipos antigos viram Multicolor.
+TIPOS_ANTIGOS = {"bicolor": "multicolor", "tricolor": "multicolor"}
 
 logger = logging.getLogger("formahub.estoque")
 
@@ -58,7 +60,7 @@ class Filamento:
     id: int
     cor: str
     material: str
-    tipo: str  # código: solido, velvet, silk, bicolor ou tricolor
+    tipo: str  # código: solido, velvet, silk ou multicolor
     marca: str
     peso_g: Decimal  # peso disponível
     data_compra: date
@@ -235,7 +237,7 @@ class RepositorioEstoqueSupabase:
                         id=f["id"],
                         cor=f["cor"],
                         material=f["material"],
-                        tipo=f["tipo"],
+                        tipo=TIPOS_ANTIGOS.get(f["tipo"], f["tipo"]),
                         marca=f["marca"],
                         peso_g=Decimal(f["peso_disponivel_g"]),
                         data_compra=date.fromisoformat(f["data_compra"]),
@@ -288,7 +290,7 @@ class RepositorioEstoqueSupabase:
                                 quantidade=i["quantidade"],
                                 cor=i["cor"],
                                 material=i["material"],
-                                tipo=i["tipo"],
+                                tipo=TIPOS_ANTIGOS.get(i["tipo"], i["tipo"]),
                                 marca=i["marca"],
                                 peso_rolo_g=(
                                     None if i["peso_rolo_g"] is None else Decimal(i["peso_rolo_g"])

@@ -20,8 +20,7 @@ TIPOS_FILAMENTO = {
     "solido": "Sólido",
     "velvet": "Velvet",
     "silk": "Silk",
-    "bicolor": "Bicolor",
-    "tricolor": "Tricolor",
+    "multicolor": "Multicolor",
 }
 
 
@@ -275,6 +274,11 @@ def peso_total(lotes: list[Filamento]) -> Decimal:
     return sum((f.peso_g for f in lotes), Decimal("0"))
 
 
+def rolos_total(lotes: list[Filamento]) -> Decimal:
+    """Saldo em rolos: cada lote pelo seu peso de rolo (os pesos podem ser diferentes)."""
+    return sum((f.peso_g / f.peso_rolo_g for f in lotes), Decimal("0"))
+
+
 def unidades_total(lotes: list[ItemEstoque]) -> int:
     return sum(i.quantidade for i in lotes)
 
@@ -290,13 +294,11 @@ def _chave(texto: str) -> str:
 
 @dataclass(frozen=True)
 class GrupoFilamento:
-    """Lotes com o mesmo material, cor, tipo e peso por rolo."""
+    """Lotes com o mesmo material, cor e tipo, de qualquer marca ou peso por rolo."""
 
     material: str
     cor: str
     tipo: str
-    peso_rolo_g: Decimal
-    peso_g: Decimal  # saldo disponível (não o comprado)
     rolos: Decimal  # saldo disponível em rolos (peso disponível / peso do rolo)
     custo_kg: Decimal | None
     imagem_caminho: str | None
@@ -324,21 +326,19 @@ def _foto(lotes: list) -> str | None:
 
 
 def agrupar_filamentos(lotes: list[Filamento]) -> list[GrupoFilamento]:
-    grupos = _agrupar(lotes, lambda f: (_chave(f.material), _chave(f.cor), f.tipo, f.peso_rolo_g))
+    grupos = _agrupar(lotes, lambda f: (_chave(f.material), _chave(f.cor), f.tipo))
     resultado = [
         GrupoFilamento(
             material=g[0].material,
             cor=g[0].cor,
             tipo=g[0].tipo,
-            peso_rolo_g=g[0].peso_rolo_g,
-            peso_g=peso_total(g),
-            rolos=peso_total(g) / g[0].peso_rolo_g,
+            rolos=rolos_total(g),
             custo_kg=custo_medio_kg_lotes(g),
             imagem_caminho=_foto(g),
         )
         for g in grupos
     ]
-    return sorted(resultado, key=lambda g: (_sem_acento(g.material), _sem_acento(g.cor), g.tipo))
+    return sorted(resultado, key=lambda g: (_chave(g.material), _chave(g.cor), g.tipo))
 
 
 def agrupar_itens(lotes: list[ItemEstoque]) -> list[GrupoItem]:

@@ -321,6 +321,10 @@ begin
                                                 v_kassia) then
     raise exception 'edição do filamento errada: %', row_to_json(v_linha);
   end if;
+  perform public.editar_estoque_filamento(v_f1, 'Preto Fosco', 'PLA', 'multicolor', 'Marca Teste',
+                                          v_kassia);
+  perform public.editar_estoque_filamento(v_f1, 'Preto Fosco', 'PLA', 'velvet', 'Marca Teste',
+                                          v_kassia);
 
   -- ---------- Frete da compra (guardado na compra; não muda os lotes) ----------
   if (select frete from public.compras where id = v_c1) <> 0 then
@@ -438,6 +442,9 @@ begin
       ('valor unitário negativo', 'shopee', null,
        pg_temp.filamento(1, '{"valor_unitario": "-1"}'), '23514'),
       ('tipo fora da lista', 'shopee', null, pg_temp.filamento(1, '{"tipo": "Sólido"}'), '23514'),
+      ('tipo antigo bicolor', 'shopee', null, pg_temp.filamento(1, '{"tipo": "bicolor"}'), '23514'),
+      ('tipo antigo tricolor', 'shopee', null, pg_temp.filamento(1, '{"tipo": "tricolor"}'),
+       '23514'),
       ('filamento sem marca', 'shopee', null, pg_temp.filamento(1, '{"marca": null}'), '23514'),
       ('filamento com nome', 'shopee', null, pg_temp.filamento(1, '{"nome": "X"}'), '23514'),
       ('rolos demais', 'shopee', null, pg_temp.filamento(1, '{"quantidade": 10000}'), '23514'),

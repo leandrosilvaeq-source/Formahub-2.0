@@ -47,12 +47,7 @@ LIMITE_HORAS_PERIODO = Decimal(999_999)  # exclusivo no banco: horas < 1.000.000
 GRUPOS_CUSTO_KG = (
     ("filamento:petg", "PETG", "PETG", None),  # None = todos os tipos
     ("filamento:pla", "PLA (Sólido, Velvet, Silk)", "PLA", ("solido", "velvet", "silk")),
-    (
-        "filamento:pla-multicolor",
-        "PLA Multicolor (Bicolor, Tricolor)",
-        "PLA",
-        ("bicolor", "tricolor"),
-    ),
+    ("filamento:pla-multicolor", "PLA Multicolor", "PLA", ("multicolor",)),
 )
 
 
@@ -61,7 +56,7 @@ CHAVE_PLA = "filamento:pla"
 GRUPOS_FILAMENTO = (
     ("filamento:petg", "PETG", "PETG", None),
     (CHAVE_PLA, "PLA", "PLA", ("solido", "velvet", "silk")),
-    ("filamento:pla-multicolor", "PLA Multicolor", "PLA", ("bicolor", "tricolor")),
+    ("filamento:pla-multicolor", "PLA Multicolor", "PLA", ("multicolor",)),
 )
 # O custo de cada tipo do card PLA, mostrado em "Ver detalhes".
 TIPOS_DO_PLA = (

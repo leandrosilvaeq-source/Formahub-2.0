@@ -22,7 +22,7 @@ def estoque_com_compras():
         peso_comprado_g=Decimal("1000"),
         valor_unitario=Decimal("130"),
     )
-    repo.com_filamento(tipo="bicolor", valor_unitario=Decimal("125"))
+    repo.com_filamento(tipo="multicolor", valor_unitario=Decimal("125"))
     repo.com_filamento(material="TPU", valor_unitario=Decimal("999"))  # sem grupo
     return repo
 

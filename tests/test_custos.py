@@ -244,8 +244,8 @@ def test_pla_reune_solido_velvet_e_silk_sem_misturar_multicolor():
         lote(tipo="solido", peso_comprado_g=Decimal("2000"), valor_unitario=Decimal("90")),
         lote(tipo="velvet", valor_unitario=Decimal("100")),
         lote(tipo="silk", valor_unitario=Decimal("130")),
-        lote(tipo="bicolor", valor_unitario=Decimal("140")),
-        lote(tipo="tricolor", valor_unitario=Decimal("160")),
+        lote(tipo="multicolor", valor_unitario=Decimal("140")),
+        lote(tipo="multicolor", valor_unitario=Decimal("160")),
         lote(material="PETG", tipo="silk", valor_unitario=Decimal("70")),
     ]
 
@@ -254,7 +254,7 @@ def test_pla_reune_solido_velvet_e_silk_sem_misturar_multicolor():
     assert {titulo: i.calculado for titulo, i in insumos.items()} == {
         "PETG": Decimal("70"),  # PETG reúne todos os tipos
         "PLA": Decimal("102.5"),  # ponderado pelo peso: (2 x 90 + 100 + 130) / 4
-        "PLA Multicolor": Decimal("150"),  # bicolor + tricolor (pesos iguais)
+        "PLA Multicolor": Decimal("150"),  # os dois lotes multicolor (pesos iguais)
     }
     assert insumos["PLA"].por_tipo == (
         ("PLA Sólido", Decimal("90")),
@@ -672,7 +672,7 @@ def test_filamento_mostra_calculado_por_kg_e_por_grama_nos_detalhes(estoque):
 
 def test_valor_principal_e_so_o_manual_sem_manual_fica_a_definir(estoque, repo_custos):
     estoque.com_filamento(tipo="solido", valor_unitario=Decimal("90"))
-    estoque.com_filamento(tipo="bicolor", valor_unitario=Decimal("130"))
+    estoque.com_filamento(tipo="multicolor", valor_unitario=Decimal("130"))
     repo_custos.ajustes["filamento:pla"] = Decimal("95")
     html = pagina().text
 

@@ -210,6 +210,18 @@ def com_compras(estoque):
 
 
 @pytest.mark.parametrize("largura", LARGURAS)
+def test_estoque_usa_a_largura_das_telas_de_tabela_sem_rolagem(pagina, estoque, largura):
+    estoque.com_filamento(cor="Azul", marca="Marca A")
+    estoque.com_filamento(cor="Azul", marca="Marca B")
+    pagina.tela(largura, 900)
+    pagina.abrir("/estoque")
+
+    assert sem_rolagem_horizontal(pagina)
+    assert pagina.js("document.querySelectorAll('.estoque-tabela tbody tr').length") == 1
+    assert pagina.js("getComputedStyle(document.querySelector('main')).maxWidth") == "1600px"
+
+
+@pytest.mark.parametrize("largura", LARGURAS)
 def test_compras_sem_rolagem_horizontal_nem_cortes(pagina, com_compras, largura):
     pagina.tela(largura, 900)
     pagina.abrir("/compras")
