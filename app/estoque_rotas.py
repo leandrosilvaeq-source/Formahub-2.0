@@ -42,6 +42,7 @@ from app.estoque import (
     ler_filamento,
     ler_item,
     peso_total,
+    rolos_total,
     validar_filamento,
     validar_item,
 )
@@ -154,8 +155,8 @@ def estoque(
         grupos = agrupar_filamentos(lotes.filamentos)
         contexto["cards"] = {
             "peso_total": peso_total(lotes.filamentos),
-            "rolos_total": sum((g.rolos for g in grupos), Decimal(0)),
-            "rolos_por_material": _rolos_por_material(grupos),
+            "rolos_total": rolos_total(lotes.filamentos),
+            "rolos_por_material": _rolos_por_material(lotes.filamentos),
             "medias": _medias(lotes.filamentos, _custos_de_referencia(repo_custos)),
         }
     else:
@@ -184,18 +185,13 @@ def _custos_de_referencia(repo: RepositorioCustos | None) -> dict[str, Decimal]:
     }
 
 
-def _rolos_por_material(grupos) -> list[tuple[str, Decimal]]:
+def _rolos_por_material(filamentos) -> list[tuple[str, Decimal]]:
     """Rolos disponíveis de PLA, PETG e PLA Multicolor (mesmos grupos de Custos); sem os zerados."""
     ordem = {"PLA": 0, "PETG": 1, "PLA Multicolor": 2}
     resultado = []
     for _chave, titulo, material, tipos in GRUPOS_CUSTO_KG:
-        rolos = sum(
-            (
-                g.rolos
-                for g in grupos
-                if g.material == material and (tipos is None or g.tipo in tipos)
-            ),
-            Decimal(0),
+        rolos = rolos_total(
+            [f for f in filamentos if f.material == material and (tipos is None or f.tipo in tipos)]
         )
         if rolos:
             resultado.append((titulo.split(" (")[0], rolos))

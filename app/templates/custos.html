@@ -116,7 +116,7 @@
 <section class="secao custos-secao" id="filamentos" aria-labelledby="titulo-filamentos">
   {{ cabecalho("titulo-filamentos", "Filamentos", "Custo direto · variável", "R$/kg e R$/g",
        etiquetas=False, titulo_visivel=False,
-       criterio="o valor principal de cada card é o custo/kg definido por você; sem valor definido, fica “A definir” (nunca se usa o calculado em silêncio). O calculado é a média ponderada pelo peso líquido comprado (rolos × peso do rolo), nunca média simples, e não muda com o valor definido. PETG reúne todos os tipos; o PLA reúne Sólido, Velvet e Silk, com o custo de cada um em “Ver detalhes”; o PLA Multicolor (Bicolor/Duocolor e Tricolor) fica à parte; outros materiais cadastrados, como TPU, ganham o seu card. O frete fica na compra. A energia elétrica fica em Outros custos diretos.") }}
+       criterio="o valor principal de cada card é o custo/kg definido por você; sem valor definido, fica “A definir” (nunca se usa o calculado em silêncio). O calculado é a média ponderada pelo peso líquido comprado (rolos × peso do rolo), nunca média simples, e não muda com o valor definido. PETG reúne todos os tipos; o PLA reúne Sólido, Velvet e Silk, com o custo de cada um em “Ver detalhes”; o PLA Multicolor fica à parte; outros materiais cadastrados, como TPU, ganham o seu card. O frete fica na compra. A energia elétrica fica em Outros custos diretos.") }}
   {% if insumos is none %}
   <p class="custos-aviso" role="status">{{ msg_estoque }}</p>
   {% endif %}

@@ -5,11 +5,12 @@ Repositório falso em memória; nenhum teste acessa o Supabase.
 
 import re
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.estoque_repositorio import get_repositorio_estoque
+from app.estoque_repositorio import RepositorioEstoqueSupabase, get_repositorio_estoque
 from app.main import app
 from tests.fake_estoque import RepositorioEstoqueMemoria
 from tests.test_estoque_compra import PNG, compra, enviar, filamento, item
@@ -61,9 +62,8 @@ def test_inicia_em_filamento_e_mostra_so_a_categoria_escolhida(estoque):
     assert html.count('aria-current="true"') == 1
     assert "Custo médio por kg" in html and "Custo médio por unidade" not in html
     assert len(linhas(html)) == 1
-    assert linhas(html)[0].endswith(
-        "2 rolos | PLA | Preto | Silk | 2.000 g (rolo de 1.000 g) | R$ 100,00"
-    )
+    assert linhas(html)[0].endswith("PLA | Preto | Silk | 2 rolos | R$ 100,00")
+    assert "Peso (g)" not in html
 
     acessorios = client.get("/estoque?categoria=acessorios").text
     assert [t.split(" | ", 1)[1] for t in linhas(acessorios)] == ["Argola | 10 un | R$ 2,00"]
@@ -90,30 +90,73 @@ def test_foto_privada_vem_da_compra_com_url_assinada(estoque):
     assert "Sem foto" in client.get("/estoque?categoria=acessorios").text
 
 
-def test_agrupa_lotes_iguais_sem_misturar_cor_tipo_material_ou_peso_do_rolo(estoque):
-    estoque.com_filamento(cor="Preto", peso_g=Decimal("1000"), valor_unitario=Decimal("100"))
-    estoque.com_filamento(cor=" preto ", peso_g=Decimal("500"), valor_unitario=Decimal("70"))
-    estoque.com_filamento(cor="Preto", tipo="silk")
+def test_agrupa_por_material_cor_e_tipo_de_qualquer_marca(estoque):
+    estoque.com_filamento(cor="Preto", peso_g=Decimal("1000"), marca="Marca A")
+    estoque.com_filamento(cor=" preto ", peso_g=Decimal("500"), marca="Marca B")
+    estoque.com_filamento(cor="Preto", peso_g=Decimal("1000"), tipo="velvet")
     estoque.com_filamento(cor="Preto", material="PETG")
-    estoque.com_filamento(cor="Preto", peso_rolo_g=Decimal("500"), peso_g=Decimal("500"))
     estoque.com_filamento(cor="Branco")
 
     tabela = linhas(client.get("/estoque").text)
 
-    assert len(tabela) == 5
-    assert (
-        sum("pla | preto | sólido" in t.lower() for t in tabela) == 2
-    )  # rolos de 1000 g e de 500 g
-    assert any("1,5 rolos | PLA | preto | Sólido | 1.500 g (rolo de 1.000 g)" in t for t in tabela)
+    assert [t.split(" | ", 1)[1].rsplit(" | ", 1)[0] for t in tabela] == [
+        "PETG | Preto | Sólido | 1 rolo",
+        "PLA | Branco | Sólido | 1 rolo",
+        "PLA | preto | Sólido | 1,5 rolos",  # a grafia vem do lote mais recente
+        "PLA | Preto | Velvet | 1 rolo",
+    ]
+
+
+def test_pesos_de_rolo_diferentes_somam_rolos_de_cada_lote(estoque):
+    estoque.com_filamento(cor="Azul", peso_g=Decimal("1000"), peso_rolo_g=Decimal("1000"))
+    estoque.com_filamento(cor="Azul", peso_g=Decimal("500"), peso_rolo_g=Decimal("500"))
+
+    tabela = linhas(client.get("/estoque").text)
+
+    assert len(tabela) == 1 and "PLA | Azul | Sólido | 2 rolos |" in tabela[0]
+
+
+def test_multicolor_tem_linha_e_card_proprios(estoque):
+    estoque.com_filamento(cor="Azul", tipo="solido", peso_g=Decimal("1000"))
+    estoque.com_filamento(cor="Azul", tipo="multicolor", peso_g=Decimal("2000"))
+
+    html = client.get("/estoque").text
+
+    assert any("PLA | Azul | Multicolor | 2 rolos" in t for t in linhas(html))
+    assert "PLA: 1 · PLA Multicolor: 2</p>" in card(html, "Rolos disponíveis")
+
+
+def test_banco_sem_a_migration_mostra_tipos_antigos_como_multicolor():
+    class Cliente:
+        def rpc(self, _funcao, _parametros):
+            return SimpleNamespace(execute=lambda: SimpleNamespace(data=dados))
+
+    lote = {
+        "id": 1,
+        "cor": "Duo",
+        "material": "PLA",
+        "marca": "M",
+        "peso_disponivel_g": "1000",
+        "data_compra": "2026-09-01",
+        "peso_rolo_g": "1000",
+        "valor_unitario": "100",
+        "peso_comprado_g": "1000",
+    }
+    dados = {
+        "itens": [],
+        "filamentos": [{**lote, "tipo": t} for t in ("bicolor", "tricolor", "silk")],
+    }
+
+    filamentos = RepositorioEstoqueSupabase(Cliente()).listar_estoque().filamentos
+
+    assert [f.tipo for f in filamentos] == ["multicolor", "multicolor", "silk"]
 
 
 def test_saldo_disponivel_nao_se_confunde_com_peso_comprado(estoque):
     estoque.com_filamento(peso_g=Decimal("250"), peso_comprado_g=Decimal("1000"))
 
     html = client.get("/estoque").text
-    assert linhas(html)[0].endswith(
-        "0,25 rolo | PLA | Preto | Sólido | 250 g (rolo de 1.000 g) | R$ 100,00"
-    )
+    assert linhas(html)[0].endswith("PLA | Preto | Sólido | 0,25 rolo | R$ 100,00")
     assert VALOR_DO_CARD.format("250 g") in html  # peso total disponível
 
 
@@ -133,8 +176,8 @@ def test_media_de_filamento_ponderada_pelo_peso(estoque):
 
 def test_cards_agrupam_multicolor_e_petg_e_tpu_so_entra_no_peso(estoque):
     estoque.com_filamento(tipo="silk", valor_unitario=Decimal("100"))
-    estoque.com_filamento(tipo="bicolor", valor_unitario=Decimal("200"))
-    estoque.com_filamento(tipo="tricolor", valor_unitario=Decimal("400"))
+    estoque.com_filamento(tipo="multicolor", valor_unitario=Decimal("200"))
+    estoque.com_filamento(tipo="multicolor", valor_unitario=Decimal("400"))
     estoque.com_filamento(material="PETG", valor_unitario=Decimal("90"))
     estoque.com_filamento(material="TPU", peso_g=Decimal("500"), valor_unitario=Decimal("500"))
 
@@ -208,7 +251,7 @@ def test_card_fica_vermelho_com_alerta_quando_a_media_passa_do_valor_de_custos(
         "filamento:petg": Decimal("85"),
     }
     estoque.com_filamento(tipo="silk", valor_unitario=Decimal("100.01"))  # PLA acima
-    estoque.com_filamento(tipo="bicolor", valor_unitario=Decimal("125"))  # Multicolor igual
+    estoque.com_filamento(tipo="multicolor", valor_unitario=Decimal("125"))  # Multicolor igual
     estoque.com_filamento(material="PETG", valor_unitario=Decimal("80"))  # PETG abaixo
 
     html = client.get("/estoque").text
@@ -253,7 +296,7 @@ def test_comentario_dos_rolos_por_material(estoque):
     estoque.com_filamento(peso_g=Decimal("1000"))
     estoque.com_filamento(cor="Rosa", material="PETG", peso_g=Decimal("500"))
     estoque.com_filamento(
-        cor="Duo", tipo="bicolor", peso_g=Decimal("2000"), peso_rolo_g=Decimal("1000")
+        cor="Duo", tipo="multicolor", peso_g=Decimal("2000"), peso_rolo_g=Decimal("1000")
     )
     estoque.com_filamento(cor="Flex", material="TPU")
 

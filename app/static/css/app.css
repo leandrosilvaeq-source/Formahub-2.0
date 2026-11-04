@@ -4286,7 +4286,6 @@ body:has(.container-custos) .deco-fundo { display: none; }
 }
 
 .estoque-tela .estoque-foto-celula { padding-bottom: 0.4rem; }
-.estoque-tela td small { display: block; color: var(--cor-texto-suave); }
 
 @media (min-width: 640px) {
   .estoque-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
