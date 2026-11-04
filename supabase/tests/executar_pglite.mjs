@@ -28,6 +28,7 @@ const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const PADRAO = [
   "supabase/tests/custos_test.sql",
   "supabase/tests/custos_gestao_test.sql",
+  "supabase/tests/mdo_test.sql",
   "supabase/tests/manutencoes_test.sql",
   "supabase/tests/estoque_test.sql",
 ];

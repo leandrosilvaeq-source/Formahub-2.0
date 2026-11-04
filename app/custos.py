@@ -35,6 +35,12 @@ TAXA_FIXA = "taxa_venda_fixa"
 TAXA_PERCENTUAL = "taxa_venda_percentual"
 MEI = "mei_mensal"
 RETIRADA = "retirada_desejada_mensal"
+MDO_HORAS_DIA = "mdo_horas_dia"  # horas de trabalho por dia (base do MDO calculado)
+MDO_DIAS_MES = "mdo_dias_mes"  # dias de trabalho por mês (base do MDO calculado)
+MDO_REVISOES = "mdo_revisoes_confirmadas"  # revisões trimestrais já confirmadas (contador)
+
+MDO_DATA_BASE = date(2026, 11, 1)  # a revisão trimestral conta a partir desta data
+MDO_MESES_REVISAO = 3
 
 DIAS_REVISAO = 90  # a referência de horas mensais deve ser revista a cada trimestre
 MINUTOS_MDO = (0, 10, 20, 30)  # referências de tempo ativo mostradas para a MDO
@@ -130,6 +136,20 @@ def comparar_manual(manual: Decimal | None, calculado: Decimal | None) -> str | 
     if manual == calculado:
         return "igual"
     return "maior" if manual > calculado else "menor"
+
+
+def comparar_monetario(manual: Decimal | None, calculado: Decimal | None) -> str | None:
+    """Como comparar_manual, mas na precisão monetária exibida (centavos, meio para cima).
+
+    R$ 4,17 contra 4,1666… é 'igual': o que a tela mostra é o que se compara.
+    """
+    if manual is None or calculado is None:
+        return None
+    centavo = Decimal("0.01")
+    return comparar_manual(
+        manual.quantize(centavo, rounding=ROUND_HALF_UP),
+        calculado.quantize(centavo, rounding=ROUND_HALF_UP),
+    )
 
 
 @dataclass(frozen=True)
@@ -295,6 +315,28 @@ def ler_horas_periodo(texto: str):
     return valor, erro
 
 
+def ler_horas_dia(texto: str):
+    """Horas de trabalho por dia: maior que zero e até 24, até duas casas."""
+    valor, erro = ler_decimal(texto, casas=2, maximo=Decimal(24))
+    if erro == "Valor acima do limite permitido.":
+        return None, "As horas por dia não podem passar de 24."
+    if not erro and valor <= 0:
+        return None, "As horas por dia devem ser maiores que zero."
+    return valor, erro
+
+
+def ler_dias_mes(texto: str):
+    """Dias de trabalho por mês: número inteiro de 1 a 31."""
+    valor, erro = ler_decimal(texto, casas=0, maximo=Decimal(31))
+    if erro == "Valor acima do limite permitido.":
+        return None, "Os dias por mês não podem passar de 31."
+    if erro.startswith("Use no máximo"):
+        return None, "Informe um número inteiro de dias."
+    if not erro and valor < 1:
+        return None, "Os dias por mês devem ser de 1 a 31."
+    return valor, erro
+
+
 def ler_percentual(texto: str):
     """Percentual de 0 a 100, até duas casas."""
     valor, erro = ler_decimal(texto, casas=2, maximo=Decimal(100))
@@ -385,7 +427,22 @@ GRUPOS = {
         Campo("valor_residual", RESIDUAL, "Valor residual", "R$", "moeda"),
         Campo("vida_util_anos", VIDA_UTIL, "Vida útil", "anos", "numero", ler_vida_util),
     ],
-    "mdo": [Campo("mdo_hora", MDO, "Mão de obra direta (MDO)", "R$/h", "moeda")],
+    "mdo": [Campo("mdo_hora", MDO, "Mão de obra", "R$/h", "moeda")],
+    # Base do MDO calculado. A retirada é a mesma chave do card "Retirada desejada".
+    "mdo-base": [
+        Campo("retirada", RETIRADA, "Retirada mensal", "R$/mês", "moeda"),
+        Campo(
+            "horas_dia",
+            MDO_HORAS_DIA,
+            "Horas de trabalho por dia",
+            "h/dia",
+            "numero",
+            ler_horas_dia,
+        ),
+        Campo(
+            "dias_mes", MDO_DIAS_MES, "Dias de trabalho por mês", "dias/mês", "numero", ler_dias_mes
+        ),
+    ],
     "mei": [Campo("mei_mensal", MEI, "MEI", "R$/mês", "moeda")],
     "retirada": [Campo("retirada", RETIRADA, "Retirada desejada", "R$/mês", "moeda")],
     # Ajustes manuais dos custos derivados (R$/h). "Voltar ao calculado" apaga o valor.
@@ -521,6 +578,66 @@ def custo_de_manutencao(custos) -> tuple[BaseManutencao, CustoHora]:
     )
     manual = custos.parametros.get(MANUTENCAO)
     return base, CustoHora(base.calculado, manual, completo=base.situacao == "completo")
+
+
+@dataclass(frozen=True)
+class MaoDeObra:
+    """Mão de obra por hora: o valor manual (em destaque) e o calculado pela retirada."""
+
+    manual: Decimal | None
+    calculado: Decimal | None  # None = falta a retirada, as horas por dia ou os dias por mês
+    horas_mes: Decimal | None  # horas por dia x dias por mês
+
+    @property
+    def comparacao(self) -> str | None:
+        return comparar_monetario(self.manual, self.calculado)
+
+
+def mdo_calculado(retirada, horas_dia, dias_mes) -> tuple[Decimal | None, Decimal | None]:
+    """(R$/h, horas/mês) = retirada / (horas por dia x dias por mês), sem arredondar.
+
+    Falta algum dado, ou horas/mês zero: (None, horas/mês conhecidas). Ausência não é zero.
+    """
+    if horas_dia is None or dias_mes is None:
+        return None, None
+    horas_mes = horas_dia * dias_mes
+    if retirada is None or horas_mes <= 0:
+        return None, horas_mes
+    with localcontext() as contexto:
+        contexto.prec = 50
+        return retirada / horas_mes, horas_mes
+
+
+def mao_de_obra(parametros: dict[str, Decimal | None]) -> MaoDeObra:
+    calculado, horas_mes = mdo_calculado(
+        parametros.get(RETIRADA), parametros.get(MDO_HORAS_DIA), parametros.get(MDO_DIAS_MES)
+    )
+    return MaoDeObra(parametros.get(MDO), calculado, horas_mes)
+
+
+def somar_meses(dia: date, meses: int) -> date:
+    """Soma meses de calendário; se o dia não existir no mês de destino, usa o último dia."""
+    indice = dia.year * 12 + dia.month - 1 + meses
+    ano, mes = divmod(indice, 12)
+    mes += 1
+    seguinte = date(ano + (mes == 12), mes % 12 + 1, 1)
+    ultimo = (seguinte - timedelta(days=1)).day
+    return date(ano, mes, min(dia.day, ultimo))
+
+
+def revisao_do_mdo(confirmadas: Decimal | None, hoje: date) -> tuple[date, bool, int]:
+    """(próxima revisão, ativa, ciclo a gravar ao confirmar).
+
+    A revisão n vence em data-base + 3n meses de calendário (01/02/2027, 01/05/2027...). O aviso
+    fica ativo desde o vencimento até a confirmação, que só abrir a página não faz: confirmar
+    grava o último ciclo já vencido. Sem o contador salvo, vale zero (nenhuma confirmada).
+    """
+    feitas = int(confirmadas or 0)
+    proxima = somar_meses(MDO_DATA_BASE, MDO_MESES_REVISAO * (feitas + 1))
+    ciclo = feitas
+    while somar_meses(MDO_DATA_BASE, MDO_MESES_REVISAO * (ciclo + 1)) <= hoje:
+        ciclo += 1
+    return proxima, hoje >= proxima, ciclo
 
 
 def mdo_referencias(mdo_hora: Decimal) -> list[tuple[int, Decimal]]:

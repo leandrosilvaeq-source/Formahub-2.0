@@ -60,7 +60,7 @@ def test_tela_mostra_a_media_de_cada_grupo():
 
     assert "PLA Multicolor" in html and "PLA Sólido" in html
     assert "R$ 125,00" in html and "—</dd>" in html
-    assert html.index('id="filamentos"') < html.index('id="energia"')
+    assert html.index('id="filamentos"') < html.index('id="mdo"')
 
 
 def test_peso_comprado_e_saldo_aparecem_separados_por_grupo():
@@ -81,4 +81,4 @@ def test_tela_continua_sem_o_estoque():
 
     assert resposta.status_code == 200
     assert "Não foi possível carregar as compras do estoque agora." in resposta.text
-    assert 'id="energia"' in resposta.text
+    assert 'id="mdo"' in resposta.text

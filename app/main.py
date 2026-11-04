@@ -19,7 +19,14 @@ from app.auth.rotas import (
     tratar_servico_indisponivel,
 )
 from app.auth.rotas import router as rotas_auth
-from app.custos import card_pla, custo_de_manutencao, formatar_custo_aprox
+from app.custos import (
+    MDO_REVISOES,
+    card_pla,
+    custo_de_manutencao,
+    formatar_custo_aprox,
+    formatar_data,
+    revisao_do_mdo,
+)
 from app.custos_repositorio import (
     FalhaAoConsultarCustos,
     RepositorioCustos,
@@ -108,6 +115,7 @@ app.add_exception_handler(ServicoIndisponivel, tratar_servico_indisponivel)
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.filters["brl"] = formatar_brl
 templates.env.filters["custo_aprox"] = formatar_custo_aprox
+templates.env.filters["data"] = formatar_data
 templates.env.filters["contato"] = lambda texto: formatar_contato(texto) if texto else "—"
 templates.env.filters["data_hora"] = lambda momento: momento.strftime("%d/%m/%Y às %H:%M")
 templates.env.filters["data_curta"] = formatar_data_curta
@@ -167,12 +175,14 @@ def home(
         lubrificacao_desde = lubrificacao_pendente_desde(repo.listar(), date.today())
     except FalhaAoConsultarManutencao:
         lubrificacao_desde = None
-    custo_manutencao, pla, posicao_pla = None, None, None
+    custo_manutencao, pla, posicao_pla, revisao_mdo = None, None, None, None
     try:
         if repo_custos is None:
             raise FalhaAoConsultarCustos
         custos = repo_custos.listar()
         custo_manutencao = custo_de_manutencao(custos)[1]
+        proxima, ativa, _ = revisao_do_mdo(custos.parametros.get(MDO_REVISOES), date.today())
+        revisao_mdo = proxima if ativa else None
         if repo_estoque is None:
             raise FalhaNoEstoque
         pla, posicao_pla = card_pla(repo_estoque.listar_estoque().filamentos, custos.ajustes)
@@ -184,6 +194,7 @@ def home(
         "custo_manutencao": custo_manutencao,
         "pla": pla,
         "posicao_pla": posicao_pla,
+        "revisao_mdo": revisao_mdo,
     }
     return _pagina_sem_cache(request, "index.html", contexto)
 

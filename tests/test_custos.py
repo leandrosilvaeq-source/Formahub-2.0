@@ -444,7 +444,6 @@ def test_blocos_na_ordem_certa(estoque):
     for titulo in (
         "Filamento",
         "Outros Custos",
-        "Custos indiretos",
         "Despesas fixas e metas gerenciais",
     ):
         assert f">{titulo}</h2>" in html
@@ -456,10 +455,6 @@ def test_blocos_na_ordem_certa(estoque):
         < html.index('id="uso-maquina"')
         < html.index('id="mdo"')
         < html.index('id="insumos"')
-        < html.index('id="energia"')
-        < html.index('id="custos-indiretos"')
-        < html.index('id="depreciacao"')
-        < html.index('id="manutencao"')
         < html.index('id="fixos-metas"')
         < html.index('id="mei"')
         < html.index('id="retirada"')
@@ -473,25 +468,13 @@ def test_cada_item_mostra_classificacao_unidade_origem_e_criterio(estoque):
     for identificador in ("mei", "retirada", "horas"):
         bloco = secao(html, identificador)
         assert "Unidade:" in bloco and "Critério:" in bloco and "Origem:" in bloco
-    for identificador in ("energia", "perdas", "mdo", "depreciacao", "manutencao"):  # cards
+    for identificador in ("perdas", "mdo"):  # cards
         bloco = cartao(html, identificador)
         assert "Unidade " in bloco and "Critério:" in bloco and "Origem " in bloco
         assert "Classificação " in bloco
-    assert "Custo direto · máquina" in cartao(html, "energia")
-    assert "Custo indireto · máquina" in cartao(html, "depreciacao")
-    assert "Custo indireto · máquina" in cartao(html, "manutencao")
     assert "Custo direto · mão de obra" in cartao(html, "mdo")
     assert "Despesa fixa indireta" in secao(html, "mei")
     assert "Meta gerencial (não é custo)" in secao(html, "retirada")
-
-
-def test_energia_fica_em_outros_custos_diretos_e_nao_na_secao_de_filamentos(estoque):
-    html = pagina().text
-
-    assert "Energia elétrica" not in secao(html, "filamentos")
-    assert html.index('id="outros-diretos"') < html.index('id="energia"')
-    assert "Taxa de perda</strong>" in html and ">MDO</strong>" in html
-    assert "Mão de obra direta (manual)" not in html
 
 
 def test_topo_sem_textos_explicativos_e_grupo_chamado_filamento(estoque):
@@ -499,7 +482,7 @@ def test_topo_sem_textos_explicativos_e_grupo_chamado_filamento(estoque):
 
     assert "Administração e gestão de custos" not in html and "Cada grandeza" not in html
     assert "1 · Filamentos" not in html and ">Custos diretos</h2>" not in html
-    assert ">Acessórios e embalagens</h3>" in html and ">Outros custos diretos</h3>" in html
+    assert ">Acessórios e embalagens</h3>" in html and ">Outros custos diretos</h3>" not in html
     assert '<h2 class="custos-grupo" id="custos-diretos">Filamento</h2>' in html
 
 
@@ -544,36 +527,14 @@ def test_todo_card_editavel_tem_lapis_acessivel_com_dica_editar(estoque):
     html = pagina().text
 
     for identificador in (
-        "energia", "perdas", "mdo", "depreciacao", "manutencao", "horas", "mei",
+        "perdas", "mdo", "horas", "mei",
         "retirada", "insumo-1",
     ):  # fmt: skip
         trecho = html[html.index(f'id="{identificador}"') :]
         lapis = re.search(r'<a class="custos-lapis"[^>]*>', trecho).group(0)
         assert 'title="Editar"' in lapis and 'aria-label="Editar ' in lapis, identificador
         assert "?editar=" in lapis
-    assert 'aria-label="Editar a energia elétrica"' in html
     assert 'aria-label="Editar o custo de Imã"' not in html  # a tabela de itens não tem Editar
-
-
-def test_energia_mostra_calculado_e_ajuste_manual_provisorio(estoque):
-    bloco = cartao(pagina().text, "energia")
-
-    principal = bloco.split("Ver detalhes")[0]
-    assert "Energia elétrica R$ 0,14 /h de máquina" in principal  # valor utilizado
-    assert "Calculado (referência) ≈ R$ 0,1363 /h" in bloco
-    assert "Origem Manual · provisório" in bloco
-    assert "Voltar ao calculado" in bloco
-    assert "40 kWh/mês" in bloco and "R$ 1,0393 /kWh" in bloco
-
-
-def test_depreciacao_mostra_calculado_e_ajuste_manual_provisorio(estoque):
-    bloco = cartao(pagina().text, "depreciacao")
-
-    assert "Calculado (referência) ≈ R$ 0,2732 /h" in bloco
-    assert "R$ 0,27 /h Revisar custos: valor manual abaixo do custo calculado" in bloco
-    assert "Origem Manual · provisório" in bloco
-    assert "R$ 5.000,00" in bloco and "5 anos" in bloco
-    assert "dias" not in bloco and "horas/dia" not in bloco
 
 
 def test_horas_mensais_com_data_base_e_aviso_trimestral(estoque):
@@ -605,7 +566,6 @@ def test_perda_inicial_de_3_por_cento_so_no_filamento(estoque):
 
     assert "Taxa de perda 3 %" in cartao(html, "perdas")
     assert "só sobre o custo do filamento" in cartao(html, "perdas")
-    assert "perda" not in cartao(html, "energia").lower()
 
 
 def test_mei_e_retirada_ficam_separados(estoque):
@@ -746,7 +706,7 @@ def test_acessorios_e_embalagens_em_duas_tabelas_sem_cards(estoque):
     html = pagina().text
     acessorios, embalagens = linhas_da_tabela(html, 0), linhas_da_tabela(html, 1)
 
-    secao_itens = html[html.index('id="insumos"') : html.index('id="outros-diretos"')]
+    secao_itens = html[html.index('id="insumos"') : html.index('id="horas"')]
     assert "custos-cartoes" not in secao_itens  # nada de cards
     assert '<li class="custos-item' not in secao_itens
     for tabela in (acessorios, embalagens):
@@ -872,7 +832,7 @@ def test_cabecalho_da_secao_sem_titulo_etiquetas_e_sem_linha_de_compras(estoque)
     estoque.com_item("Imã", quantidade=10, valor_total=Decimal("30"))
 
     html = pagina().text
-    secao_itens = html[html.index('id="insumos"') : html.index('id="outros-diretos"')]
+    secao_itens = html[html.index('id="insumos"') : html.index('id="horas"')]
     cabecalho = secao_itens[: secao_itens.index("custos-duas")]
 
     assert (
@@ -978,7 +938,7 @@ def test_tela_continua_sem_o_estoque(estoque):
 
     assert resposta.status_code == 200
     assert "Não foi possível carregar as compras do estoque agora." in resposta.text
-    assert 'id="energia"' in resposta.text
+    assert 'id="perdas"' in resposta.text
 
 
 # ---------- Ajustes manuais de insumos ----------
@@ -1065,14 +1025,6 @@ def test_ajuste_de_insumo_com_estoque_fora_do_ar(estoque, repo_custos):
 # ---------- Edição de parâmetros ----------
 
 
-def test_formulario_de_edicao_traz_salvar_cancelar_e_valor_atual(estoque):
-    html = pagina(editar="valores-energia").text
-
-    assert 'action="/custos/valores/energia"' in html
-    assert 'value="40"' in html and 'value="1,0393"' in html
-    assert "Salvar" in html and 'href="/custos#energia"' in html
-
-
 def test_parametro_editar_invalido_e_ignorado(estoque):
     assert "<form" not in secao(pagina(editar="valores-inexistente").text, "mei")
 
@@ -1111,25 +1063,6 @@ def test_salva_cada_grupo_de_parametros(estoque, repo_custos, grupo, dados, espe
     assert {c: repo_custos.parametros[c] for c in esperado} == esperado
 
 
-def test_editar_energia_recalcula_o_calculado_e_mantem_o_manual(estoque):
-    enviar("/custos/valores/energia", {"consumo_kwh": "50", "tarifa_kwh": "1,0393"})
-
-    bloco = cartao(pagina().text, "energia")
-
-    assert "Calculado (referência) ≈ R$ 0,1704 /h" in bloco  # 50 x 1,0393 / 305
-    principal = bloco.split("Ver detalhes")[0]
-    assert "R$ 0,14 /h de máquina" in principal  # o manual continua valendo
-    assert "valor manual abaixo do custo calculado" in principal  # 0,14 < 0,1704
-
-
-def test_mudar_as_horas_recalcula_energia_e_depreciacao(estoque):
-    enviar("/custos/valores/horas", {"horas_mes": "200"})
-    html = pagina().text
-
-    assert "R$ 0,2079 /h" in secao(html, "energia")  # 40 x 1,0393 / 200
-    assert "R$ 0,4167 /h" in secao(html, "depreciacao")  # 5000 / 60 / 200
-
-
 @pytest.mark.parametrize(
     ("grupo", "dados", "campo"),
     [
@@ -1139,17 +1072,6 @@ def test_mudar_as_horas_recalcula_energia_e_depreciacao(estoque):
         ("mei", {"mei_mensal": "abc"}, "mei_mensal"),
         ("horas", {"horas_mes": "0"}, "horas_mes"),
         ("horas", {"horas_mes": "745"}, "horas_mes"),
-        ("energia", {"consumo_kwh": "1", "tarifa_kwh": "1,23456"}, "tarifa_kwh"),
-        (
-            "depreciacao",
-            {"valor_aquisicao": "100", "valor_residual": "101", "vida_util_anos": "5"},
-            "valor_residual",
-        ),
-        (
-            "depreciacao",
-            {"valor_aquisicao": "100", "valor_residual": "0", "vida_util_anos": "0"},
-            "vida_util_anos",
-        ),
     ],
 )
 def test_valores_invalidos_nao_gravam_e_preservam_o_digitado(
@@ -1168,27 +1090,6 @@ def test_grupo_desconhecido_e_404(estoque):
 
 
 # ---------- Ajuste manual dos custos derivados ----------
-
-
-def test_ajuste_manual_da_energia_limpa_o_provisorio(estoque, repo_custos):
-    resposta = enviar("/custos/valores/energia-ajuste", {"valor": "0,15"})
-
-    assert resposta.status_code == 303
-    assert repo_custos.parametros[ENERGIA_MANUAL] == Decimal("0.15")
-    bloco = cartao(pagina().text, "energia")
-    assert "Origem Manual" in bloco and "provisório" not in bloco
-    assert "R$ 0,15 /h de máquina" in bloco.split("Ver detalhes")[0]
-    assert "Calculado (referência) ≈ R$ 0,1363 /h" in bloco
-
-
-def test_voltar_ao_calculado_apaga_o_ajuste_e_nao_zera(estoque, repo_custos):
-    resposta = enviar("/custos/valores/energia-ajuste/calculado")
-
-    assert resposta.headers["location"] == "/custos?salvo=calculado-energia-ajuste#energia"
-    assert repo_custos.parametros[ENERGIA_MANUAL] is None
-    bloco = cartao(pagina().text, "energia")
-    assert "Origem Calculado" in bloco and "Voltar ao calculado" not in bloco
-    assert "R$ 0,1363 /h de máquina" in bloco.split("Ver detalhes")[0]
 
 
 def test_voltar_ao_calculado_da_depreciacao_e_o_uso_acompanha(estoque, repo_custos):
@@ -1213,22 +1114,7 @@ def test_ajuste_manual_invalido(estoque, repo_custos):
     assert repo_custos.parametros[ENERGIA_MANUAL] == Decimal("0.14")
 
 
-def test_ajuste_manual_zero_e_um_valor(estoque, repo_custos):
-    enviar("/custos/valores/energia-ajuste", {"valor": "0"})
-
-    assert repo_custos.parametros[ENERGIA_MANUAL] == 0
-    assert "R$ 0,00 /h de máquina" in cartao(pagina().text, "energia").split("Ver detalhes")[0]
-
-
 # ---------- Manutenção ----------
-
-
-def test_manutencao_comeca_a_definir_e_fora_do_subtotal(estoque):
-    html = pagina().text
-
-    assert "A definir" in cartao(html, "manutencao")
-    assert "Ela fica fora do Uso da Impressora" in cartao(html, "manutencao")
-    assert "Valor parcial" in cartao(html, "uso-maquina")
 
 
 def gastos_das_manutencoes(repo_custos, *gastos):
@@ -1236,112 +1122,11 @@ def gastos_das_manutencoes(repo_custos, *gastos):
     repo_custos.gastos = [GastoManutencao(i, *g) for i, g in enumerate(gastos, start=1)]
 
 
-def test_custo_por_hora_vem_das_manutencoes_do_periodo(estoque, repo_custos):
-    r1 = enviar(
-        "/custos/manutencao/periodo", {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "250"}
-    )
-    gastos_das_manutencoes(
-        repo_custos,
-        (date(2026, 10, 10), "Bico", Decimal("62.50")),
-        (date(2026, 10, 20), "Correia", Decimal("62.50")),
-    )
-
-    assert r1.headers["location"] == "/custos?salvo=manutencao-periodo#manutencao"
-    assert repo_custos.gravacoes == [
-        ("periodo", date(2026, 10, 1), date(2026, 10, 31), Decimal("250"), 1)
-    ]
-    html = pagina().text
-    bloco = cartao(html, "manutencao")
-    assert "Calculado (referência) R$ 0,50 /h" in bloco  # R$ 125 / 250 h
-    assert "Origem Calculado" in bloco
-    assert "R$ 125,00 (2 manutenções)" in bloco
-    assert "Valor parcial" not in cartao(html, "uso-maquina")
-
-
 def test_custos_nao_tem_mais_cadastro_proprio_de_gasto_de_manutencao(estoque):
     html = pagina().text
 
     assert "Registrar gasto de manutenção" not in html and "manutencao-gasto" not in html
-    assert 'href="/manutencao"' in html
     assert client.post("/custos/manutencao/gastos", data={"csrf": CSRF}).status_code == 404
-
-
-def test_horas_paradas_nunca_sao_o_divisor_do_custo_por_hora(estoque, repo_custos):
-    # O divisor é a hora impressa do período; o tempo parado é só um indicador da tela Manutenção.
-    enviar(
-        "/custos/manutencao/periodo", {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "100"}
-    )
-    gastos_das_manutencoes(repo_custos, (date(2026, 10, 5), "Peça", Decimal("50")))
-
-    assert "Calculado (referência) R$ 0,50 /h" in cartao(pagina().text, "manutencao")
-
-
-def test_manutencao_com_custo_zero_e_conhecida_e_a_definir_avisa_subtotal(estoque, repo_custos):
-    enviar(
-        "/custos/manutencao/periodo", {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "100"}
-    )
-    gastos_das_manutencoes(repo_custos, (date(2026, 10, 5), "Limpeza", Decimal("0")))
-    repo_custos.manutencoes_sem_custo = (date(2026, 10, 7), date(2026, 8, 1))
-
-    bloco = cartao(pagina().text, "manutencao")
-
-    assert "Calculado (referência) R$ 0,00 /h" in bloco  # zero é um custo conhecido
-    assert "1 manutenção do período está com custo “A definir”" in bloco  # a de agosto não conta
-    assert "subtotal conhecido" in bloco
-
-
-def test_periodo_sem_gastos_continua_a_definir_nao_zero(estoque, repo_custos):
-    enviar(
-        "/custos/manutencao/periodo", {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "250"}
-    )
-
-    bloco = cartao(pagina().text, "manutencao")
-
-    assert "nenhum custo de manutenção registrado dentro do período" in bloco
-    assert "Calculado (referência) A definir" in bloco
-
-
-def test_gasto_fora_do_periodo_nao_entra(estoque, repo_custos):
-    enviar(
-        "/custos/manutencao/periodo", {"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "100"}
-    )
-    gastos_das_manutencoes(repo_custos, (date(2026, 8, 1), "Antigo", Decimal("50")))
-
-    bloco = cartao(pagina().text, "manutencao")
-
-    assert "Calculado (referência) A definir" in bloco
-    assert "Gastos no período —" in bloco
-
-
-def test_ajuste_manual_da_manutencao_tem_precedencia(estoque, repo_custos):
-    enviar("/custos/valores/manutencao-ajuste", {"valor": "0,30"})
-
-    bloco = cartao(pagina().text, "manutencao")
-
-    assert "Origem Manual" in bloco and bloco.split("Ver detalhes")[0].strip().endswith(
-        "R$ 0,30 /h"
-    )
-    assert "Uso da Impressora R$ 0,71 /h" in cartao(pagina().text, "uso-maquina")
-    enviar("/custos/valores/manutencao-ajuste/calculado")
-    assert repo_custos.parametros[MANUTENCAO] is None
-    assert "A definir" in cartao(pagina().text, "manutencao")
-
-
-@pytest.mark.parametrize(
-    ("dados", "campo"),
-    [
-        ({"inicio": "2026-10-31", "fim": "2026-10-01", "horas": "10"}, "fim"),
-        ({"inicio": "", "fim": "2026-10-01", "horas": "10"}, "inicio"),
-        ({"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "0"}, "horas"),
-        ({"inicio": "2026-10-01", "fim": "2026-10-31", "horas": "abc"}, "horas"),
-    ],
-)
-def test_periodo_invalido_nao_grava(estoque, repo_custos, dados, campo):
-    resposta = enviar("/custos/manutencao/periodo", dados)
-
-    assert resposta.status_code == 422
-    assert f'id="manutencao-periodo-{campo}-erro"' in resposta.text
-    assert repo_custos.periodo is None
 
 
 def test_periodo_pode_ter_horas_acima_de_um_mes(estoque, repo_custos):
@@ -1723,7 +1508,7 @@ def test_secao_outros_custos_fica_entre_filamento_e_acessorios(estoque):
     assert ">Outros Custos</h2>" in html and "Hora da Máquina" not in html
     assert re.findall(r'class="custos-fil-nome">(.*?)</strong>', secao_html) == [
         "Uso da Impressora",
-        "MDO",
+        "Mão de Obra",
     ]
     assert html.index('id="filamentos"') < html.index('id="hora-maquina"')
     assert html.index('id="hora-maquina"') < html.index('id="insumos"')
@@ -1813,23 +1598,6 @@ def test_editar_a_perda_nao_mexe_no_uso_de_maquina(estoque):
     assert corpo["ok"] is True and "uso_maquina" not in corpo
 
 
-def test_outros_custos_diretos_ficou_so_com_a_energia_e_cards_no_padrao(estoque):
-    html = pagina().text
-    outros = html[html.index('id="outros-cards"') : html.index('id="custos-indiretos"')]
-
-    assert re.findall(r'class="custos-fil-nome">(.*?)</strong>', outros) == [
-        "Energia elétrica",
-    ]
-    assert outros.count('class="custos-item custos-fil"') == 1
-    assert "R$ 0,14" in cartao(html, "energia") and "/h de máquina" in cartao(html, "energia")
-    assert "R$ 15,00" in cartao(html, "mdo") and "/h ativa" in cartao(html, "mdo")
-    assert "3 %" in cartao(html, "perdas")
-    for ident in ("energia", "perdas", "mdo"):
-        card = html[html.index(f'id="{ident}"') :]
-        assert 'data-rota="/custos/valores/' in card and "custos-fil-valor" in card
-        assert 'title="Editar"' in card and "Ver detalhes" in card
-
-
 def test_mdo_mantem_as_referencias_de_tempo_ativo_nos_detalhes(estoque):
     bloco = cartao(pagina().text, "mdo")
 
@@ -1837,24 +1605,6 @@ def test_mdo_mantem_as_referencias_de_tempo_ativo_nos_detalhes(estoque):
     for minutos, valor in ((0, "R$ 0,00"), (10, "R$ 2,50"), (20, "R$ 5,00"), (30, "R$ 7,50")):
         assert f"{minutos} min {valor}" in detalhes
     assert "A hora de impressão não gera MDO" in detalhes
-
-
-def test_comparacao_so_na_energia_que_tem_base_calculada(estoque, repo_custos):
-    html = pagina().text
-
-    assert "custos-fil-valor-maior" in html[html.index('id="energia"') :].split("\n</li>")[0]
-    assert "Acima do custo calculado" in cartao(html, "energia")  # manual 0,14 > calculado 0,1363
-    for ident in ("perdas", "mdo"):  # sem base calculada equivalente: neutros
-        bloco = html[html.index(f'id="{ident}"') :].split("\n</li>")[0]
-        assert "custos-fil-valor-neutro" in bloco and "custo calculado" not in bloco
-
-    repo_custos.parametros[ENERGIA_MANUAL] = Decimal("0.10")
-    assert "custos-fil-valor-menor" in pagina().text
-    assert "Revisar custos: valor manual abaixo do custo calculado" in cartao(
-        pagina().text, "energia"
-    )
-    repo_custos.parametros[ENERGIA_MANUAL] = None  # sem manual: neutro
-    assert "custo calculado" not in cartao(pagina().text, "energia").split("Ver detalhes")[0]
 
 
 @pytest.mark.parametrize(
@@ -1948,11 +1698,8 @@ def test_rota_do_card_sem_fetch_continua_redirecionando(estoque, repo_custos):
     "caminho",
     [
         "/custos/valores/mei",
-        "/custos/valores/energia-ajuste/calculado",
         "/custos/insumos/ajuste",
         "/custos/insumos/calculado",
-        "/custos/manutencao/periodo",
-        "/custos/valores/depreciacao-ajuste/calculado",
     ],
 )
 def test_sem_csrf_valido_nada_e_gravado(estoque, repo_custos, caminho):
@@ -2010,12 +1757,6 @@ def test_banco_nao_configurado(estoque):
     ("caminho", "dados", "operacao"),
     [
         ("/custos/valores/mei", {"mei_mensal": "1"}, "salvar_parametros"),
-        ("/custos/valores/energia-ajuste/calculado", {}, "salvar_parametros"),
-        (
-            "/custos/manutencao/periodo",
-            {"inicio": "2026-10-01", "fim": "2026-10-02", "horas": "1"},
-            "definir_periodo_manutencao",
-        ),
     ],
 )
 def test_falha_ao_salvar_preserva_o_formulario_e_o_estado_anterior(

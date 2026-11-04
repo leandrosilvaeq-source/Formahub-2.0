@@ -30,6 +30,7 @@ from app.custos import (
     GRUPOS,
     HORAS_MES,
     MDO,
+    MDO_REVISOES,
     MEI,
     PERDA,
     RESIDUAL,
@@ -55,9 +56,11 @@ from app.custos import (
     ler_data,
     ler_decimal,
     ler_horas_periodo,
+    mao_de_obra,
     mdo_referencias,
     ordem_de_exibicao,
     revisao_das_horas,
+    revisao_do_mdo,
     subtotal_maquina,
     taxa_de_venda,
     valor_do_campo,
@@ -104,21 +107,24 @@ templates.env.filters["brl"] = formatar_brl
 ANCORAS = {
     "perdas": "perdas",
     "taxas": "taxas",
-    "energia": "energia",
-    "energia-ajuste": "energia",
+    "energia": "uso-maquina",
+    "energia-ajuste": "uso-maquina",
     "horas": "horas",
-    "depreciacao": "depreciacao",
-    "depreciacao-ajuste": "depreciacao",
+    "depreciacao": "uso-maquina",
+    "depreciacao-ajuste": "uso-maquina",
     "mdo": "mdo",
+    "mdo-base": "mdo",
     "mei": "mei",
     "retirada": "retirada",
-    "manutencao-ajuste": "manutencao",
+    "manutencao-ajuste": "uso-maquina",
 }
 # Avisos de sucesso: o redirecionamento leva só um código, nunca texto.
 AVISOS = {f"valores-{grupo}": "Valor atualizado." for grupo in GRUPOS}
 AVISOS.update({f"calculado-{grupo}": "Voltou ao valor calculado." for grupo in VOLTAR_AO_CALCULADO})
 AVISOS.update(
     {
+        "mdo-revisao": "Revisão da mão de obra confirmada.",
+        "mdo-revisao-nenhuma": "Não há revisão da mão de obra pendente.",
         "insumo-ajuste": "Ajuste manual do insumo salvo. As compras originais não mudaram.",
         "insumo-calculado": "Ajuste manual removido.",
         "manutencao-periodo": "Período de referência da manutenção atualizado.",
@@ -127,9 +133,11 @@ AVISOS.update(
 ANCORAS_AVISO = {
     **{f"valores-{g}": a for g, a in ANCORAS.items()},
     **{f"calculado-{g}": ANCORAS[g] for g in VOLTAR_AO_CALCULADO},
+    "mdo-revisao": "mdo",
+    "mdo-revisao-nenhuma": "mdo",
     "insumo-ajuste": "insumos",
     "insumo-calculado": "insumos",
-    "manutencao-periodo": "manutencao",
+    "manutencao-periodo": "uso-maquina",
 }
 
 MSG_EXPIRADA = "A página expirou. Confira os dados e salve de novo."
@@ -252,6 +260,7 @@ def _montar(custos: Custos, insumos, hoje: date | None = None, fotos=None) -> di
 
     subtotal, completo = subtotal_maquina(energia.usado, deprec_hora.usado, manutencao.usado)
     mdo = p.get(MDO)
+    proxima_mdo, mdo_ativa, _ciclo = revisao_do_mdo(p.get(MDO_REVISOES), hoje or date.today())
     mei, retirada = p.get(MEI), p.get(RETIRADA)
     fixa, percentual = p.get(TAXA_FIXA), p.get(TAXA_PERCENTUAL)
     perda = p.get(PERDA)
@@ -279,6 +288,9 @@ def _montar(custos: Custos, insumos, hoje: date | None = None, fotos=None) -> di
         "subtotal_hora": subtotal,
         "subtotal_completo": completo,
         "mdo": mdo,
+        "mao_de_obra": mao_de_obra(p),
+        "mdo_revisao_proxima": proxima_mdo,
+        "mdo_revisao_ativa": mdo_ativa,
         "mdo_referencias": mdo_referencias(mdo) if mdo is not None else [],
         "horas": horas,
         "horas_data_base": data_base,
@@ -632,6 +644,39 @@ async def insumo_ao_calculado(
     repo: RepositorioCustos | None = Depends(get_repositorio_custos),
 ):
     return await _ajuste_de_insumo(request, usuario, repo, com_valor=False)
+
+
+@router.post("/custos/mdo/revisao")
+async def confirmar_revisao_mdo(
+    request: Request,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioCustos | None = Depends(get_repositorio_custos),
+):
+    """Confirma a revisão trimestral da mão de obra: encerra o aviso até o próximo vencimento."""
+    dados = await _formulario(request)
+    estado, escopo = Estado(), "mdo-revisao"
+    if not _confiavel(request, dados):
+        return _recusar(request, repo, estado, escopo, dados, [], MSG_EXPIRADA, 403)
+    try:
+        if repo is None:
+            raise FalhaAoConsultarCustos
+        confirmadas = repo.listar().parametros.get(MDO_REVISOES)
+    except FalhaAoConsultarCustos:
+        estado.erro_pagina = MSG_CONSULTA
+        return _pagina(request, repo, estado, 503)
+    _proxima, ativa, ciclo = revisao_do_mdo(confirmadas, date.today())
+    if not ativa:  # nada vencido: não grava (confirmar não adianta revisões futuras)
+        return _sucesso("mdo-revisao-nenhuma")
+    return _gravar(
+        request,
+        repo,
+        estado,
+        escopo,
+        dados,
+        [],
+        lambda r: r.salvar_parametros({MDO_REVISOES: Decimal(ciclo)}, usuario.id),
+        "mdo-revisao",
+    )
 
 
 @router.post("/custos/manutencao/periodo")

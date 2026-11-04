@@ -148,7 +148,7 @@
         <div><dt>Horas impressas</dt><dd>{% if base.periodo %}{{ base.periodo.horas | numero }} h{% else %}—{% endif %}</dd></div>
         <div><dt>Gastos no período</dt><dd>{{ base.total | brl }}</dd></div>
       </dl>
-      {% if not base.periodo %}<a href="/custos?editar=manutencao-periodo#manutencao">Definir período e horas</a>{% endif %}
+      {% if not base.periodo %}<a href="/custos?editar=manutencao-periodo#uso-maquina">Definir período e horas</a>{% endif %}
     </details>
     {% if not base.periodo %}{{ referencia_periodo(csrf) }}{% endif %}
     {% endif %}

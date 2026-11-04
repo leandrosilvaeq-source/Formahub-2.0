@@ -128,7 +128,7 @@
 {# Card de "Outros custos diretos" no padrão dos cards de Filamentos: nome, valor principal com a
    unidade, lápis (edição no próprio card, por JavaScript) e "Ver detalhes" (o conteúdo vem do
    bloco chamador). Sem JavaScript, o lápis abre o formulário comum logo abaixo. #}
-{% macro cartao_valor(id, titulo, grupo, tipo, usado, unidade, descricao, comparacao=None, aberto=False, aviso_menor="Revisar custos: valor manual abaixo do custo calculado") -%}
+{% macro cartao_valor(id, titulo, grupo, tipo, usado, unidade, descricao, comparacao=None, aberto=False, aviso_menor="Revisar custos: valor manual abaixo do custo calculado", referencia="") -%}
 {% set c = grupos[grupo][0] %}
 {% set escopo = "valores-" ~ grupo %}
 <li class="custos-item custos-fil" id="{{ id }}" data-rota="/custos/valores/{{ grupo }}" data-campo="{{ c.nome }}" data-tipo="{{ tipo }}" data-csrf="{{ csrf }}" data-titulo="{{ titulo }}">
@@ -148,6 +148,8 @@
     {%- else %}{{ aviso_menor }}{% endif -%}
   </p>
   {% endif %}
+  {% if referencia %}<p class="custos-fil-referencia">{{ referencia }}</p>{% endif %}
+  {% if id == "mdo" %}{{ mdo_revisao() }}{% endif %}
   {% if escopo in estado.abertos %}
   {{ abrir_form("/custos/valores/" ~ grupo, escopo) }}
   <div class="custos-form-campos">
@@ -202,14 +204,42 @@
 {% endcall %}
 {%- endmacro %}
 
+{# Revisão trimestral da mão de obra: a próxima data fica sempre à vista; vencida, o aviso
+   permanece até a confirmação (abrir a página não o encerra). #}
+{% macro mdo_revisao() -%}
+{% if estado.falhas.get("mdo-revisao") %}<div class="alerta alerta-erro" role="alert">{{ estado.falhas["mdo-revisao"] }}</div>{% endif %}
+{% if mdo_revisao_ativa %}
+<div class="custos-aviso" role="status" id="mdo-alerta-revisao">
+  <p>Revisão trimestral da mão de obra pendente desde {{ mdo_revisao_proxima | data }}. Confira a retirada, as horas por dia e os dias por mês.</p>
+  <form method="post" action="/custos/mdo/revisao" class="custos-voltar-valor">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="botao botao-secundario">Confirmar revisão</button>
+  </form>
+</div>
+{% else %}
+<p class="custos-dica" id="mdo-proxima-revisao">Próxima revisão: {{ mdo_revisao_proxima | data }}</p>
+{% endif %}
+{%- endmacro %}
+
 {% macro cartao_mdo() -%}
-{% call cartao_valor("mdo", "MDO", "mdo", "moeda", mdo, "/h ativa", "a MDO") %}
+{% set m = mao_de_obra %}
+{% call cartao_valor("mdo", "Mão de Obra", "mdo", "moeda", m.manual, "/h ativa", "a mão de obra",
+     comparacao=m.comparacao, aberto=("valores-mdo-base" in estado.abertos),
+     aviso_menor="Revisar mão de obra: valor manual abaixo do calculado",
+     referencia="Calculado (referência): " ~ ((m.calculado | custo_curto) ~ "/h" if m.calculado is not none else "A definir")) %}
   <dl class="custos-item-dados">
     <div><dt>Classificação</dt><dd>Custo direto · mão de obra</dd></div>
     <div><dt>Unidade</dt><dd>R$/h de tempo ativo</dd></div>
-    <div><dt>Origem</dt><dd>Parâmetro editável</dd></div>
+    <div><dt>Origem</dt><dd>Manual</dd></div>
+    <div class="custos-calculado"><dt>Calculado (referência)</dt><dd>{% if m.calculado is none %}<span class="custos-pendente">A definir</span>{% else %}≈ {{ m.calculado | custo_curto }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
+    <div><dt>Próxima revisão</dt><dd>{{ mdo_revisao_proxima | data }}</dd></div>
   </dl>
-  <p class="custos-dica"><strong>Critério:</strong> mão de obra direta: valor por hora de trabalho ativo manual (preparação, acabamento, montagem e embalagem). A hora de impressão não gera MDO (evita contar duas vezes). Fica separada do Uso da Impressora.</p>
+  <p class="custos-dica" id="mdo-explicacao"><strong>Critério:</strong>
+    {% if m.calculado is none %}retirada mensal ÷ (horas de trabalho por dia × dias por mês). Informe os três valores abaixo para calcular.
+    {%- else %}retirada mensal de {{ retirada | custo }} ÷ ({{ parametros.get("mdo_horas_dia") | numero }} {{ "hora" if parametros.get("mdo_horas_dia") == 1 else "horas" }} de trabalho por dia × {{ parametros.get("mdo_dias_mes") | numero }} dias por mês) = {{ m.horas_mes | numero }} horas/mês = aproximadamente {{ m.calculado | custo_curto }}/h.
+    {%- endif %}
+    Essa retirada remunera o trabalho e não deve ser somada novamente como outro custo.</p>
+  <p class="custos-dica">Mão de obra direta: valor por hora de trabalho ativo manual (preparação, acabamento, montagem e embalagem). A hora de impressão não gera MDO (evita contar duas vezes). Fica separada do Uso da Impressora.</p>
   {% if mdo_referencias %}
   <ul class="custos-referencias" aria-label="Referências de tempo ativo">
     {% for minutos, valor in mdo_referencias %}
@@ -217,6 +247,9 @@
     {% endfor %}
   </ul>
   {% endif %}
+  {% call valores("mdo-base", "mdo", "a retirada, as horas por dia e os dias por mês") %}
+    <div class="custos-calculado"><dt>Horas por mês</dt><dd>{% if m.horas_mes is not none %}{{ m.horas_mes | numero }}<span class="custos-unidade"> h/mês</span>{% else %}—{% endif %}</dd></div>
+  {% endcall %}
 {% endcall %}
 {%- endmacro %}
 
@@ -240,8 +273,26 @@
 {% endcall %}
 {%- endmacro %}
 
-{# Uso da Impressora: a soma de energia, depreciação e manutenção (o valor utilizado em cada card), sem
-   edição própria. Com manutenção a definir ou incompleta, o valor é só um subtotal. #}
+{# Ajuste manual de um custo por hora, dentro de Uso da Impressora: mostra o valor, abre o formulário
+   comum (mesma rota) e, havendo ajuste, oferece "Voltar ao calculado" (envio comum, sem JavaScript). #}
+{% macro ajuste_no_uso(grupo, custo, descricao) -%}
+{% if "valores-" ~ grupo in estado.abertos %}
+  {{ valores(grupo, "uso-maquina", descricao, botao=False) }}
+{% else %}
+  <p class="custos-dica">Ajuste manual: {% if custo.manual is none %}nenhum (vale o calculado){% else %}<strong>{{ custo.manual | custo_aprox }}/h</strong>{% endif %}</p>
+  <a class="botao botao-secundario custos-editar" href="/custos?editar=valores-{{ grupo }}#uso-maquina" aria-label="Editar o ajuste manual de {{ descricao }}">Editar ajuste manual</a>
+  {% if custo.manual is not none %}
+  <form method="post" action="/custos/valores/{{ grupo }}/calculado" class="uso-voltar-valor">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="botao botao-secundario" aria-label="Voltar {{ descricao }} ao valor calculado">Voltar ao calculado</button>
+  </form>
+  {% endif %}
+{% endif %}
+{%- endmacro %}
+
+{# Uso da Impressora: a soma de energia, depreciação e manutenção (o valor utilizado em cada um).
+   Em "Ver detalhes" ficam os parâmetros e os ajustes manuais dos três, nos formulários e rotas de
+   sempre. Com manutenção a definir ou incompleta, o valor é só um subtotal. #}
 {% macro cartao_uso_maquina() -%}
 {% set parcial = subtotal_hora is not none and (not subtotal_completo or (manutencao.manual is none and not manutencao.completo)) %}
 <li class="custos-item custos-fil" id="uso-maquina">
@@ -255,14 +306,45 @@
   {% if parcial %}
   <p class="custos-fil-comparacao" role="status">Valor parcial: falta definir a manutenção.</p>
   {% endif %}
-  <details class="custos-detalhes custos-detalhes-item">
+  {% set editando = estado.abertos | select("in", ("valores-energia", "valores-energia-ajuste", "valores-depreciacao", "valores-depreciacao-ajuste", "valores-manutencao-ajuste", "manutencao-periodo")) | list %}
+  <details class="custos-detalhes custos-detalhes-item"{% if editando %} open{% endif %}>
     <summary>Ver detalhes</summary>
     <dl class="custos-item-dados">
       {% for titulo, custo in (("Depreciação gerencial", depreciacao_hora), ("Manutenção", manutencao), ("Energia elétrica", energia)) %}
       <div><dt>{{ titulo }}</dt><dd>{% if custo.usado is none %}<span class="custos-pendente">A definir</span>{% else %}{{ custo.usado | custo_aprox }}<span class="custos-unidade">/h</span>{% endif %}</dd></div>
       {% endfor %}
     </dl>
-    <p class="custos-dica">Soma do valor utilizado em cada card (o manual, quando houver; senão, o calculado). Não inclui a MDO, a perda de material nem custos mensais. Para alterar, edite o card do custo.</p>
+    <p class="custos-dica">Soma do valor utilizado em cada card (o manual, quando houver; senão, o calculado). Não inclui a MDO, a perda de material nem custos mensais. Para alterar, use os campos abaixo.</p>
+
+    <h5 id="uso-energia">Energia elétrica</h5>
+    <p class="custos-dica">Calculado: {% if energia.calculado is none %}A definir{% else %}{{ energia.calculado | custo_aprox }}/h{% endif %}. Consumo mensal (kWh) × tarifa (R$/kWh) ÷ horas impressas no mês.</p>
+    {{ valores("energia", "uso-maquina", "o consumo e a tarifa de energia") }}
+    {{ ajuste_no_uso("energia-ajuste", energia, "a energia elétrica") }}
+
+    <h5 id="uso-depreciacao">Depreciação gerencial</h5>
+    <p class="custos-dica">Calculado: {% if depreciacao_hora.calculado is none %}A definir{% else %}{{ depreciacao_hora.calculado | custo_aprox }}/h{% endif %}. (Aquisição − residual) ÷ (vida útil em anos × 12 × horas impressas no mês).</p>
+    {{ valores("depreciacao", "uso-maquina", "os critérios da depreciação") }}
+    {{ ajuste_no_uso("depreciacao-ajuste", depreciacao_hora, "a depreciação") }}
+
+    <h5 id="uso-manutencao">Manutenção</h5>
+    <p class="custos-dica">Calculado: {% if manutencao.calculado is none %}A definir{% else %}{{ manutencao.calculado | custo_aprox }}/h{% endif %}. Gastos do período de referência ÷ horas impressas no mesmo período (gastos registrados em <a href="/manutencao">Manutenção</a>).</p>
+    {% if "manutencao-periodo" in estado.abertos %}
+    {{ abrir_form("/custos/manutencao/periodo", "manutencao-periodo") }}
+    <div class="custos-form-campos">
+      {{ campo("manutencao-periodo", "inicio", "Início", "", periodo.inicio.isoformat() if periodo else "", tipo="date") }}
+      {{ campo("manutencao-periodo", "fim", "Fim", "", periodo.fim.isoformat() if periodo else "", tipo="date") }}
+      {{ campo("manutencao-periodo", "horas", "Horas impressas no período", "h", valor_do_campo(periodo.horas, "numero") if periodo else "") }}
+    </div>
+    {{ botoes("uso-maquina") }}
+    {% else %}
+    <dl class="custos-valores">
+      <div><dt>Período de referência</dt><dd>{% if periodo %}{{ periodo.inicio | data }} a {{ periodo.fim | data }}{% else %}<span class="custos-pendente">A definir</span>{% endif %}</dd></div>
+      <div><dt>Horas impressas no período</dt><dd>{% if periodo %}{{ periodo.horas | numero }}<span class="custos-unidade"> h</span>{% else %}—{% endif %}</dd></div>
+    </dl>
+    {% if not periodo %}{{ referencia_periodo(csrf) }}{% endif %}
+    <a class="botao botao-secundario custos-editar" href="/custos?editar=manutencao-periodo#uso-maquina">{{ "Editar período e horas" if periodo else "Definir período e horas" }}</a>
+    {% endif %}
+    {{ ajuste_no_uso("manutencao-ajuste", manutencao, "a manutenção") }}
   </details>
 </li>
 {%- endmacro %}

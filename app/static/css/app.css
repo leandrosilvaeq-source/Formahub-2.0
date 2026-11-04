@@ -3298,6 +3298,7 @@ body:has(.container-custos) .deco-fundo { display: none; }
 .custos-fil-valor-maior { color: var(--cor-sucesso); }
 .custos-fil-valor-menor { color: var(--cor-erro); }
 
+.custos-fil-referencia { margin: 0.1rem 0 0; text-align: center; font-size: 0.9375rem; color: var(--cor-texto-suave); }
 .custos-fil-comparacao { margin: 0.1rem 0 0; text-align: center; font-size: 0.9375rem; font-weight: 700; color: var(--cor-texto-suave); }
 .custos-fil-comparacao-maior { color: var(--cor-sucesso); }
 .custos-fil-comparacao-menor {

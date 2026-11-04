@@ -349,12 +349,6 @@ def com_referencia(repo_custos, manual=None, sem_custo=()):
     repo_custos.parametros[MANUTENCAO] = manual
 
 
-def cartao_custos():
-    html = client.get("/custos").text
-    inicio = html.index('<li class="custos-item custos-fil" id="manutencao"')
-    return html[inicio : html.index("</li>", inicio)]
-
-
 def test_custo_por_hora_usa_decimal_e_so_arredonda_na_exibicao(repo_custos):
     com_referencia(repo_custos)
 
@@ -374,7 +368,6 @@ def test_custo_por_hora_e_o_mesmo_em_manutencao_e_em_custos(repo_custos, estoque
 
     assert "Custo com manutenção (R$/h) R$0,12" in card  # mesma base; duas casas só na exibição
     assert "03/08/2026 a 01/11/2026" in card and "902,4 h" in card and "R$ 107,62" in card
-    assert "Calculado (referência) ≈ R$ 0,1193 /h" in texto(cartao_custos())
 
 
 def test_card_recalcula_ao_salvar_na_propria_tabela(repo_custos):
@@ -464,14 +457,6 @@ def test_referencia_so_e_gravada_ao_confirmar_e_preserva_o_manual(repo_custos, e
     assert "Confirmar referência" not in client.get("/manutencao").text
 
 
-def test_referencia_sai_do_card_com_o_formulario_de_periodo_aberto(repo_custos, estoque_vazio):
-    assert "Confirmar referência" in client.get("/custos").text
-
-    aberto = client.get("/custos", params={"editar": "manutencao-periodo"}).text
-
-    assert "Confirmar referência" not in aberto
-
-
 def test_referencia_nao_aparece_com_periodo_ja_definido(repo_custos, estoque_vazio):
     repo_custos.periodo = PeriodoManutencao(date(2026, 1, 1), date(2026, 1, 31), Decimal(10))
 
@@ -480,47 +465,12 @@ def test_referencia_nao_aparece_com_periodo_ja_definido(repo_custos, estoque_vaz
     assert repo_custos.gravacoes == []
 
 
-@pytest.mark.parametrize(
-    ("manual", "classe", "aviso"),
-    [
-        (Decimal("0.12"), "maior", False),
-        (Decimal("0.10"), "menor", True),
-        (None, "neutro", False),
-    ],
-)
-def test_comparacao_no_card_de_custos(repo_custos, estoque_vazio, manual, classe, aviso):
-    com_referencia(repo_custos, manual=manual)
-
-    card = cartao_custos()
-
-    assert f"custos-fil-valor-{classe}" in card
-    assert ("Revisar custo de manutenção: valor manual abaixo do custo calculado" in card) == aviso
-
-
-def test_manual_igual_ao_calculado_fica_neutro_sem_alerta(repo_custos, estoque_vazio):
-    com_referencia(repo_custos)
-    repo_custos.parametros[MANUTENCAO] = custo_de_manutencao(repo_custos.listar())[0].calculado
-
-    assert "custos-fil-valor-igual" in cartao_custos()
-    assert "Revisar custo de manutenção" not in client.get("/").text
-
-
-def test_custo_a_definir_tira_a_comparacao(repo_custos, estoque_vazio):
-    com_referencia(repo_custos, manual=Decimal("0.01"), sem_custo=(date(2026, 10, 1),))
-
-    card = cartao_custos()
-
-    assert "custos-fil-valor-neutro" in card and "Revisar custo de manutenção" not in card
-    assert "Cálculo incompleto" in card
-    assert "Revisar custo de manutenção" not in client.get("/").text
-
-
 def test_alerta_na_home_acompanha_os_valores_atuais(repo_custos):
     com_referencia(repo_custos, manual=Decimal("0.10"))
 
     resposta = client.get("/")
     assert "manual R$ 0,10/h; calculado ≈ R$ 0,1193/h" in texto(resposta.text)
-    assert 'href="/custos#manutencao"' in resposta.text
+    assert 'href="/custos?editar=valores-manutencao-ajuste#uso-maquina"' in resposta.text
 
     repo_custos.parametros[MANUTENCAO] = Decimal("0.11")
     assert "manual R$ 0,11" in texto(client.get("/").text)

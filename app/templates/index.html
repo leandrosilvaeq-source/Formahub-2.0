@@ -11,7 +11,12 @@
 {% if lubrificacao_desde %}{{ alerta_lubrificacao(lubrificacao_desde, link=true) }}{% endif %}
 {% if custo_manutencao and custo_manutencao.comparacao == "menor" %}
 <div class="alerta alerta-aviso" role="status" id="custos-alerta-manutencao">
-  <span>Revisar custo de manutenção: valor manual abaixo do custo calculado (manual {{ custo_manutencao.manual | custo_aprox }}/h; calculado {{ custo_manutencao.calculado | custo_aprox }}/h). <a href="/custos#manutencao">Ver o card Manutenção em Custos</a></span>
+  <span>Revisar custo de manutenção: valor manual abaixo do custo calculado (manual {{ custo_manutencao.manual | custo_aprox }}/h; calculado {{ custo_manutencao.calculado | custo_aprox }}/h). <a href="/custos?editar=valores-manutencao-ajuste#uso-maquina">Revisar a manutenção em Custos (Uso da Impressora)</a></span>
+</div>
+{% endif %}
+{% if revisao_mdo %}
+<div class="alerta alerta-aviso" role="status" id="custos-alerta-mdo">
+  <span>Revisão trimestral da mão de obra pendente desde {{ revisao_mdo | data }}. <a href="/custos#mdo">Ver o card Mão de Obra em Custos</a></span>
 </div>
 {% endif %}
 {% if pla and pla.comparacao == "menor" %}

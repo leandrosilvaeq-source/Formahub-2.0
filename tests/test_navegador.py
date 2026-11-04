@@ -2192,59 +2192,22 @@ def estoque_de_custos():
 
 
 def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos):
-    from datetime import date
     from decimal import Decimal
-
-    from app.custos_repositorio import GastoManutencao
 
     estoque_de_custos()
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
     assert "A definir" in custos_texto(pagina, "#insumo-1")  # sem valor manual
-    assert "Calculado (referência) ≈ R$ 0,1363/h" in texto_completo(pagina, "#energia")
-    assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")  # valor principal
-    assert "Manual · provisório" in texto_completo(pagina, "#energia")
-    assert "Calculado (referência) ≈ R$ 0,2732/h" in texto_completo(pagina, "#depreciacao")
     uso = custos_texto(pagina, "#uso-maquina")
     assert "Uso da Impressora R$ 0,41/h" in uso and "Valor parcial" in uso
     assert "Data-base 01/11/2026" in custos_texto(pagina, "#horas")
-
-    # Formulário comum (sem JavaScript): o lápis edita no lugar, mas a página funciona sem ele.
-    pagina.abrir("/custos?editar=valores-energia-ajuste")
-    assert pagina.valor("#valores-energia-ajuste-valor") == "0,14"
-    preencher(pagina, "#valores-energia-ajuste-valor", "0,15")
-    salvar_custo(pagina, "#energia form")
-    assert pagina.texto(".alerta-sucesso") == "Valor atualizado."
-    assert repo_custos.parametros["energia_hora_manual"] == Decimal("0.15")
-    assert repo_custos.gravacoes[-1][2] == 1  # usuário da sessão
-    energia = texto_completo(pagina, "#energia")
-    assert "R$ 0,15/h de máquina" in energia and "provisório" not in energia
-
-    # Voltar ao calculado (por fetch, no card): o ajuste some e o calculado passa a valer.
-    pagina.js("window.__marca = 'mesma-pagina'")
-    pagina.js("document.querySelector('#energia form[action$=\"/calculado\"] button').click()")
-    esperar(lambda: repo_custos.parametros["energia_hora_manual"] is None)
-    esperar(lambda: "Voltar ao calculado" not in texto_completo(pagina, "#energia"))
-    assert pagina.js("window.__marca") == "mesma-pagina"  # sem recarregar
-    energia = texto_completo(pagina, "#energia")
-    assert "OrigemCalculado" in energia.replace(" ", "")
-    assert "R$ 0,1363/h de máquina" in custos_texto(pagina, "#energia")
-
-    # Valor inválido: o formulário continua aberto, com o que foi digitado e o erro.
-    pagina.abrir("/custos?editar=valores-depreciacao-ajuste")  # formulário comum (sem JS)
-    preencher(pagina, "#valores-depreciacao-ajuste-valor", "abc")
-    salvar_custo(pagina, "#depreciacao form")
-    assert pagina.valor("#valores-depreciacao-ajuste-valor") == "abc"
-    assert "número válido" in pagina.texto("#depreciacao .campo-erro")
-    assert repo_custos.parametros["depreciacao_hora_manual"] == Decimal("0.27")
 
     # Horas mensais: uma referência só, que recalcula energia e depreciação.
     pagina.abrir("/custos")
     editar_custo(pagina, '#horas a[href*="valores-horas"]')
     preencher(pagina, "#valores-horas-horas_mes", "200")
     salvar_custo(pagina, "#horas form")
-    assert "≈ R$ 0,2079/h" in texto_completo(pagina, "#energia")
-    assert "≈ R$ 0,4167/h" in texto_completo(pagina, "#depreciacao")
+    assert repo_custos.parametros["horas_impressas_mes"] == Decimal("200")
 
     # Insumo: ajuste manual sem tocar nas compras.
     pagina.abrir("/custos?editar=insumo-1")  # formulário comum (o lápis edita no lugar, por JS)
@@ -2253,23 +2216,6 @@ def test_custos_edicao_e_persistencia_no_navegador(pagina, servidor, repo_custos
     assert pagina.texto(".alerta-sucesso").startswith("Ajuste manual do insumo salvo")
     assert "R$ 110,00/kg" in custos_texto(pagina, "#insumo-1")
     assert repo_custos.ajustes == {"filamento:pla": Decimal("110")}
-
-    # Manutenção: período de referência aqui; os gastos vêm das manutenções registradas na tela
-    # Manutenção (R$ 120 / 240 h = R$ 0,50/h).
-    pagina.abrir("/custos")
-    editar_custo(pagina, '#manutencao a[href*="manutencao-periodo"]')
-    pagina.digitar("#manutencao-periodo-inicio", "01102026")
-    pagina.digitar("#manutencao-periodo-fim", "31102026")
-    preencher(pagina, "#manutencao-periodo-horas", "240")
-    salvar_custo(pagina, "#manutencao form")
-    assert repo_custos.periodo.horas == Decimal("240")
-    assert "Registrar gasto" not in custos_texto(pagina, "#manutencao")  # sem cadastro duplicado
-    repo_custos.gastos = [GastoManutencao(1, date(2026, 10, 10), "Bico novo", Decimal("120"))]
-    pagina.abrir("/custos")
-    manutencao = texto_completo(pagina, "#manutencao")
-    assert "Calculado (referência) R$ 0,50/h" in manutencao
-    assert "R$ 120,00 (1 manutenção)" in manutencao
-    assert "Valor parcial" not in custos_texto(pagina, "#uso-maquina")
 
 
 def card_filamento(p, seletor="#insumo-1"):
@@ -2572,33 +2518,8 @@ def test_custos_outros_cards_editam_no_lugar_com_mascara_e_percentual(
     pagina.tela(1280, 900)
     pagina.abrir("/custos")
     pagina.js("window.__marca = 'mesma-pagina'")
-    assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")
     assert "R$ 15,00/h ativa" in custos_texto(pagina, "#mdo")
     assert "3 %" in custos_texto(pagina, "#perdas")
-
-    # Energia (R$/h de máquina, máscara bancária): abre com o valor salvo selecionado.
-    pagina.clicar("#energia .custos-lapis")
-    assert pagina.js("location.search") == "" and pagina.js("window.__marca") == "mesma-pagina"
-    assert pagina.valor("#energia-inline") == "R$ 0,14"
-    assert (
-        pagina.js(
-            "(c => c.selectionEnd - c.selectionStart)(document.querySelector('#energia-inline'))"
-        )
-        == 7
-    )
-    assert pagina.js("document.querySelectorAll('#energia form').length") == 1  # só o "Voltar"
-    pagina.digitar("#energia-inline", "1550")
-    assert pagina.valor("#energia-inline") == "R$ 15,50"
-    tecla(pagina, "Escape", "Escape", 27)  # Esc cancela e restaura
-    assert "R$ 0,14/h de máquina" in custos_texto(pagina, "#energia")
-    assert repo_custos.gravacoes == []
-
-    pagina.clicar("#energia .custos-lapis")
-    pagina.digitar("#energia-inline", "15")
-    tecla(pagina, "Enter", "Enter", 13, "\r")
-    esperar(lambda: "R$ 0,15/h de máquina" in custos_texto(pagina, "#energia"))
-    assert repo_custos.parametros["energia_hora_manual"] == Decimal("0.15")
-    assert pagina.js("window.__marca") == "mesma-pagina"
 
     # MDO (R$/h ativa).
     pagina.clicar("#mdo .custos-lapis")
@@ -2606,7 +2527,10 @@ def test_custos_outros_cards_editam_no_lugar_com_mascara_e_percentual(
     tecla(pagina, "Enter", "Enter", 13, "\r")
     esperar(lambda: "R$ 20,50/h ativa" in custos_texto(pagina, "#mdo"))
     assert repo_custos.parametros["mdo_hora"] == Decimal("20.50")
-    assert "custo calculado" not in custos_texto(pagina, "#mdo")  # sem base calculada: neutro
+    # Comparado com o calculado de referência (R$ 4,17/h), sem recarregar a página.
+    assert "Acima do custo calculado" in custos_texto(pagina, "#mdo")
+    assert "Calculado (referência): R$ 4,17/h" in custos_texto(pagina, "#mdo")
+    assert pagina.js("window.__marca") == "mesma-pagina"
 
     # Taxa de perda (percentual): sem máscara; valor inválido mostra o erro e mantém o digitado.
     pagina.clicar("#perdas .custos-lapis")
@@ -2671,17 +2595,12 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
         "/custos?editar=insumo-0",
         "/custos?editar=insumo-1",
         "/custos?editar=insumo-2",
-        "/custos?editar=valores-energia",
-        "/custos?editar=valores-energia-ajuste",
         "/custos?editar=valores-perdas",
         "/custos?editar=valores-horas",
         "/custos?editar=valores-mdo",
         "/custos?editar=valores-mei",
         "/custos?editar=valores-retirada",
         "/custos?editar=valores-taxas",
-        "/custos?editar=valores-manutencao-ajuste",
-        "/custos?editar=manutencao-periodo",
-        "/custos?editar=valores-depreciacao",
     ]
     for estado in estados:
         pagina.abrir(estado)
@@ -2704,17 +2623,16 @@ def test_custos_legivel_e_sem_rolagem_horizontal_em_cada_largura(
         assert titulos == [
             "Filamento",
             "Outros Custos",
-            "Custos indiretos",
             "Despesas fixas e metas gerenciais",
         ], contexto
-        assert pagina.js("document.querySelectorAll('main section.secao').length") == 10, contexto
+        assert pagina.js("document.querySelectorAll('main section.secao').length") == 8, contexto
         # Todo card editável tem o lápis "Editar" visível, com nome acessível.
         lapis = pagina.js(
             "[...document.querySelectorAll('main .custos-lapis')]"
             ".map(a => [a.title, a.getAttribute('aria-label').startsWith('Editar '),"
             " a.getBoundingClientRect().width >= 44])"
         )
-        assert len(lapis) >= 11 and all(item == ["Editar", True, True] for item in lapis), contexto
+        assert len(lapis) >= 8 and all(item == ["Editar", True, True] for item in lapis), contexto
         # Com todos os "Ver detalhes" abertos, nada corta nem estoura a largura.
         pagina.js("document.querySelectorAll('main details').forEach(d => { d.open = true })")
         assert pagina.js("document.documentElement.scrollWidth") <= largura, contexto

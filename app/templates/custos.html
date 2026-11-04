@@ -159,25 +159,6 @@
   {% endif %}
 </section>
 
-<h3 class="custos-subgrupo" id="outros-diretos">Outros custos diretos</h3>
-<section class="secao custos-secao" id="outros-cards" aria-labelledby="titulo-outros">
-  <h4 id="titulo-outros" class="visualmente-oculto">Outros custos diretos</h4>
-  <ul class="custos-cartoes custos-cartoes-fil">
-    {{ cartao_energia() }}
-  </ul>
-</section>
-
-{# ================= CUSTOS INDIRETOS ================= #}
-<h2 class="custos-grupo" id="custos-indiretos">Custos indiretos</h2>
-
-<section class="secao custos-secao" id="indiretos-cards" aria-labelledby="titulo-indiretos">
-  <h4 id="titulo-indiretos" class="visualmente-oculto">Custos indiretos da máquina</h4>
-  <ul class="custos-cartoes custos-cartoes-fil">
-    {{ cartao_depreciacao() }}
-    {{ cartao_manutencao() }}
-  </ul>
-</section>
-
 <div class="custos-grade">
 <section class="secao custos-secao" id="horas" aria-labelledby="titulo-horas">
   {{ cabecalho("titulo-horas", "Horas impressas por mês", "Referência de produção", "h/mês", "Parâmetro editável",

@@ -18,6 +18,9 @@ from app.custos import (
     LIMITE_VALOR,
     MANUTENCAO,
     MDO,
+    MDO_DIAS_MES,
+    MDO_HORAS_DIA,
+    MDO_REVISOES,
     MEI,
     PERDA,
     RESIDUAL,
@@ -49,6 +52,9 @@ CHAVES = {
     TAXA_PERCENTUAL,
     MEI,
     RETIRADA,
+    MDO_HORAS_DIA,
+    MDO_DIAS_MES,
+    MDO_REVISOES,
     *ANULAVEIS,
 }
 DATA_BASE = date(2026, 11, 1)
@@ -69,6 +75,9 @@ class RepositorioCustosMemoria:
             TAXA_PERCENTUAL: Decimal("0"),
             MEI: Decimal("100"),
             RETIRADA: Decimal("500"),
+            MDO_HORAS_DIA: Decimal("4"),
+            MDO_DIAS_MES: Decimal("30"),
+            MDO_REVISOES: Decimal("0"),
             ENERGIA_MANUAL: Decimal("0.14"),  # ajuste manual provisório da migration
             DEPRECIACAO_MANUAL: Decimal("0.27"),
             MANUTENCAO: None,  # sem ajuste e, sem gastos, "A definir"
@@ -127,6 +136,9 @@ class RepositorioCustosMemoria:
                 (chave in (PERDA, TAXA_PERCENTUAL) and valor > 100)
                 or (chave == VIDA_UTIL and valor <= 0)
                 or (chave == HORAS_MES and not (0 < valor <= 744))
+                or (chave == MDO_HORAS_DIA and not (0 < valor <= 24))
+                or (chave == MDO_DIAS_MES and not (1 <= valor <= 31 and valor == int(valor)))
+                or (chave == MDO_REVISOES and valor != int(valor))
             ):
                 raise CustoRecusado("invalido")
         final = {**self.parametros, **valores}  # valida o estado final antes de gravar
