@@ -572,3 +572,47 @@ def editar_pedido_gravado(
             repo.remover_imagens(list(removidas))
         except Exception:
             logger.error("Não foi possível remover %d imagem(ns) antiga(s).", len(removidas))
+
+
+def indicadores_do_mes(pedidos, hoje: date) -> dict | None:
+    """Faturamento, número de pedidos e ticket médio do mês de `hoje` e do mês anterior.
+
+    Conta só pedidos pagos e não cancelados, pelo mês de criação do pedido. Devolve None se o
+    banco ainda não informa a data do pedido.
+    """
+    if any(p.criado_em is None or p.valor_total is None for p in pedidos):
+        return None
+    mes_atual = (hoje.year, hoje.month)
+    mes_anterior = (hoje.year - 1, 12) if hoje.month == 1 else (hoje.year, hoje.month - 1)
+
+    def totais(mes):
+        valores = [
+            p.valor_total
+            for p in pedidos
+            if p.status_pagamento == "Pago"
+            and not p.cancelado
+            and (p.criado_em.year, p.criado_em.month) == mes
+        ]
+        faturamento = sum(valores, Decimal("0"))
+        ticket = faturamento / len(valores) if valores else Decimal("0")
+        return {"faturamento": faturamento, "pedidos": Decimal(len(valores)), "ticket": ticket}
+
+    atual, anterior = totais(mes_atual), totais(mes_anterior)
+    return {
+        nome: {
+            "atual": atual[nome],
+            "anterior": anterior[nome],
+            "variacao": _variacao(atual[nome], anterior[nome]),
+        }
+        for nome in atual
+    }
+
+
+def _variacao(atual: Decimal, anterior: Decimal) -> dict:
+    """Variação percentual sobre o mês anterior: direcao 'alta', 'queda', 'igual' ou 'sem_base'."""
+    if anterior == 0:
+        return {"direcao": "igual" if atual == 0 else "sem_base", "texto": ""}
+    pct = (atual - anterior) / anterior * 100
+    direcao = "alta" if pct > 0 else "queda" if pct < 0 else "igual"
+    texto = f"{abs(pct):.1f}".replace(".", ",") + "%"
+    return {"direcao": direcao, "texto": texto}

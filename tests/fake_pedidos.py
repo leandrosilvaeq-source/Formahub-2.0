@@ -127,6 +127,7 @@ class RepositorioPedidosMemoria:
                     imagem_produto=destaque.produto if destaque else None,
                     cancelado=p.id in self.cancelados,
                     valor_total=p.valor_total,
+                    criado_em=self.criado_em[p.id],
                 )
             )
         return resumos

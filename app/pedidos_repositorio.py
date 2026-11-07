@@ -111,6 +111,7 @@ class PedidoResumo:
     imagem_produto: str | None = None
     cancelado: bool = False
     valor_total: Decimal | None = None  # None: banco ainda sem a migration do valor na listagem
+    criado_em: datetime | None = None  # None: banco ainda sem a migration da data na listagem
 
 
 @dataclass(frozen=True)
@@ -361,6 +362,11 @@ class RepositorioPedidosSupabase:
                     cancelado=bool(linha.get("cancelado", False)),
                     valor_total=(
                         Decimal(linha["valor_total"]) if linha.get("valor_total") else None
+                    ),
+                    criado_em=(
+                        datetime.fromisoformat(linha["criado_em_local"])
+                        if linha.get("criado_em_local")
+                        else None
                     ),
                 )
                 for linha in linhas or []

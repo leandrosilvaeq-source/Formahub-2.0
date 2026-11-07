@@ -2,10 +2,41 @@
 
 {% from "manutencao_alerta.html" import alerta_lubrificacao %}
 
+{% block main_classe %} container-home{% endblock %}
+
+{% macro icone(nome) %}
+<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  {% if nome == "produtos" %}<path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="m4 7 8 4 8-4M12 11v10"/>
+  {% elif nome == "compras" %}<path d="M3 4h2l2.2 10.5a1 1 0 0 0 1 .8h8.6a1 1 0 0 0 1-.8L19 8H6"/><circle cx="9" cy="19" r="1.3"/><circle cx="17" cy="19" r="1.3"/>
+  {% elif nome == "estoque" %}<path d="M3 9.5 12 4l9 5.5"/><path d="M5 9v10h14V9"/><path d="M9 19v-5h6v5"/>
+  {% elif nome == "pedidos" %}<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM9 12h6M9 16h4"/>
+  {% elif nome == "custos" %}<circle cx="12" cy="12" r="9"/><path d="M14.8 9.2c-.5-.8-1.5-1.2-2.8-1.2-1.6 0-2.7.8-2.7 2s1 1.7 2.7 2c1.7.3 2.7.9 2.7 2s-1.1 2-2.7 2c-1.3 0-2.3-.5-2.9-1.3M12 6.5V8m0 8v1.5"/>
+  {% elif nome == "manutencao" %}<path d="M14.7 6.3a4 4 0 0 0-5.4 5.1L3.5 17.2a1.8 1.8 0 0 0 2.5 2.5l5.8-5.8a4 4 0 0 0 5.1-5.4l-2.4 2.4-2.2-.6-.6-2.2z"/>
+  {% elif nome == "faturamento" %}<path d="M4 20V4"/><path d="M4 20h16"/><path d="m7 15 4-4 3 3 5-6"/><path d="M15 8h4v4"/>
+  {% elif nome == "total-pedidos" %}<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/>
+  {% elif nome == "ticket" %}<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M14 6v12" stroke-dasharray="2 2.5"/>
+  {% endif %}
+</svg>
+{% endmacro %}
+
+{% macro indicador(chave, rotulo, dados, formato) %}
+{% set v = dados.variacao %}
+<article class="indicador">
+  <div class="indicador-topo"><span class="icone-card">{{ icone(chave) }}</span><h2>{{ rotulo }}</h2></div>
+  <p class="indicador-valor">{% if formato == "brl" %}{{ dados.atual | brl }}{% else %}{{ dados.atual | int }}{% endif %}</p>
+  <p class="indicador-comparativo">
+    {% if v.direcao == "alta" %}<span class="variacao variacao-alta">▲ {{ v.texto }}</span>
+    {% elif v.direcao == "queda" %}<span class="variacao variacao-queda">▼ {{ v.texto }}</span>
+    {% elif v.direcao == "igual" %}<span class="variacao">= 0%</span>
+    {% else %}<span class="variacao">Sem base de comparação</span>{% endif %}
+    <span>vs. mês anterior ({% if formato == "brl" %}{{ dados.anterior | brl }}{% else %}{{ dados.anterior | int }}{% endif %})</span>
+  </p>
+</article>
+{% endmacro %}
+
 {% block content %}
 <section class="apresentacao">
   <h1>FormaHub 2.0</h1>
-  <p>Produtos, estoque e pedidos em um só lugar</p>
 </section>
 
 {% if lubrificacao_desde %}{{ alerta_lubrificacao(lubrificacao_desde, link=true) }}{% endif %}
@@ -25,10 +56,18 @@
 </div>
 {% endif %}
 
+{% if indicadores %}
+<section class="indicadores" aria-label="Indicadores do mês atual (pedidos pagos)">
+  {{ indicador("faturamento", "Faturamento do mês", indicadores.faturamento, "brl") }}
+  {{ indicador("total-pedidos", "Pedidos pagos no mês", indicadores.pedidos, "n") }}
+  {{ indicador("ticket", "Ticket médio por pedido", indicadores.ticket, "brl") }}
+</section>
+{% endif %}
+
 <section class="cards">
   {% for modulo in modulos %}
   <article class="card">
-    <h2>{{ modulo.titulo }}</h2>
+    <div class="card-titulo"><span class="icone-card">{{ icone(modulo.icone) }}</span><h2>{{ modulo.titulo }}</h2></div>
     <p>{{ modulo.descricao }}</p>
     {% if modulo.links %}
     <div class="card-acoes">

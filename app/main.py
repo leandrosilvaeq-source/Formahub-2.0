@@ -65,6 +65,7 @@ from app.pedidos import (
     formatar_contato,
     formatar_data_curta,
     gravar_pedido,
+    indicadores_do_mes,
     ler_formulario,
     movimento_permitido,
     normalizar_comentario,
@@ -124,18 +125,21 @@ templates.env.filters["entrega"] = lambda codigo: ROTULOS_ENTREGA.get(codigo, co
 templates.env.filters["status_pagamento"] = lambda codigo: ROTULOS_STATUS.get(codigo, codigo)
 
 MODULOS = [
-    {"titulo": "Produtos", "descricao": "Cadastro e consulta dos produtos."},
+    {"icone": "produtos", "titulo": "Produtos", "descricao": "Cadastro e consulta dos produtos."},
     {
+        "icone": "compras",
         "titulo": "Compras",
         "descricao": "Histórico de compras de insumos e registro de novas compras.",
         "links": [{"url": "/compras", "texto": "Ver compras", "principal": True}],
     },
     {
+        "icone": "estoque",
         "titulo": "Estoque",
         "descricao": "Saldo de filamentos, acessórios e embalagens, com o custo médio.",
         "links": [{"url": "/estoque", "texto": "Ver estoque", "principal": True}],
     },
     {
+        "icone": "pedidos",
         "titulo": "Pedidos",
         "descricao": "Registro e acompanhamento de pedidos.",
         "links": [
@@ -144,11 +148,13 @@ MODULOS = [
         ],
     },
     {
+        "icone": "custos",
         "titulo": "Custos",
         "descricao": "Custos diretos e indiretos da empresa.",
         "links": [{"url": "/custos", "texto": "Ver custos", "principal": True}],
     },
     {
+        "icone": "manutencao",
         "titulo": "Manutenção",
         "descricao": "Manutenções da máquina: tempo parado, peças trocadas e custos.",
         "links": [{"url": "/manutencao", "texto": "Ver manutenção", "principal": True}],
@@ -167,6 +173,7 @@ def home(
     repo: RepositorioManutencao | None = Depends(get_repositorio_manutencao),
     repo_custos: RepositorioCustos | None = Depends(get_repositorio_custos),
     repo_estoque: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+    repo_pedidos: RepositorioPedidos | None = Depends(get_repositorio_pedidos),
 ):
     # A página inicial abre mesmo sem o banco: só fica sem os alertas.
     try:
@@ -188,8 +195,16 @@ def home(
         pla, posicao_pla = card_pla(repo_estoque.listar_estoque().filamentos, custos.ajustes)
     except (FalhaAoConsultarCustos, FalhaNoEstoque):
         pass
+    indicadores = None
+    try:
+        if repo_pedidos is None:
+            raise FalhaAoConsultar
+        indicadores = indicadores_do_mes(repo_pedidos.listar_pedidos(), date.today())
+    except FalhaAoConsultar:
+        pass
     contexto = {
         "modulos": MODULOS,
+        "indicadores": indicadores,
         "lubrificacao_desde": lubrificacao_desde,
         "custo_manutencao": custo_manutencao,
         "pla": pla,
