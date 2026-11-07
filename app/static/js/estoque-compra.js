@@ -5,6 +5,8 @@
 // Envio: multipart/form-data com cada campo da linha na posição i como item_{i}_{campo} e a foto
 // como item_{i}_foto. A resposta é JSON: {destino} no sucesso; {erro, campos} quando não salva.
 // Cancelar (botão, × ou Esc) fecha a janela sem enviar nada e descarta o que foi digitado.
+// Editar (botão de cada compra da lista, data-editar-compra com os dados em JSON) abre a mesma
+// janela já preenchida, com o título "Editar Compra", e envia para /compras/{id}/editar.
 (function () {
   "use strict";
 
@@ -23,7 +25,10 @@
   const saidaFrete = document.getElementById("compra-total-frete");
   const saidaTotal = document.getElementById("compra-total");
   const botaoSalvar = form.querySelector('button[type="submit"]');
-  const TEXTO_SALVAR = botaoSalvar.textContent;
+  const titulo = document.getElementById("compra-titulo");
+  const NOVA = { acao: form.getAttribute("action"), titulo: titulo.textContent, salvar: botaoSalvar.textContent };
+  const EDICAO = { titulo: "Editar Compra", salvar: "Salvar alterações" };
+  let textoSalvar = NOVA.salvar;
 
   const MENSAGEM_FALHA = "Não foi possível salvar agora. Tente novamente em instantes.";
   const MENSAGEM_SESSAO = "Sua sessão expirou. Entre novamente para registrar a compra.";
@@ -320,14 +325,27 @@
     limparErro(alvo.closest(".tem-erro"));
   });
 
-  // Trocar ou remover a foto apaga o aviso de foto recusada pelo servidor.
+  // Trocar ou remover a foto apaga o aviso de foto recusada pelo servidor e, na edição, deixa
+  // de manter a foto já gravada.
   lista.addEventListener("imagemreferencia:alterada", function (evento) {
     limparErro(evento.target.querySelector(".compra-item-foto"));
+    const gravada = evento.target.querySelector('[data-campo="foto_atual"]');
+    if (gravada) gravada.value = "";
   });
 
   // ---------- Abrir e fechar ----------
 
+  // Modo da janela: compra nova (padrão) ou edição da compra `id`.
+  function definirModo(id) {
+    const modo = id ? EDICAO : NOVA;
+    form.setAttribute("action", id ? "/compras/" + id + "/editar" : NOVA.acao);
+    titulo.textContent = modo.titulo;
+    textoSalvar = modo.salvar;
+    botaoSalvar.textContent = textoSalvar;
+  }
+
   function limpar() {
+    definirModo(null);
     form.reset();
     // Esvazia cada seção (libera as miniaturas: imagem-referencia.js observa a lista).
     lista.querySelectorAll("[data-linhas]").forEach(function (secao) { secao.replaceChildren(); });
@@ -354,6 +372,49 @@
     corpo.scrollTop = 0;
     campoData.focus();
   }
+
+  // "99.90" (reais, do servidor) -> "R$ 99,90"; zero ou vazio -> "".
+  function moedaDoServidor(texto) {
+    const c = digitos(Number(texto || 0).toFixed(2));
+    return Number(c) ? formatarCentavos(Number(c)) : "";
+  }
+
+  const CAMPOS_MOEDA = { valor_unitario: true, valor_total: true };
+
+  // Abre a janela com a compra `dados` (JSON do botão Editar da lista) já preenchida.
+  function abrirEdicao(dados, botao) {
+    abridor = botao || null;
+    limpar();
+    definirModo(dados.id);
+    campoData.value = dados.data;
+    const local = form.querySelector('input[name="local"][value="' + dados.local + '"]');
+    if (local) local.checked = true;
+    atualizarLocal();
+    campoNome.value = dados.local_nome || "";
+    campoFrete.value = moedaDoServidor(dados.frete);
+    dados.itens.forEach(function (item) {
+      adicionar(item.categoria, false);
+      const linha = lista.querySelector('[data-linhas="' + item.categoria + '"]').lastElementChild;
+      Object.keys(item).forEach(function (campo) {
+        const el = linha.querySelector('[data-campo="' + campo + '"]');
+        if (!el || campo === "categoria") return;
+        el.value = CAMPOS_MOEDA[campo] ? moedaDoServidor(item[campo]) : item[campo];
+      });
+      if (item.foto_atual && window.ImagensReferencia) {
+        window.ImagensReferencia.mostrarGravada(linha, item.foto_url, "Foto atual");
+      }
+    });
+    atualizarTotais();
+    janela.showModal();
+    corpo.scrollTop = 0;
+    campoData.focus();
+  }
+
+  document.querySelectorAll("[data-editar-compra]").forEach(function (botao) {
+    botao.addEventListener("click", function () {
+      abrirEdicao(JSON.parse(botao.dataset.editarCompra), botao);
+    });
+  });
 
   function enviando() {
     return form.dataset.envio === "enviando";
@@ -390,7 +451,7 @@
     form.inert = sim; // nada muda (nem duplo clique) enquanto o servidor responde
     if (sim) form.setAttribute("aria-busy", "true");
     else form.removeAttribute("aria-busy");
-    botaoSalvar.textContent = sim ? "Salvando…" : TEXTO_SALVAR;
+    botaoSalvar.textContent = sim ? "Salvando…" : textoSalvar;
   }
 
   function dadosDoFormulario() {

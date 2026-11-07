@@ -1,4 +1,7 @@
 {# Janela Registrar Compra (aberta pelo botão Registrar Compra da tela Compras; js/estoque-compra.js).
+   O botão Editar de cada compra da lista abre a mesma janela já preenchida ("Editar Compra"),
+   enviando para /compras/{id}/editar. Na edição, foto_atual guarda o caminho da foto já gravada
+   que a linha mantém (fica vazio se a foto for trocada ou removida).
 
    As linhas dos itens não têm "name": na hora de salvar, o JavaScript envia cada campo como
    item_{posição}_{campo} e a foto como item_{posição}_foto. O servidor valida tudo de novo e
@@ -83,6 +86,7 @@
 {% macro linha(categoria) -%}
 <article class="compra-item compra-linha" data-categoria="{{ categoria }}" role="group" aria-label="{{ categorias[categoria] }}">
   <input type="hidden" data-campo="categoria" value="{{ categoria }}">
+  <input type="hidden" data-campo="foto_atual" value="">
   <div class="compra-item-campos">
     {{ campos_filamento() if categoria == "filamento" else campos_item(categoria) }}
   </div>

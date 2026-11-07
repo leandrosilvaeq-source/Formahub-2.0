@@ -1,8 +1,9 @@
 """Estoque no Supabase (compras e lotes de filamentos, acessórios e embalagens), só no servidor.
 
 Leitura e gravação passam pelas funções do banco listar_estoque, reservar_id_compra,
-registrar_compra, editar_estoque_filamento e editar_estoque_item (migrations
-20261009120000_estoque e 20261010120000_compras_estoque); as tabelas não têm acesso direto.
+registrar_compra, editar_compra, editar_estoque_filamento e editar_estoque_item (migrations
+20261009120000_estoque, 20261010120000_compras_estoque e 20261107130000_editar_compra); as
+tabelas não têm acesso direto.
 Todo lote nasce de um item de compra; a edição só corrige a descrição (o saldo não muda).
 As fotos dos itens ficam no bucket privado compra-imagens e o banco guarda só o caminho.
 Números vão e voltam como texto, para não passar por float.
@@ -40,7 +41,7 @@ class FalhaNoEstoque(Exception):
 
 
 class LoteNaoEncontrado(Exception):
-    """O lote a editar não existe (ou é de outra categoria)."""
+    """O lote (ou a compra) a editar não existe (ou o lote é de outra categoria)."""
 
 
 def custo_por_kg(valor_unitario: Decimal, peso_rolo_g: Decimal) -> Decimal:
@@ -189,6 +190,13 @@ class RepositorioEstoque(Protocol):
         Devolve True se a chave_envio já estava gravada (nada novo foi gravado).
         """
 
+    def editar_compra(self, compra: CompraParaGravar) -> list[str]:
+        """Corrige a compra e troca itens e lotes numa única transação (ou nada).
+
+        Devolve os caminhos das fotos que deixaram de ser usadas (para remover do Storage).
+        LoteNaoEncontrado se a compra não existir; FalhaNoEstoque se o banco não gravar.
+        """
+
     def editar_filamento(
         self, lote_id: int, cor: str, material: str, tipo: str, marca: str, usuario_id: int
     ) -> None:
@@ -200,6 +208,27 @@ class RepositorioEstoque(Protocol):
 
 def _texto(valor: Decimal | None) -> str | None:
     return None if valor is None else str(valor)
+
+
+def _itens(compra: CompraParaGravar) -> list[dict]:
+    """Itens no formato p_itens de registrar_compra e editar_compra."""
+    return [
+        {
+            "ordem": item.ordem,
+            "categoria": item.categoria,
+            "quantidade": item.quantidade,
+            "cor": item.cor,
+            "material": item.material,
+            "tipo": item.tipo,
+            "marca": item.marca,
+            "peso_rolo_g": _texto(item.peso_rolo_g),
+            "valor_unitario": _texto(item.valor_unitario),
+            "nome": item.nome,
+            "valor_total": _texto(item.valor_total),
+            "imagem_caminho": item.imagem_caminho,
+        }
+        for item in compra.itens
+    ]
 
 
 class RepositorioEstoqueSupabase:
@@ -344,23 +373,7 @@ class RepositorioEstoqueSupabase:
             "p_data_compra": compra.data_compra.isoformat(),
             "p_local_tipo": compra.local_tipo,
             "p_local_nome": compra.local_nome,
-            "p_itens": [
-                {
-                    "ordem": item.ordem,
-                    "categoria": item.categoria,
-                    "quantidade": item.quantidade,
-                    "cor": item.cor,
-                    "material": item.material,
-                    "tipo": item.tipo,
-                    "marca": item.marca,
-                    "peso_rolo_g": _texto(item.peso_rolo_g),
-                    "valor_unitario": _texto(item.valor_unitario),
-                    "nome": item.nome,
-                    "valor_total": _texto(item.valor_total),
-                    "imagem_caminho": item.imagem_caminho,
-                }
-                for item in compra.itens
-            ],
+            "p_itens": _itens(compra),
             "p_usuario_id": compra.usuario_id,
             "p_frete": _texto(compra.frete),
         }
@@ -370,6 +383,24 @@ class RepositorioEstoqueSupabase:
         except Exception:
             # A compra foi gravada, mas a resposta veio estranha: trata como incerta.
             logger.error("Resposta inesperada de registrar_compra.")
+            raise FalhaNoEstoque(incerta=True) from None
+
+    def editar_compra(self, compra: CompraParaGravar) -> list[str]:
+        parametros = {
+            "p_id": compra.id,
+            "p_data_compra": compra.data_compra.isoformat(),
+            "p_local_tipo": compra.local_tipo,
+            "p_local_nome": compra.local_nome,
+            "p_frete": _texto(compra.frete),
+            "p_itens": _itens(compra),
+            "p_usuario_id": compra.usuario_id,
+        }
+        resposta = self._rpc("editar_compra", parametros)
+        try:
+            return [str(c) for c in resposta["removidas"]]
+        except Exception:
+            # A edição foi gravada, mas a resposta veio estranha: trata como incerta.
+            logger.error("Resposta inesperada de editar_compra.")
             raise FalhaNoEstoque(incerta=True) from None
 
     def editar_filamento(

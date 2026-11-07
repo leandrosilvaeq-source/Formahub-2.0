@@ -33,6 +33,7 @@ from app.estoque_repositorio import (
     FalhaNoEstoque,
     ItemCompraListado,
     ItemCompraParaGravar,
+    LoteNaoEncontrado,
     RepositorioEstoque,
     custo_por_kg,
     custo_por_unidade,
@@ -163,6 +164,8 @@ LIMITE_VALOR = Decimal("9999999.99")  # cabe no numeric(12, 2)
 
 # Campo de uma linha: item_{posição}_{campo}.
 CAMPO_ITEM = re.compile(r"item_(\d{1,3})_([a-z_]+)")
+# Nome do arquivo da foto no Storage: {uuid}.{extensao}.
+FOTO_ARQUIVO = r"[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(png|jpg|webp)"
 CHAVE_ENVIO = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 
 MENSAGEM_SEM_ITENS = "Adicione pelo menos um item."
@@ -200,6 +203,8 @@ class Compra:
     frete: Decimal = Decimal("0")
     # Linhas na ordem da tela, cada uma com a foto escolhida (ou None).
     itens: list[tuple[ItemCompraParaGravar, Imagem | None]] = field(default_factory=list)
+    # Edição: ordem do item -> caminho da foto já gravada que a linha mantém (campo foto_atual).
+    fotos_atuais: dict[int, str] = field(default_factory=dict)
     erros: dict[str, str] = field(default_factory=dict)
 
 
@@ -422,6 +427,8 @@ def validar_compra(
             if item.cor is not None and (conhecida := canonicas.get(_chave_cor(item.cor))):
                 item = replace(item, cor=conhecida)
             compra.itens.append((item, imagem))
+            if imagem is None and (atual := campos.get("foto_atual", "").strip()):
+                compra.fotos_atuais[ordem] = atual
     return compra
 
 
@@ -432,23 +439,31 @@ class CompraNaoSalva(Exception):
     """A gravação falhou; nada da compra ficou gravado (nem pela metade)."""
 
 
-def gravar_compra(
+class CompraNaoEncontrada(Exception):
+    """A compra a editar não existe mais."""
+
+
+def _foto_da_compra(compra_id: int, caminho: str) -> bool:
+    """Foto mantida na edição: só um caminho da pasta da própria compra."""
+    return re.fullmatch(rf"compras/{compra_id}/itens/\d{{1,3}}/{FOTO_ARQUIVO}", caminho) is not None
+
+
+def _gravar(
     repo: RepositorioEstoque,
     compra: Compra,
+    compra_id: int,
     usuario_id: int,
-    novo_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
-) -> bool:
-    """Grava uma compra já validada; devolve True se ela já estava gravada (reenvio).
+    gravar: Callable[[CompraParaGravar], object],
+    novo_uuid: Callable[[], uuid.UUID],
+):
+    """Envia as fotos novas, chama `gravar` e devolve (resultado, caminhos enviados).
 
-    1. reserva o id; 2. envia as fotos (o caminho usa o id); 3. grava compra, itens e lotes
-    numa única transação. Se algo falhar, remove só as fotos enviadas nesta tentativa e
-    levanta CompraNaoSalva. Num reenvio da mesma submissão, nada novo é gravado e as fotos
-    desta tentativa também são removidas.
+    Se algo falhar, remove só as fotos enviadas nesta tentativa e levanta CompraNaoSalva
+    (ou CompraNaoEncontrada, se a compra a editar não existir).
     """
     enviadas: list[str] = []
     gravando = False
     try:
-        compra_id = repo.reservar_id_compra()
         itens = []
         for item, imagem in compra.itens:
             if imagem is not None:
@@ -456,9 +471,13 @@ def gravar_compra(
                 enviadas.append(caminho)  # antes do envio: se a resposta se perder, remove igual
                 repo.enviar_imagem(caminho, imagem.conteudo, imagem.tipo)
                 item = replace(item, imagem_caminho=caminho)
+            elif (atual := compra.fotos_atuais.get(item.ordem)) and _foto_da_compra(
+                compra_id, atual
+            ):
+                item = replace(item, imagem_caminho=atual)
             itens.append(item)
         gravando = True
-        duplicada = repo.registrar_compra(
+        resultado = gravar(
             CompraParaGravar(
                 id=compra_id,
                 chave_envio=compra.chave_envio,
@@ -478,12 +497,58 @@ def gravar_compra(
             logger.error("Gravação da compra sem resposta; %d foto(s) mantida(s).", len(enviadas))
         elif enviadas:
             _remover_imagens(repo, enviadas)
+        if isinstance(erro, LoteNaoEncontrado):
+            raise CompraNaoEncontrada from None
         if not isinstance(erro, FalhaNoEstoque):
             logger.error("Erro inesperado ao gravar compra: %s", type(erro).__name__)
         raise CompraNaoSalva from None
+    return resultado, enviadas
+
+
+def gravar_compra(
+    repo: RepositorioEstoque,
+    compra: Compra,
+    usuario_id: int,
+    novo_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
+) -> bool:
+    """Grava uma compra já validada; devolve True se ela já estava gravada (reenvio).
+
+    1. reserva o id; 2. envia as fotos (o caminho usa o id); 3. grava compra, itens e lotes
+    numa única transação. Se algo falhar, remove só as fotos enviadas nesta tentativa e
+    levanta CompraNaoSalva. Num reenvio da mesma submissão, nada novo é gravado e as fotos
+    desta tentativa também são removidas.
+    """
+    try:
+        compra_id = repo.reservar_id_compra()
+    except Exception as erro:
+        if not isinstance(erro, FalhaNoEstoque):
+            logger.error("Erro inesperado ao gravar compra: %s", type(erro).__name__)
+        raise CompraNaoSalva from None
+    compra = replace(compra, fotos_atuais={})  # compra nova não tem fotos já gravadas
+    duplicada, enviadas = _gravar(
+        repo, compra, compra_id, usuario_id, repo.registrar_compra, novo_uuid
+    )
     if duplicada and enviadas:
         _remover_imagens(repo, enviadas)  # a compra gravada antes tem as próprias fotos
     return duplicada
+
+
+def gravar_edicao(
+    repo: RepositorioEstoque,
+    compra_id: int,
+    compra: Compra,
+    usuario_id: int,
+    novo_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
+) -> None:
+    """Grava a edição de uma compra já validada (sem histórico: os dados antigos são trocados).
+
+    Fotos: a linha com foto nova envia a nova; a linha que mantém a foto atual (foto_atual)
+    reaproveita o caminho já gravado. Depois de gravar, as fotos que deixaram de ser usadas
+    são removidas do Storage. CompraNaoEncontrada ou CompraNaoSalva se não gravar.
+    """
+    removidas, _ = _gravar(repo, compra, compra_id, usuario_id, repo.editar_compra, novo_uuid)
+    if removidas:
+        _remover_imagens(repo, removidas)
 
 
 def _remover_imagens(repo: RepositorioEstoque, caminhos: list[str]) -> None:

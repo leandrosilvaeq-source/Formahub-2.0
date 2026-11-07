@@ -1644,3 +1644,164 @@ def test_custos_historico_por_toque_ou_teclado_cabe_na_tela_e_fecha_com_esc(
     assert janela_de_historico(pagina)
     pagina.clicar(".custos-hist-gatilho")
     assert not janela_de_historico(pagina)
+
+
+# ---------- Editar compra e ordenar pela data ----------
+
+
+@pytest.fixture
+def com_compra_editavel(estoque):
+    """Compra 1 (01/09, com foto no filamento) e compra 2 (05/09, só acessório)."""
+    foto = "compras/1/itens/1/0f8fad5b-d9cb-469f-a165-70867728950e.png"
+    estoque.imagens[foto] = b"x"
+    filamento = ItemCompraParaGravar(
+        ordem=1,
+        categoria="filamento",
+        quantidade=2,
+        cor="Preto",
+        material="PETG",
+        tipo="silk",
+        marca="Voolt",
+        peso_rolo_g=Decimal("500"),
+        valor_unitario=Decimal("45.90"),
+        imagem_caminho=foto,
+    )
+    argola = ItemCompraParaGravar(
+        ordem=2, categoria="acessorio", quantidade=40, nome="Argola", valor_total=Decimal("14.00")
+    )
+    for n, (dia, local, nome, itens) in enumerate(
+        [(1, "loja_fisica", "Papelaria", (filamento, argola)), (5, "shopee", None, (argola,))], 1
+    ):
+        estoque.reservar_id_compra()
+        estoque.registrar_compra(
+            CompraParaGravar(
+                n, uuid.uuid4(), date(2026, 9, dia), local, nome, 1, itens, Decimal("7.50")
+            )
+        )
+    return estoque
+
+
+def test_compras_usam_quase_toda_a_largura_da_janela(pagina, com_compra_editavel):
+    pagina.tela(1920, 900)
+    pagina.abrir("/compras")
+
+    assert pagina.js("getComputedStyle(document.querySelector('main')).maxWidth") == "2000px"
+    # A coluna Itens fica com a maior parte da tabela; Ações tem o botão Editar.
+    larguras = pagina.js(
+        "[...document.querySelectorAll('.tabela-compras thead th')]"
+        ".map(th => th.getBoundingClientRect().width)"
+    )
+    assert larguras[2] == max(larguras) and larguras[2] > sum(larguras) / 2
+    assert pagina.js("document.querySelectorAll('[data-editar-compra]').length") == 2
+
+
+def test_botao_do_titulo_ordena_por_data(pagina, com_compra_editavel):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    datas = "[...document.querySelectorAll('.compra-registro time')].map(t => t.textContent)"
+    assert pagina.js(datas) == ["05/09/2026", "01/09/2026"]
+
+    pagina.clicar("#ordenar-data")
+    nav.esperar(lambda: "ordem=antigas" in pagina.js("location.search"))
+    nav.esperar(lambda: pagina.js("document.readyState === 'complete'"))
+
+    assert pagina.js(datas) == ["01/09/2026", "05/09/2026"]
+    assert pagina.js("document.getElementById('ordenar-data').classList.contains('ativo')")
+    pagina.clicar("#ordenar-data")
+    nav.esperar(lambda: "ordem=recentes" in pagina.js("location.search"))
+    nav.esperar(lambda: pagina.js("document.readyState === 'complete'"))
+    assert pagina.js(datas) == ["05/09/2026", "01/09/2026"]
+
+
+def abrir_edicao(p, n):
+    """Abre a janela pelo botão Editar da n-ésima compra da lista (1 = primeira)."""
+    p.clicar(f".compra-registro:nth-child({n}) [data-editar-compra]")
+    nav.esperar(lambda: p.js("document.getElementById('compra-janela').open"))
+
+
+@pytest.mark.parametrize("largura", [360, 1280])
+def test_editar_abre_a_compra_preenchida_e_salva_as_correcoes(pagina, com_compra_editavel, largura):
+    pagina.tela(largura, 900)
+    pagina.abrir("/compras")
+    abrir_edicao(pagina, 2)  # compra 1 (01/09), a segunda da lista
+
+    assert pagina.texto("#compra-titulo") == "Editar Compra"
+    assert pagina.texto('#form-compra button[type="submit"]') == "Salvar alterações"
+    assert pagina.valor("#compra-data") == "2026-09-01"
+    assert pagina.js("document.querySelector('#campo-local input:checked').value") == "loja_fisica"
+    assert pagina.valor("#compra-local-nome") == "Papelaria"
+    assert pagina.valor("#compra-frete") == "R$ 7,50"
+    assert [pagina.valor(linha(1, c)) for c in ("quantidade", "material", "tipo", "peso_rolo")] == [
+        "2",
+        "PETG",
+        "silk",
+        "500",
+    ]
+    assert [pagina.valor(linha(1, c)) for c in ("cor", "marca", "valor_unitario")] == [
+        "Preto",
+        "Voolt",
+        "R$ 45,90",
+    ]
+    assert [pagina.valor(linha(2, c)) for c in ("quantidade", "nome", "valor_total")] == [
+        "40",
+        "Argola",
+        "R$ 14,00",
+    ]
+    # A foto atual aparece na linha do filamento, com Trocar e Remover.
+    assert pagina.valor(linha(1, "foto_atual")).startswith("compras/1/itens/1/")
+    assert pagina.js(
+        "!document.querySelector('.compra-item[data-pos=\"1\"] .upload-remover').hidden"
+    )
+    assert pagina.texto("#compra-total") == "R$ 113,30"  # 2 x 45,90 + 14,00 + 7,50
+    assert sem_rolagem_horizontal(pagina)
+
+    # Correções: outra data e outro nome; a argola sai e a foto do filamento é mantida.
+    preencher(pagina, {"#compra-data": "03092026"})
+    pagina.js(f"document.querySelector('{linha(1, 'cor')}').value = ''")
+    pagina.digitar(linha(1, "cor"), "Branco")
+    pagina.clicar("#compra-itens .compra-item[data-pos='2'] .compra-item-remover")
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    assert pagina.js("location.pathname + location.search") == "/compras?salvo=compra-editada"
+    assert pagina.texto(".alerta-sucesso") == "Compra atualizada. O estoque foi ajustado."
+    c = com_compra_editavel.compras[1].compra
+    assert c.data_compra == date(2026, 9, 3)
+    assert [(i.categoria, i.cor) for i in c.itens] == [("filamento", "Branco")]
+    assert c.itens[0].imagem_caminho.startswith("compras/1/itens/1/")
+    assert len(com_compra_editavel.compras) == 2  # nenhuma compra nova
+    assert "2 rolos · PETG Silk Branco" in pagina.texto("#ultimas-compras")
+
+
+def test_remover_a_foto_na_edicao_apaga_a_foto_gravada(pagina, com_compra_editavel):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_edicao(pagina, 2)
+
+    pagina.clicar(".compra-item[data-pos='1'] .upload-remover")
+    assert pagina.valor(linha(1, "foto_atual")) == ""
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    assert com_compra_editavel.compras[1].compra.itens[0].imagem_caminho is None
+    assert com_compra_editavel.removidas == [
+        "compras/1/itens/1/0f8fad5b-d9cb-469f-a165-70867728950e.png"
+    ]
+
+
+def test_cancelar_edicao_e_registrar_volta_ao_modo_de_compra_nova(pagina, com_compra_editavel):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_edicao(pagina, 1)
+    pagina.clicar("#form-compra [data-cancelar]")
+    nav.esperar(lambda: not pagina.js("document.getElementById('compra-janela').open"))
+    assert pagina.js("document.activeElement.hasAttribute('data-editar-compra')")
+
+    abrir_janela(pagina)
+
+    assert pagina.texto("#compra-titulo") == "Registrar Compra"
+    assert pagina.texto('#form-compra button[type="submit"]') == "Salvar compra"
+    assert pagina.js("document.getElementById('form-compra').getAttribute('action')") == "/compras"
+    assert pagina.js("document.querySelectorAll('#compra-itens .compra-item').length") == 1
+    assert pagina.valor(linha(1, "cor")) == "" and pagina.valor("#compra-frete") == ""
+    assert com_compra_editavel.edicoes == []

@@ -226,7 +226,7 @@ def test_periodo_invalido_vale_todos(estoque, periodo):
     assert '<option value="todos" selected>' in html
 
 
-def test_paginas_preservam_o_periodo(estoque):
+def test_paginas_preservam_o_periodo_e_a_ordem(estoque):
     for _ in range(21):
         registrar(estoque, item(0, "acessorio"), data_compra="05/09/2026")
     registrar(estoque, item(0, "acessorio"), data_compra="05/10/2026")
@@ -234,7 +234,9 @@ def test_paginas_preservam_o_periodo(estoque):
     html = client.get("/compras?periodo=2026-09").text
 
     assert "21 compras" in card(html, "compras")
-    assert 'href="/compras?periodo=2026-09&amp;pagina=2"' in html
+    assert 'href="/compras?periodo=2026-09&amp;ordem=recentes&amp;pagina=2"' in html
+    html = client.get("/compras?periodo=2026-09&ordem=antigas").text
+    assert 'href="/compras?periodo=2026-09&amp;ordem=antigas&amp;pagina=2"' in html
 
 
 def test_leitura_pede_o_periodo_ao_repositorio(estoque):
@@ -260,8 +262,8 @@ def test_tabela_tem_colunas_da_lista_de_pedidos_e_ordem_recente_primeiro(estoque
     html = client.get("/compras").text
 
     assert 'class="tabela-pedidos tabela-compras"' in html
-    cabecalhos = re.findall(r'<th scope="col"[^>]*>([^<]+)</th>', html)
-    assert cabecalhos == ["Data", "Local", "Itens", "Fotos", "Valor total"]
+    cabecalhos = re.findall(r'<th scope="col"[^>]*>\s*(?:<span[^>]*>\s*<span>)?([^<]+)<', html)
+    assert cabecalhos == ["Data", "Local", "Itens", "Fotos", "Valor total", "Ações"]
     ordem = sorted(("Primeira", "Antiga", "Segunda", "Nova"), key=html.index)
     assert ordem == ["Nova", "Segunda", "Primeira", "Antiga"]
     assert "Últimas compras" not in html and 'class="compras-lista"' not in html

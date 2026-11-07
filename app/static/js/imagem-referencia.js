@@ -61,6 +61,7 @@
     };
 
     let atual = null; // File válido (ou nenhum)
+    let gravada = false; // mostrando a foto já gravada (edição de compra), sem File
     let urlAtual = null; // URL temporária da miniatura
     let tentativa = 0; // descarta leituras antigas se o usuário escolher outra rápido
     let mensagem = "";
@@ -72,7 +73,7 @@
 
     // Mostra só o que faz sentido no estado atual (vazio, com imagem, com erro).
     function desenhar() {
-      const tem = !!atual;
+      const tem = !!atual || gravada;
       const comErro = mensagem !== "";
       el.dica.hidden = tem || comErro;
       el.ou.hidden = tem;
@@ -105,6 +106,7 @@
       tentativa += 1;
       liberarUrl();
       atual = null;
+      gravada = false;
       mensagem = "";
       el.entrada.value = "";
       el.miniatura.removeAttribute("src");
@@ -144,6 +146,7 @@
         liberarUrl();
         urlAtual = url;
         atual = arquivo;
+        gravada = false;
         mensagem = "";
         el.miniatura.src = url;
         el.nome.textContent = arquivo.name;
@@ -200,9 +203,26 @@
       receber(evento.dataTransfer.files);
     });
 
+    // Foto já gravada (URL assinada do servidor): aparece como selecionada, sem File. Trocar
+    // ou remover funciona igual e avisa a linha (imagemreferencia:alterada).
+    function mostrarGravada(url, nome) {
+      tentativa += 1;
+      liberarUrl();
+      atual = null;
+      gravada = true;
+      mensagem = "";
+      if (url) el.miniatura.src = url;
+      else el.miniatura.removeAttribute("src");
+      el.nome.textContent = nome;
+      el.nome.title = nome;
+      el.tamanho.textContent = "";
+      desenhar();
+    }
+
     desenhar();
     return {
       arquivo: function () { return atual; },
+      mostrarGravada: mostrarGravada,
       limpar: function () { limpar(false); },
       liberar: liberarUrl,
     };
@@ -265,5 +285,11 @@
     // Uma posição por item, na ordem da tela: o File escolhido ou null (item sem imagem).
     arquivos: function () { return todos().map(function (c) { return c ? c.arquivo() : null; }); },
     limpar: function () { todos().forEach(function (c) { if (c) c.limpar(); }); },
+    // Edição de compra: a linha mostra a foto já gravada (url: URL assinada, pode ser vazia).
+    mostrarGravada: function (linha, url, nome) {
+      iniciar(linha);
+      const controle = controles.get(linha);
+      if (controle) controle.mostrarGravada(url, nome);
+    },
   };
 })();

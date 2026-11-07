@@ -4261,8 +4261,20 @@ body:has(.container-custos) .deco-fundo { display: none; }
 .compras-filtro label { font-weight: 600; }
 .compras-filtro select { width: auto; min-width: 11rem; max-width: 100%; }
 
-/* Tabela de compras: o estilo vem de .tabela-pedidos; só as colunas próprias */
+/* Tela Compras: quase toda a largura da janela (como Custos), com margens laterais seguras. */
+.container-pedidos.container-compras { max-width: 2000px; }
+
+/* Tabela de compras: o estilo vem de .tabela-pedidos; só as colunas próprias.
+   Data, Local, Fotos, Valor e Ações ficam do tamanho do conteúdo; Itens usa o resto. */
 .tabela-pedidos.tabela-compras { min-width: 640px; }
+.tabela-compras th:not(:nth-child(3)),
+.tabela-compras td:not(:nth-child(3)) { width: 1%; white-space: nowrap; }
+.tabela-compras th,
+.tabela-compras td { padding-left: 0.85rem; padding-right: 0.85rem; }
+.tabela-compras td.tabela-compras-local { white-space: normal; min-width: 8rem; max-width: 16rem; }
+.tabela-compras-acoes { text-align: center; }
+/* Botão de ordenar pela data: sempre visível (é o único jeito de saber a ordem atual). */
+.ordenar-botao { opacity: 1; text-decoration: none; }
 .tabela-compras-local { overflow-wrap: anywhere; }
 .tabela-compras-itens {
   display: grid;

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Compras · FormaHub 2.0{% endblock %}
-{% block main_classe %} container-pedidos{% endblock %}
+{% block main_classe %} container-pedidos container-compras{% endblock %}
 
 {% block content %}
 <div class="estoque compras">
@@ -36,6 +36,7 @@
     <option value="{{ valor }}"{% if valor == periodo %} selected{% endif %}>{{ rotulo }}</option>
     {% endfor %}
   </select>
+  {% if ordem != "recentes" %}<input type="hidden" name="ordem" value="{{ ordem }}">{% endif %}
   <noscript><button type="submit" class="botao botao-secundario">Filtrar</button></noscript>
 </form>
 
@@ -62,11 +63,27 @@
     <table class="tabela-pedidos tabela-compras" id="tabela-compras">
       <thead>
         <tr>
-          <th scope="col">Data</th>
+          {# Ordenação pela data: o botão alterna entre mais recentes e mais antigas primeiro. #}
+          {% set antigas = ordem == "antigas" %}
+          {% set proxima = "recentes" if antigas else "antigas" %}
+          <th scope="col" aria-sort="{{ 'ascending' if antigas else 'descending' }}">
+            <span class="th-conteudo">
+              <span>Data</span>
+              <a class="filtro-botao ordenar-botao{% if antigas %} ativo{% endif %}" id="ordenar-data"
+                href="/compras?periodo={{ periodo }}&amp;ordem={{ proxima }}"
+                aria-label="Ordenar por data: {{ 'mais recentes' if antigas else 'mais antigas' }} primeiro"
+                title="{{ 'Mais antigas primeiro (clique para mais recentes)' if antigas else 'Mais recentes primeiro (clique para mais antigas)' }}">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  {%- if antigas %}<path d="M12 4 6 11h4v9h4v-9h4z"/>{% else %}<path d="M12 20l6-7h-4V4h-4v9H6z"/>{% endif -%}
+                </svg>
+              </a>
+            </span>
+          </th>
           <th scope="col">Local</th>
           <th scope="col">Itens</th>
           <th scope="col">Fotos</th>
           <th scope="col" class="coluna-numero">Valor total</th>
+          <th scope="col" class="tabela-compras-acoes">Ações</th>
         </tr>
       </thead>
       <tbody>
@@ -91,6 +108,13 @@
             {% elif not c.fotos %}<span class="compra-registro-sem-foto">Sem foto</span>{% endif %}
           </td>
           <td class="coluna-numero tabela-pedidos-valor">{{ c.total | brl }}{% if c.frete %}<span class="compra-registro-frete">inclui frete de {{ c.frete | brl }}</span>{% endif %}</td>
+          <td class="tabela-pedidos-acoes tabela-compras-acoes">
+            {# Abre a janela da compra já preenchida (js/estoque-compra.js). #}
+            <button type="button" class="acao-tabela acao-icone" data-editar-compra='{{ c.edicao | tojson }}'
+              aria-haspopup="dialog" aria-label="Editar compra de {{ c.data | data_compra }} ({{ c.local }})" title="Editar compra">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17Z"/><path d="m14.5 7.5 3 3"/></svg>
+            </button>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -98,9 +122,9 @@
   </div>
   {% if total_paginas > 1 %}
   <nav class="compras-paginas" aria-label="Páginas de compras">
-    {% if pagina > 1 %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;pagina={{ pagina - 1 }}" rel="prev">Anterior</a>{% endif %}
+    {% if pagina > 1 %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;ordem={{ ordem }}&amp;pagina={{ pagina - 1 }}" rel="prev">Anterior</a>{% endif %}
     <span>Página {{ pagina }} de {{ total_paginas }}</span>
-    {% if pagina < total_paginas %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;pagina={{ pagina + 1 }}" rel="next">Próxima</a>{% endif %}
+    {% if pagina < total_paginas %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;ordem={{ ordem }}&amp;pagina={{ pagina + 1 }}" rel="next">Próxima</a>{% endif %}
   </nav>
   {% endif %}
   {% endif %}

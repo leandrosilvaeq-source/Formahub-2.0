@@ -1,4 +1,4 @@
-"""Rotas da tela Estoque (/estoque): consulta das três áreas, Registrar Compra e edição.
+"""Rotas das telas Estoque e Compras: consulta, Registrar Compra, edição da compra e do lote.
 
 Busca, filtros e ordenação são parâmetros da URL (cada área com os seus), sem JavaScript.
 Toda entrada no estoque é feita pela janela Registrar Compra (POST /estoque/compras, enviado
@@ -57,10 +57,12 @@ from app.estoque_compra import (
     MATERIAIS,
     PESOS_ROLO_G,
     SECOES_COMPRA,
+    CompraNaoEncontrada,
     CompraNaoSalva,
     cores_conhecidas,
     descrever_item,
     gravar_compra,
+    gravar_edicao,
     ler_periodo,
     local_da_compra,
     resumir_compras,
@@ -103,10 +105,14 @@ MENSAGEM_LOTE_INDISPONIVEL = (
 MENSAGEM_NAO_SALVO = "Não foi possível salvar agora. Tente novamente em instantes."
 MENSAGEM_EXPIRADA = "A página expirou. Confira os dados e salve de novo."
 MENSAGEM_CORRIGIR = "Não foi possível salvar. Corrija os campos destacados."
+MENSAGEM_COMPRA_SUMIU = "Esta compra não existe mais. Atualize a página."
+# Ordem da tabela de compras pela data: mais recentes primeiro (padrão) ou mais antigas.
+ORDENS_COMPRAS = ("recentes", "antigas")
 
 # Sucesso: código na URL depois de salvar -> mensagem (nada do navegador vai para a tela).
 SUCESSO = {
     "compra": "Compra registrada. Os itens já estão no estoque.",
+    "compra-editada": "Compra atualizada. O estoque foi ajustado.",
     "filamento-editado": "Lote de filamento atualizado.",
 }
 for _area in AREAS_ITENS.values():
@@ -232,9 +238,11 @@ def compras(
     request: Request,
     periodo: str = "todos",
     pagina: str = "1",
+    ordem: str = "recentes",
     repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
 ):
     escolhido = ler_periodo(periodo)  # aaaa-mm; qualquer outro valor vale "Todos"
+    ordem = ordem if ordem in ORDENS_COMPRAS else "recentes"
     contexto = {
         "erro": "",
         "sucesso": SUCESSO.get(request.query_params.get("salvo", ""), ""),
@@ -272,10 +280,12 @@ def compras(
     contexto["periodo"] = escolhido[0] if escolhido else "todos"
     contexto["periodo_rotulo"] = rotulo_do_periodo(escolhido[0]) if escolhido else ""
     contexto["opcoes_periodo"] = [(m, rotulo_do_periodo(m)) for m in sorted(meses, reverse=True)]
+    contexto["ordem"] = ordem
     contexto["resumo"] = resumir_compras(historico.compras)
-    contexto["linhas"] = _linhas_compras(
-        repo, historico.compras[inicio : inicio + COMPRAS_POR_PAGINA]
-    )
+    # O banco devolve das mais recentes às mais antigas; "antigas" inverte a lista inteira
+    # (antes de paginar), então a primeira página traz as compras mais antigas.
+    ordenadas = historico.compras[::-1] if ordem == "antigas" else historico.compras
+    contexto["linhas"] = _linhas_compras(repo, ordenadas[inicio : inicio + COMPRAS_POR_PAGINA])
     contexto["pagina"] = numero
     contexto["total_paginas"] = total_paginas
     return _pagina(request, "estoque/compras.html", contexto)
@@ -290,6 +300,7 @@ def _linhas_compras(repo: RepositorioEstoque, pagina) -> list[dict]:
         urls = {}  # sem as miniaturas a lista continua útil
     return [
         {
+            "edicao": _dados_edicao(c, urls),
             "data": c.data_compra,
             "local": local_da_compra(c.local_tipo, c.local_nome),
             "total": c.total,
@@ -308,7 +319,47 @@ def _linhas_compras(repo: RepositorioEstoque, pagina) -> list[dict]:
     ]
 
 
-# ---------- Registrar Compra ----------
+def _numero(valor: Decimal | None) -> str:
+    """Decimal -> texto sem zeros à direita: 1000.00 -> '1000'; 99.90 -> '99.90'."""
+    if valor is None:
+        return ""
+    return str(int(valor)) if valor == int(valor) else str(valor)
+
+
+def _dados_edicao(c, urls: dict[str, str]) -> dict:
+    """Compra no formato que a janela usa para abrir já preenchida (botão Editar)."""
+    itens = []
+    for i in c.itens:
+        dados = {
+            "categoria": i.categoria,
+            "quantidade": str(i.quantidade),
+            "foto_atual": i.imagem_caminho or "",
+            "foto_url": urls.get(i.imagem_caminho or "", ""),
+        }
+        if i.categoria == "filamento":
+            dados.update(
+                material=i.material,
+                tipo=i.tipo,
+                peso_rolo=_numero(i.peso_rolo_g),
+                cor=i.cor,
+                marca=i.marca,
+                # valor do item = rolos x valor unitário (exato, 2 casas)
+                valor_unitario=str((i.valor / i.quantidade).quantize(Decimal("0.01"))),
+            )
+        else:
+            dados.update(nome=i.nome, valor_total=str(i.valor))
+        itens.append(dados)
+    return {
+        "id": c.id,
+        "data": c.data_compra.isoformat(),
+        "local": c.local_tipo,
+        "local_nome": c.local_nome or "",
+        "frete": str(c.frete),
+        "itens": itens,
+    }
+
+
+# ---------- Registrar e editar compra ----------
 
 
 def _json(conteudo: dict, status_code: int = 200) -> JSONResponse:
@@ -323,13 +374,8 @@ def _cores_salvas(repo: RepositorioEstoque | None) -> list[str]:
         return []
 
 
-@router.post("/compras")
-@router.post("/estoque/compras")
-async def registrar_compra(
-    request: Request,
-    usuario: Usuario = Depends(exigir_usuario),
-    repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
-):
+async def _ler_compra(request: Request, repo: RepositorioEstoque | None):
+    """Lê e valida o formulário da janela: (compra, None) ou (None, resposta de erro)."""
     async with request.form() as formulario:
         # Só os campos de texto e as fotos; qualquer usuário enviado pelo navegador é
         # ignorado: o responsável pela compra é sempre o usuário da sessão.
@@ -338,7 +384,7 @@ async def registrar_compra(
             request.state.csrf, textos.get("csrf", "")
         )
         if not valida:
-            return _json({"erro": MENSAGEM_EXPIRADA}, status_code=403)
+            return None, _json({"erro": MENSAGEM_EXPIRADA}, status_code=403)
         imagens = {}
         for chave, valor in formulario.multi_items():
             encontrado = CAMPO_FOTO.fullmatch(chave)
@@ -349,10 +395,22 @@ async def registrar_compra(
 
     if compra.chave_envio is None:
         # Sem a chave da submissão não há proteção contra duplicação: a janela é antiga.
-        return _json({"erro": MENSAGEM_EXPIRADA}, status_code=403)
+        return None, _json({"erro": MENSAGEM_EXPIRADA}, status_code=403)
     if compra.erros:
-        return _json({"erro": MENSAGEM_CORRIGIR, "campos": compra.erros}, status_code=422)
+        return None, _json({"erro": MENSAGEM_CORRIGIR, "campos": compra.erros}, status_code=422)
+    return compra, None
 
+
+@router.post("/compras")
+@router.post("/estoque/compras")
+async def registrar_compra(
+    request: Request,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+):
+    compra, erro = await _ler_compra(request, repo)
+    if erro:
+        return erro
     try:
         if repo is None:
             raise CompraNaoSalva
@@ -360,6 +418,31 @@ async def registrar_compra(
     except CompraNaoSalva:
         return _json({"erro": MENSAGEM_NAO_SALVO}, status_code=503)
     return _json({"destino": "/compras?salvo=compra"})
+
+
+@router.post("/compras/{compra_id}/editar")
+async def editar_compra(
+    request: Request,
+    compra_id: str,
+    usuario: Usuario = Depends(exigir_usuario),
+    repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
+):
+    """Grava a correção de uma compra (sem histórico): mesma janela e validação do registro."""
+    numero = _lote_da_url(compra_id)  # só dígitos, dentro do limite de um bigint
+    if numero is None:
+        return _json({"erro": MENSAGEM_COMPRA_SUMIU}, status_code=404)
+    compra, erro = await _ler_compra(request, repo)
+    if erro:
+        return erro
+    try:
+        if repo is None:
+            raise CompraNaoSalva
+        gravar_edicao(repo, numero, compra, usuario.id)
+    except CompraNaoEncontrada:
+        return _json({"erro": MENSAGEM_COMPRA_SUMIU}, status_code=404)
+    except CompraNaoSalva:
+        return _json({"erro": MENSAGEM_NAO_SALVO}, status_code=503)
+    return _json({"destino": "/compras?salvo=compra-editada"})
 
 
 # ---------- Edição da descrição do lote ----------

@@ -2,7 +2,8 @@
 // (PGlite) e roda os arquivos de teste. Nada se conecta ao banco remoto nem grava em disco.
 //
 // Uso (na raiz do projeto, depois de `npm install`):
-//   npm run test:sql        -> custos_test, custos_gestao_test, manutencoes_test e estoque_test
+//   npm run test:sql        -> custos_test, custos_gestao_test, manutencoes_test, estoque_test
+//                              e editar_compra_test
 //   node supabase/tests/executar_pglite.mjs <teste.sql> [...]
 //   node supabase/tests/executar_pglite.mjs --chamadas entrada.json --listagem saida.json
 //     Executa as chamadas RPC [{funcao, parametros}] por nome de parâmetro (como o PostgREST)
@@ -31,6 +32,7 @@ const PADRAO = [
   "supabase/tests/mdo_test.sql",
   "supabase/tests/manutencoes_test.sql",
   "supabase/tests/estoque_test.sql",
+  "supabase/tests/editar_compra_test.sql",
 ];
 
 function lerArgumentos(argv) {
