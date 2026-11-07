@@ -73,7 +73,8 @@
 </section>
 {% else %}
 <div class="tabela-rolagem">
-  <table class="tabela-pedidos" id="tabela-pedidos" data-csrf="{{ request.state.csrf }}">
+  <table class="tabela-pedidos" id="tabela-pedidos" data-csrf="{{ request.state.csrf }}"
+    data-etapas='{{ etapas_selecao | tojson }}'>
     <thead>
       <tr>
         <th scope="col">Foto</th>
@@ -84,7 +85,7 @@
         <th scope="col" class="coluna-numero">Valor Total</th>
         {{ cabecalho("Prazo", "prazo") }}
         {{ cabecalho("Status Pagamento", "status_pagamento", [["pendente", "Pendente"], ["pago", "Pago"]]) }}
-        {{ cabecalho("Status Entrega", "etapa", filtros) }}
+        {{ cabecalho("Status Produção", "etapa", filtros) }}
         {{ cabecalho("Observações", "observacoes") }}
         <th scope="col">Ações</th>
       </tr>
@@ -123,17 +124,14 @@
           </button>
         </td>
         <td>
-          {% if movimentos.get(etapa) %}
-          <span class="pedidos-etapa-caixa etapa-{{ etapa }}">
+          {% if etapa != "cancelado" %}
+          {# Selo da etapa: ao clicar abre o menu com as etapas (pedidos-lista.js). #}
+          <button type="button" class="pedidos-etapa etapa-{{ etapa }}" data-etapa="{{ etapa }}"
+            aria-haspopup="menu" aria-expanded="false" title="Alterar status da produção"
+            aria-label="Status da produção: {{ rotulos_etapa[etapa] }}. Alterar: pedido de {{ p.cliente_nome }}">
             <span class="etapa-ponto" aria-hidden="true"></span>
-            <select class="campo-texto pedidos-etapa" data-etapa="{{ etapa }}"
-              aria-label="Status da entrega: pedido de {{ p.cliente_nome }}">
-              <option value="{{ etapa }}" selected>{{ rotulos_etapa[etapa] }}</option>
-              {% for m in movimentos[etapa] %}
-              <option value="{{ m.destino }}">{{ rotulos_etapa[m.destino] }}</option>
-              {% endfor %}
-            </select>
-          </span>
+            <span class="pedidos-etapa-texto">{{ rotulos_etapa[etapa] }}</span>
+          </button>
           {% else %}
           <span class="pedidos-etapa-final etapa-{{ etapa }}"><span class="etapa-ponto" aria-hidden="true"></span>{{ rotulos_etapa[etapa] }}</span>
           {% endif %}

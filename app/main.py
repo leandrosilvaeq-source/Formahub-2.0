@@ -44,6 +44,7 @@ from app.manutencao_repositorio import (
 from app.manutencao_rotas import router as rotas_manutencao
 from app.pedidos import (
     ALTERNANCIA_PAGAMENTO,
+    CODIGOS_ETAPA,
     ESCOLHA_OBRIGATORIA,
     FILTROS_STATUS,
     FORMAS_ENTREGA,
@@ -51,7 +52,6 @@ from app.pedidos import (
     LIMITE_COMENTARIO,
     LIMITE_IMAGEM_BYTES,
     MOVIMENTOS_ETAPA,
-    MOVIMENTOS_PEDIDOS,
     ROTULOS_ENTREGA,
     ROTULOS_ETAPA,
     ROTULOS_PAGAMENTO,
@@ -360,7 +360,7 @@ def listar_pedidos(
         "contagens": contagens,
         "etapas": etapas,
         "rotulos_etapa": filtros,
-        "movimentos": MOVIMENTOS_PEDIDOS,
+        "etapas_selecao": [(c, filtros[c]) for c in CODIGOS_ETAPA],
         "alternancia_pagamento": ALTERNANCIA_PAGAMENTO,
         "erro": "",
     }

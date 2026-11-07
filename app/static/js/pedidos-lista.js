@@ -1,4 +1,4 @@
-// Lista de pedidos: altera o status do pagamento (botão) e o da produção (seleção) na própria
+// Lista de pedidos: altera o status do pagamento (botão) e o da produção (selo com menu) na própria
 // tabela, pelos mesmos endpoints da Produção. A linha só muda depois da confirmação do servidor.
 // O valor atual vai junto (status_esperado / etapa_esperada): se outro usuário já alterou o
 // pedido, o servidor responde "conflito" e a página é recarregada. Nada fica guardado no navegador.
@@ -86,31 +86,76 @@
     botao.focus();
   }
 
-  async function mudarEtapa(selecao) {
-    const linha = selecao.closest("tr");
-    const atual = selecao.dataset.etapa;
-    const nova = selecao.value;
+  // ---------- Status da produção: selo que abre um menu com as etapas ----------
+  const ETAPAS = JSON.parse(tabela.dataset.etapas || "[]"); // [[codigo, rotulo], ...]
+  let menuEtapa = null;
+  let seloAberto = null;
+
+  function fecharMenuEtapa(devolverFoco) {
+    if (!menuEtapa) return;
+    menuEtapa.remove();
+    menuEtapa = null;
+    seloAberto.setAttribute("aria-expanded", "false");
+    if (devolverFoco) seloAberto.focus();
+    seloAberto = null;
+  }
+
+  function abrirMenuEtapa(selo) {
+    fecharMenuEtapa(false);
+    const atual = selo.dataset.etapa;
+    menuEtapa = document.createElement("div");
+    menuEtapa.className = "etapa-menu";
+    menuEtapa.setAttribute("role", "menu");
+    menuEtapa.setAttribute("aria-label", "Status da produção: pedido de " +
+      selo.closest("tr").dataset.cliente);
+
+    ETAPAS.forEach(function (e) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "etapa-menu-item etapa-" + e[0];
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", e[0] === atual ? "true" : "false");
+      item.dataset.etapa = e[0];
+      item.tabIndex = -1;
+      const ponto = document.createElement("span");
+      ponto.className = "etapa-ponto";
+      ponto.setAttribute("aria-hidden", "true");
+      const texto = document.createElement("span");
+      texto.textContent = e[1];
+      item.append(ponto, texto);
+      menuEtapa.append(item);
+    });
+
+    document.body.append(menuEtapa);
+    const r = selo.getBoundingClientRect();
+    const largura = menuEtapa.offsetWidth;
+    const altura = menuEtapa.offsetHeight;
+    const abaixo = r.bottom + 4 + altura <= window.innerHeight;
+    menuEtapa.style.top = Math.round(abaixo ? r.bottom + 4 : r.top - altura - 4) + "px";
+    menuEtapa.style.left = Math.max(8, Math.min(r.left, window.innerWidth - largura - 8)) + "px";
+    selo.setAttribute("aria-expanded", "true");
+    seloAberto = selo;
+    (menuEtapa.querySelector('[aria-checked="true"]') || menuEtapa.firstElementChild).focus();
+  }
+
+  async function mudarEtapa(selo, nova) {
+    const linha = selo.closest("tr");
+    const atual = selo.dataset.etapa;
+    fecharMenuEtapa(true);
     if (nova === atual) return;
+    const rotuloNovo = ETAPAS.find(function (e) { return e[0] === nova; })[1];
 
-    const rotuloNovo = selecao.options[selecao.selectedIndex].textContent;
-    if (nova === "entregue" && !window.confirm(
-      "O pedido de " + linha.dataset.cliente + " vai para " + rotuloNovo +
-      ". Nesta versão não é possível voltar a etapa.")) {
-      selecao.value = atual;
-      return;
-    }
-
-    selecao.disabled = true;
-    selecao.setAttribute("aria-busy", "true");
+    selo.disabled = true;
+    selo.setAttribute("aria-busy", "true");
     const r = await enviar("/producao/" + linha.dataset.pedido + "/mover", {
       etapa_esperada: atual,
       nova_etapa: nova,
     });
-    selecao.removeAttribute("aria-busy");
+    selo.removeAttribute("aria-busy");
     const corpo = r.corpo;
 
     if (corpo && corpo.ok) {
-      // As opções mudam com a etapa e as contagens do filtro também: recarrega a lista.
+      // As contagens do filtro e a lista de pendentes mudam com a etapa: recarrega a lista.
       try {
         window.sessionStorage.setItem("pedidos-aviso",
           "Pedido de " + linha.dataset.cliente + " movido para " + rotuloNovo + ".");
@@ -118,8 +163,7 @@
       window.location.reload();
       return;
     }
-    selecao.disabled = false;
-    selecao.value = atual; // numa falha a linha fica onde estava
+    selo.disabled = false; // numa falha a linha fica onde estava
     if (r.sessao) {
       avisar(SESSAO, "erro");
     } else if (corpo && corpo.erro === "conflito") {
@@ -127,8 +171,44 @@
     } else {
       avisar((corpo && corpo.mensagem) || FALHA_ETAPA, "erro");
     }
-    selecao.focus();
+    selo.focus();
   }
+
+  document.addEventListener("click", function (evento) {
+    const item = evento.target.closest(".etapa-menu-item");
+    if (item && menuEtapa && menuEtapa.contains(item)) {
+      mudarEtapa(seloAberto, item.dataset.etapa);
+      return;
+    }
+    const selo = evento.target.closest(".pedidos-etapa");
+    if (selo && tabela.contains(selo)) {
+      if (selo === seloAberto) fecharMenuEtapa(true);
+      else abrirMenuEtapa(selo);
+      return;
+    }
+    fecharMenuEtapa(false);
+  });
+
+  document.addEventListener("keydown", function (evento) {
+    if (!menuEtapa) return;
+    const itens = Array.from(menuEtapa.children);
+    const i = itens.indexOf(document.activeElement);
+    if (evento.key === "Escape") {
+      evento.preventDefault();
+      fecharMenuEtapa(true);
+    } else if (evento.key === "ArrowDown" || evento.key === "ArrowUp") {
+      evento.preventDefault();
+      const passo = evento.key === "ArrowDown" ? 1 : -1;
+      itens[(i + passo + itens.length) % itens.length].focus();
+    } else if (evento.key === "Home" || evento.key === "End") {
+      evento.preventDefault();
+      itens[evento.key === "Home" ? 0 : itens.length - 1].focus();
+    } else if (evento.key === "Tab") {
+      fecharMenuEtapa(false);
+    }
+  });
+  window.addEventListener("resize", function () { fecharMenuEtapa(false); });
+  window.addEventListener("scroll", function () { fecharMenuEtapa(false); }, true);
 
   try {
     const aviso = window.sessionStorage.getItem("pedidos-aviso");
@@ -143,10 +223,6 @@
     if (botao) alternarPagamento(botao);
   });
 
-  tabela.addEventListener("change", function (evento) {
-    const selecao = evento.target.closest(".pedidos-etapa");
-    if (selecao) mudarEtapa(selecao);
-  });
 
   // Filtros por coluna, estilo Excel: o botão do título abre uma lista de valores com caixas de
   // seleção. Só escondem linhas já carregadas; combinam entre si e com o filtro de status do
@@ -162,7 +238,7 @@
   function valorDaLinha(linha, chave) {
     const c = linha.cells;
     // Colunas: 0 Foto, 1 Cliente, 2 Produto, 3 Quantidade, 4 Pagamento, 5 Valor Total, 6 Prazo,
-    // 7 Status Pagamento, 8 Status Entrega, 9 Observações, 10 Ações.
+    // 7 Status Pagamento, 8 Status Produção, 9 Observações, 10 Ações.
     if (chave === "cliente") return texto(c[1]);
     if (chave === "produto") return texto(c[2]);
     if (chave === "pagamento") return texto(c[4]);

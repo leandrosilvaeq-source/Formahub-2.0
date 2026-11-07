@@ -36,16 +36,9 @@ def mover(pedido_id, esperada, nova, **extra):
     return client.post(f"/producao/{pedido_id}/mover", data=dados)
 
 
-# Os movimentos permitidos (os mesmos da função mover_etapa_producao do banco); finalizar
-# (entregue) vale de qualquer etapa anterior.
-PERMITIDOS = [
-    ("fila_producao", "em_producao"),
-    ("fila_producao", "entregue"),
-    ("em_producao", "fila_producao"),
-    ("em_producao", "aguardando_entrega"),
-    ("em_producao", "entregue"),
-    ("aguardando_entrega", "entregue"),
-]
+# Os movimentos permitidos (os mesmos da função mover_etapa_producao do banco): de qualquer
+# etapa para qualquer outra, inclusive sair de entregue.
+PERMITIDOS = [(a, n) for a in ETAPAS for n in ETAPAS if a != n]
 
 
 # ---------- Quadro ----------
@@ -140,23 +133,27 @@ def test_sequencia_completa_ate_entregue(repo_pedidos):
     assert pedido.id in repo_pedidos.pedidos  # nada é excluído ao chegar em Entregue
 
 
-# Toda combinação de etapas (e valores estranhos) fora das quatro permitidas.
-ETAPAS_E_LIXO = [*ETAPAS, "qualquer", ""]
+# Toda combinação de etapas (e valores estranhos) fora das permitidas.
+ETAPAS_E_LIXO = [*ETAPAS, "cancelado", "qualquer", ""]
 PROIBIDOS = [(a, n) for a in ETAPAS_E_LIXO for n in ETAPAS_E_LIXO if (a, n) not in PERMITIDOS]
 
 
 def test_lista_de_proibidos_cobre_os_casos_pedidos():
     for caso in [
-        ("fila_producao", "aguardando_entrega"),  # pular
-        ("aguardando_entrega", "em_producao"),  # voltar
-        ("aguardando_entrega", "fila_producao"),  # voltar duas
-        ("entregue", "aguardando_entrega"),  # sair de entregue
-        ("entregue", "em_producao"),
-        ("entregue", "fila_producao"),
-        ("entregue", "entregue"),
-        ("fila_producao", "fila_producao"),  # ficar
+        ("entregue", "entregue"),  # ficar
+        ("fila_producao", "fila_producao"),
+        ("fila_producao", "cancelado"),  # cancelar é outra ação
+        ("fila_producao", "qualquer"),
+        ("qualquer", "em_producao"),
+        ("em_producao", ""),
     ]:
         assert caso in PROIBIDOS, caso
+    for caso in [
+        ("fila_producao", "aguardando_entrega"),  # pular
+        ("aguardando_entrega", "fila_producao"),  # voltar
+        ("entregue", "em_producao"),  # sair de entregue
+    ]:
+        assert caso in PERMITIDOS, caso
 
 
 @pytest.mark.parametrize(("esperada", "nova"), PROIBIDOS)

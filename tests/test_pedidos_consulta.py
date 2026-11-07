@@ -3,6 +3,8 @@
 Nenhum teste acessa o Supabase; os pedidos são criados só no repositório em memória.
 """
 
+import html as html_lib
+import json
 import re
 from dataclasses import replace
 from datetime import date
@@ -85,7 +87,7 @@ def test_tabela_tem_as_colunas_na_ordem_pedida(repo_pedidos):
         "Valor Total",
         "Prazo",
         "Status Pagamento",
-        "Status Entrega",
+        "Status Produção",
         "Observações",
         "Ações",
     ]
@@ -167,34 +169,39 @@ def test_status_do_pagamento_e_botao_com_icone_e_texto(repo_pedidos, status, rot
 
 
 @pytest.mark.parametrize(
-    ("etapa", "opcoes"),
+    ("etapa", "rotulo"),
     [
-        ("fila_producao", ["Na Fila", "Em Produção", "Finalizado"]),
-        ("em_producao", ["Em Produção", "Na Fila", "Ag. Entrega", "Finalizado"]),
-        ("aguardando_entrega", ["Ag. Entrega", "Finalizado"]),
+        ("fila_producao", "Na Fila"),
+        ("em_producao", "Em Produção"),
+        ("aguardando_entrega", "Ag. Entrega"),
+        ("entregue", "Finalizado"),
     ],
 )
-def test_status_da_producao_e_selecao_com_a_etapa_atual_e_destinos_permitidos(
-    repo_pedidos, etapa, opcoes
-):
+def test_status_da_producao_e_um_selo_clicavel_com_a_etapa_atual(repo_pedidos, etapa, rotulo):
     pedido = novo_pedido(repo_pedidos)
     repo_pedidos.etapas[pedido.id] = etapa
 
-    c = card(client.get("/pedidos").text, "Cliente Teste")
+    html = client.get("/pedidos?status=" + etapa).text
+    c = card(html, "Cliente Teste")
 
-    assert f'<select class="campo-texto pedidos-etapa" data-etapa="{etapa}"' in c
-    assert re.findall(r"<option[^>]*>(.*?)</option>", c) == opcoes
-    assert f'<option value="{etapa}" selected>' in c
+    assert "<select" not in c  # sem lista suspensa na coluna
+    assert f'<button type="button" class="pedidos-etapa etapa-{etapa}" data-etapa="{etapa}"' in c
+    assert 'aria-haspopup="menu"' in c
+    assert f'<span class="pedidos-etapa-texto">{rotulo}</span>' in c
 
 
-def test_pedido_finalizado_nao_tem_selecao(repo_pedidos):
-    pedido = novo_pedido(repo_pedidos)
-    repo_pedidos.etapas[pedido.id] = "entregue"
+def test_menu_do_status_oferece_todas_as_etapas(repo_pedidos):
+    novo_pedido(repo_pedidos)
 
-    c = card(client.get("/pedidos").text, "Cliente Teste")
+    html = client.get("/pedidos").text
 
-    assert "<select" not in c
-    assert "Finalizado" in c
+    etapas = json.loads(html_lib.unescape(re.search(r"data-etapas='([^']*)'", html).group(1)))
+    assert etapas == [
+        ["fila_producao", "Na Fila"],
+        ["em_producao", "Em Produção"],
+        ["aguardando_entrega", "Ag. Entrega"],
+        ["entregue", "Finalizado"],
+    ]
 
 
 def test_pagina_carrega_o_script_e_o_token_da_tabela(repo_pedidos):

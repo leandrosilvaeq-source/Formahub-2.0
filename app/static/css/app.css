@@ -1701,50 +1701,76 @@ main {
   overflow-wrap: anywhere;
 }
 
-.pedidos-etapa-caixa {
-  position: relative;
+/* Status da produção: selo (pílula) clicável que abre o menu de etapas (pedidos-lista.js) */
+.pedidos-etapa {
   display: inline-flex;
   align-items: center;
-}
-.pedidos-etapa-caixa .etapa-ponto {
-  position: absolute;
-  left: 0.8rem;
-  pointer-events: none;
-}
-.pedidos-etapa {
+  gap: 0.5rem;
   min-height: var(--alvo-toque);
-  width: auto;
-  min-width: 11rem;
-  padding: 0.5rem 2.4rem 0.5rem 1.9rem;
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--cor-borda-campo);
-  border-radius: var(--raio-campo);
-  background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23566' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
-      right 0.7rem center / 1rem no-repeat,
-    color-mix(in srgb, var(--cor-etapa, var(--cor-etapa-fila)) 10%, var(--branco));
+  padding: 0.35rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--cor-etapa) 35%, var(--branco));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cor-etapa) 12%, var(--branco));
   color: var(--cor-texto);
-  font-size: 0.875rem;
+  font: inherit;
+  font-size: 0.85rem;
   font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.pedidos-etapa:hover,
+.pedidos-etapa[aria-expanded="true"] {
+  border-color: var(--cor-etapa);
+  background: color-mix(in srgb, var(--cor-etapa) 20%, var(--branco));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--azul-marinho) 14%, transparent);
+}
+.pedidos-etapa:focus-visible { outline: 2px solid var(--cor-destaque); outline-offset: 2px; }
+.pedidos-etapa:disabled { cursor: progress; opacity: 0.6; }
+
+.etapa-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: 0.35rem;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-campo);
+  background: var(--cor-superficie);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--azul-marinho) 18%, transparent);
+}
+.etapa-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 0;
+  border-radius: calc(var(--raio-campo) - 2px);
+  background: none;
+  color: var(--cor-texto);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
   cursor: pointer;
 }
-.pedidos-etapa:hover { border-color: var(--cor-texto-suave); }
-.pedidos-etapa:focus-visible { outline: 2px solid var(--cor-destaque); outline-offset: 2px; }
-.pedidos-etapa option {
-  padding: 0.6rem 0.75rem;
-  background: var(--branco);
-  color: var(--cor-texto);
-  font-weight: 500;
+.etapa-menu-item:hover,
+.etapa-menu-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--cor-etapa) 14%, var(--branco));
 }
-/* Opção selecionada: fundo e peso próprios, além da cor do ponto */
-.pedidos-etapa option:checked {
-  background: var(--cor-primaria);
-  color: var(--cor-primaria-texto);
-  font-weight: 700;
+.etapa-menu-item[aria-checked="true"] { font-weight: 700; }
+.etapa-menu-item[aria-checked="true"]::after {
+  content: "";
+  width: 0.45rem;
+  height: 0.8rem;
+  margin: -0.2rem 0.1rem 0 auto;
+  border: solid var(--cor-texto);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
-
-.pedidos-etapa:disabled { cursor: progress; opacity: 0.6; }
 
 /* Marcador colorido de cada etapa (filtros e etapa final na tabela) */
 .etapa-ponto {

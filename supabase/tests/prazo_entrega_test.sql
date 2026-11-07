@@ -48,9 +48,6 @@ declare
   v_mover     constant text := 'public.mover_etapa_producao(bigint, text, text, bigint)';
   v_etapas    constant text[] := array['fila_producao', 'em_producao', 'aguardando_entrega',
                                        'entregue'];
-  v_permitidos constant text[] := array['fila_producao>em_producao', 'em_producao>fila_producao',
-                                        'em_producao>aguardando_entrega',
-                                        'aguardando_entrega>entregue'];
   v_leandro   bigint;
   v_kassia    bigint;
   v_funcao    text;
@@ -156,11 +153,11 @@ begin
     raise exception 'foto de destaque: empate deveria escolher o primeiro item (%)', v_linha;
   end if;
 
-  -- ---------- Movimentos: os 4 permitidos e todos os outros recusados ----------
+  -- ---------- Movimentos: qualquer etapa -> outra (migration 20261106120000); ficar é recusado ----------
   foreach v_de in array v_etapas loop
     foreach v_para in array v_etapas loop
       update public.pedidos set etapa_producao = v_de where id = -1;
-      if v_de || '>' || v_para = any (v_permitidos) then
+      if v_de <> v_para then
         v_retorno := public.mover_etapa_producao(-1, v_de, v_para, v_kassia);
         if v_retorno ->> 'etapa_producao' <> v_para
            or v_retorno ->> 'etapa_atualizada_por_nome' <> 'Kassia' then

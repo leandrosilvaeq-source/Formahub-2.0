@@ -84,18 +84,14 @@ MOVIMENTOS_ETAPA = {
 }
 
 
-# Na lista de pedidos, o pedido também pode ser finalizado (entregue) de qualquer etapa; o
-# quadro da Produção continua só com os botões de MOVIMENTOS_ETAPA.
-MOVIMENTOS_PEDIDOS = {
-    etapa: [*movimentos, Movimento("entregue", "Finalizar")]
-    if all(m.destino != "entregue" for m in movimentos)
-    else list(movimentos)
-    for etapa, movimentos in MOVIMENTOS_ETAPA.items()
-}
+# Na lista de pedidos, o status da produção pode ir de qualquer etapa para qualquer outra
+# (inclusive sair de "entregue"); o quadro da Produção continua só com os botões de
+# MOVIMENTOS_ETAPA. Mesma regra da função mover_etapa_producao do banco.
+CODIGOS_ETAPA = [codigo for codigo, _ in ETAPAS_PRODUCAO]
 
 
 def movimento_permitido(atual: str, nova: str) -> bool:
-    return any(m.destino == nova for m in MOVIMENTOS_PEDIDOS.get(atual, []))
+    return atual in CODIGOS_ETAPA and nova in CODIGOS_ETAPA and atual != nova
 
 
 # Status do pagamento na Produção: alterna entre os dois valores (os mesmos da função
