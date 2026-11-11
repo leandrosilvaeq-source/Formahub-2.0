@@ -1,11 +1,17 @@
 """Registrar Compra: leitura do formulário da janela, validação, cálculos e gravação.
 
-Toda entrada no estoque é uma compra: data, local e uma ou mais linhas (filamento, acessório
-ou embalagem). Cada linha vira um lote ligado ao item da compra que o originou.
+Toda entrada no estoque é uma compra: data, local, desconto, frete e uma lista única de linhas,
+cada uma com a sua categoria (filamento, acessório, embalagem, peça de reposição ou item geral).
+Cada linha de filamento, acessório ou embalagem vira um lote ligado ao item da compra que o
+originou; peças de reposição e itens gerais ficam só na compra (não entram no estoque nem são
+lançados como manutenção realizada).
+Todas as linhas têm valor unitário. Subtotal = soma de quantidade x valor unitário; total =
+subtotal − desconto + frete. Frete e desconto ficam só na compra: não entram no custo dos lotes.
 O servidor valida tudo de novo; nada do navegador é confiado. Valores em Decimal, sem
 arredondar etapas intermediárias (a tela só arredonda o que mostra).
 
-Campos do formulário: csrf, chave_envio, data_compra, local, local_nome, frete e, para cada linha
+Campos do formulário: csrf, chave_envio, data_compra, local, local_nome, desconto, frete e, para
+cada linha
 na posição i da tela, item_{i}_categoria, item_{i}_<campo> e a foto opcional item_{i}_foto.
 Os erros voltam com essas mesmas chaves, para a tela marcar o campo certo.
 """
@@ -44,14 +50,15 @@ logger = logging.getLogger("formahub.estoque")
 
 # Local de compra: código do banco -> texto do botão (na ordem dos botões).
 LOCAIS = {
+    "tiktok_shop": "TikTok Shop",
     "mercado_livre": "Mercado Livre",
-    "shopee": "Shopee",
     "aliexpress": "AliExpress",
+    "shopee": "Shopee",
     "loja_fisica": "Loja Física",
-    "outro": "Outro",
+    "outro": "Outros sites",
 }
-LOCAIS_COM_NOME = {"outro", "loja_fisica"}  # pedem o nome do local
-# Logos das plataformas, servidos de app/static/img/locais (Loja Física e Outro usam ícones).
+LOCAIS_COM_NOME = {"outro", "loja_fisica"}  # pedem o nome do estabelecimento ou site
+# Logos das plataformas, servidos de app/static/img/locais (os demais locais usam ícones).
 LOGOS_LOCAIS = {
     "mercado_livre": "mercado-livre.webp",
     "shopee": "shopee.png",
@@ -66,9 +73,10 @@ def local_da_compra(local_tipo: str, local_nome: str | None) -> str:
 
 
 def descrever_item(item: ItemCompraListado) -> str:
-    """'3 rolos · PLA Silk Preto · Marca X · 1.000 g' ou '40 un · Argola'."""
+    """'3 rolos · PLA Silk Preto · Marca X · 1.000 g' ou '40 un · Argola · Dourada · 2 cm'."""
     if item.categoria != "filamento":
-        return f"{item.quantidade} un · {item.nome}"
+        extras = [t for t in (item.cor, item.medidas, item.marca) if t]
+        return " · ".join([f"{item.quantidade} un", item.nome, *extras])
     rolos = f"{item.quantidade} {'rolo' if item.quantidade == 1 else 'rolos'}"
     tipo = TIPOS_FILAMENTO.get(item.tipo, item.tipo)
     partes = [rolos, f"{item.material} {tipo} {item.cor}", item.marca]
@@ -118,41 +126,59 @@ class ResumoCompras:
 
 
 def resumir_compras(compras: tuple[CompraListada, ...] | list[CompraListada]):
-    """Os quatro cards da tela, sobre todas as compras recebidas.
+    """Os cards da tela, sobre todas as compras recebidas.
 
-    Compras: total das compras (itens + frete). Cada categoria: soma dos itens dela, sem ratear
-    o frete; uma compra com várias categorias conta em cada uma, mas só uma vez em Compras.
+    Compras: total das compras (itens − desconto + frete), cada item contado uma vez. Cada
+    categoria: soma dos itens dela, sem ratear frete nem desconto; uma compra com várias
+    categorias conta em cada uma, mas só uma vez em Compras.
     """
     resumo = {"compras": ResumoCompras(sum((c.total for c in compras), Decimal(0)), len(compras))}
-    for categoria in ("filamento", "acessorio", "embalagem"):
+    for categoria in CATEGORIAS:
         itens = [i for c in compras for i in c.itens if i.categoria == categoria]
         distintas = sum(any(i.categoria == categoria for i in c.itens) for c in compras)
         resumo[categoria] = ResumoCompras(sum((i.valor for i in itens), Decimal(0)), distintas)
     return resumo
 
 
-CATEGORIAS = {"filamento": "Filamento", "acessorio": "Acessório", "embalagem": "Embalagem"}
-# Cabeçalho de colunas de cada seção da janela (a ordem dos campos da linha).
-COLUNAS_COMPRA = {
-    "filamento": (
-        "Quantidade",
-        "Material",
-        "Tipo",
-        "Peso (g)",
-        "Cor",
-        "Marca",
-        "Valor unitário",
-    ),
-    "acessorio": ("Quantidade", "Nome", "Valor total"),
-    "embalagem": ("Quantidade", "Nome", "Valor total"),
+# Categoria da linha: código do banco -> nome na lista de categorias (e nos cards da tela).
+# "Peças de reposição" e "Itens gerais" são as antigas Peças de manutenção e Outros.
+CATEGORIAS = {
+    "filamento": "Filamento",
+    "acessorio": "Acessórios para produtos",
+    "embalagem": "Embalagens para produtos",
+    "peca_manutencao": "Peças de reposição",
+    "outro": "Itens gerais",
 }
-# Seções da janela, na ordem: (categoria, título, texto quando ainda não há linhas).
-SECOES_COMPRA = (
-    ("filamento", "Filamentos", "Nenhum filamento adicionado."),
-    ("acessorio", "Acessórios", "Nenhum acessório adicionado."),
-    ("embalagem", "Embalagens", "Nenhuma embalagem adicionada."),
-)
-
+# Campos de cada categoria, na ordem da linha; os demais ficam ocultos (e não são lidos).
+CAMPOS_CATEGORIA = {
+    "filamento": (
+        "material",
+        "cor",
+        "tipo",
+        "peso_rolo",
+        "quantidade",
+        "marca",
+        "valor_unitario",
+    ),
+    "acessorio": ("nome", "quantidade", "cor", "medidas", "valor_unitario"),
+    "embalagem": ("nome", "quantidade", "cor", "medidas", "valor_unitario"),
+    "peca_manutencao": ("nome", "quantidade", "marca", "valor_unitario"),
+    "outro": ("nome", "quantidade", "marca", "valor_unitario"),
+}
+# Campos opcionais fora do filamento (no filamento, todos são obrigatórios).
+OPCIONAIS = {"cor", "medidas", "marca"}
+# Rótulo curto de cada campo da linha.
+ROTULOS_CAMPOS = {
+    "nome": "Item",
+    "material": "Material",
+    "cor": "Cor",
+    "tipo": "Tipo",
+    "peso_rolo": "Peso/un (g)",
+    "quantidade": "Qtd.",
+    "marca": "Marca",
+    "medidas": "Medidas",
+    "valor_unitario": "Valor unit.",
+}
 # Os mesmos limites dos CHECK do banco.
 LIMITE_ITENS = 50
 LIMITE_ROLOS = 5  # rolos por linha de filamento (para mais, adicione outra linha)
@@ -201,6 +227,7 @@ class Compra:
     local_tipo: str = ""
     local_nome: str | None = None
     frete: Decimal = Decimal("0")
+    desconto: Decimal = Decimal("0")
     # Linhas na ordem da tela, cada uma com a foto escolhida (ou None).
     itens: list[tuple[ItemCompraParaGravar, Imagem | None]] = field(default_factory=list)
     # Edição: ordem do item -> caminho da foto já gravada que a linha mantém (campo foto_atual).
@@ -217,14 +244,14 @@ def peso_recebido(item: ItemCompraParaGravar) -> Decimal:
 
 
 def valor_total(item: ItemCompraParaGravar) -> Decimal:
-    """Filamento: quantidade x valor unitário; acessório e embalagem: o valor digitado."""
+    """Quantidade x valor unitário (fora do filamento, o valor_total já calculado assim)."""
     if item.categoria == "filamento":
         return item.quantidade * item.valor_unitario
     return item.valor_total
 
 
 def custo(item: ItemCompraParaGravar) -> Decimal:
-    """Filamento: custo/kg; acessório e embalagem: custo unitário (sem arredondar)."""
+    """Filamento: custo/kg; demais categorias: custo unitário (sem arredondar)."""
     if item.categoria == "filamento":
         return custo_por_kg(item.valor_unitario, item.peso_rolo_g)
     return custo_por_unidade(item.valor_total, item.quantidade)
@@ -235,9 +262,9 @@ def subtotal_itens(itens: list[ItemCompraParaGravar]) -> Decimal:
     return sum((valor_total(item) for item in itens), Decimal("0"))
 
 
-def total_da_compra(subtotal: Decimal, frete: Decimal) -> Decimal:
-    """Total da compra = subtotal dos itens + frete. O frete não entra no custo dos lotes."""
-    return subtotal + frete
+def total_da_compra(subtotal: Decimal, frete: Decimal, desconto: Decimal = Decimal(0)) -> Decimal:
+    """Total = subtotal − desconto + frete. Frete e desconto não entram no custo dos lotes."""
+    return subtotal - desconto + frete
 
 
 # ---------- Leitura e validação ----------
@@ -279,12 +306,19 @@ def _valor(texto: str, rotulo: str) -> tuple[Decimal | None, str | None]:
     return valor, None
 
 
-def _frete(texto: str) -> tuple[Decimal, str | None]:
-    """Frete opcional: vazio vale zero; não pode ser negativo."""
+def _frete(texto: str, rotulo: str = "frete") -> tuple[Decimal, str | None]:
+    """Frete ou desconto opcional: vazio vale zero; não pode ser negativo."""
     if not texto:
         return Decimal("0"), None
-    valor, problema = _valor(texto, "frete")
+    valor, problema = _valor(texto, rotulo)
     return (valor if valor is not None else Decimal("0")), problema
+
+
+def _opcional(texto: str, erros: dict[str, str], campo: str) -> str | None:
+    """Texto opcional (cor, medidas, marca): vazio vira None; até LIMITE_TEXTO caracteres."""
+    if len(texto) > LIMITE_TEXTO:
+        erros[campo] = f"Use no máximo {LIMITE_TEXTO} caracteres."
+    return texto or None
 
 
 def _peso_rolo(texto: str) -> tuple[Decimal | None, str | None]:
@@ -320,7 +354,7 @@ def _validar_linha(
     if categoria == "filamento":
         quantidade, problema = _quantidade(campo("quantidade"), LIMITE_ROLOS, "quantidade")
         if problema == "Quantidade alta demais.":
-            problema = f"Escolha de 1 a {LIMITE_ROLOS} rolos; para mais, adicione outra linha."
+            problema = f"Use de 1 a {LIMITE_ROLOS} rolos por linha; para mais, duplique a linha."
         if problema:
             e["quantidade"] = problema
         cor, material, marca, tipo = campo("cor"), campo("material"), campo("marca"), campo("tipo")
@@ -348,23 +382,30 @@ def _validar_linha(
                 valor_unitario=valor,
             )
     elif categoria in CATEGORIAS:
-        rotulo = CATEGORIAS[categoria].lower()
         nome = campo("nome")
-        artigo = "do" if categoria == "acessorio" else "da"
-        validar_texto(nome, e, "nome", f"o nome {artigo} {rotulo}")
+        validar_texto(nome, e, "nome", "o nome do item")
         quantidade, problema = _quantidade(campo("quantidade"), LIMITE_QUANTIDADE, "quantidade")
         if problema:
             e["quantidade"] = problema
-        valor, problema = _valor(campo("valor_total"), "valor total")
+        valor, problema = _valor(campo("valor_unitario"), "valor unitário")
         if problema:
-            e["valor_total"] = problema
+            e["valor_unitario"] = problema
+        # Só os opcionais da categoria; os de outra categoria (ocultos na tela) são ignorados.
+        extras = {
+            nome_campo: _opcional(campo(nome_campo), e, nome_campo)
+            for nome_campo in sorted(OPCIONAIS & set(CAMPOS_CATEGORIA[categoria]))
+        }
+        if not e and quantidade * valor > LIMITE_VALOR:
+            e["valor_unitario"] = "Valor total da linha alto demais."
         if not e:
             item = ItemCompraParaGravar(
                 ordem=ordem,
                 categoria=categoria,
                 quantidade=quantidade,
                 nome=nome,
-                valor_total=valor,
+                valor_unitario=valor,
+                valor_total=quantidade * valor,
+                **extras,
             )
     else:
         e["categoria"] = "Item de tipo desconhecido. Remova a linha e adicione de novo."
@@ -399,7 +440,7 @@ def validar_compra(
         # Outro ou Loja Física: o nome do local é obrigatório.
         nome = _limpo(textos.get("local_nome", ""))
         if not nome:
-            e["local_nome"] = "Informe o nome do local."
+            e["local_nome"] = "Informe o nome do estabelecimento ou site."
         elif len(nome) > LIMITE_TEXTO:
             e["local_nome"] = f"Use no máximo {LIMITE_TEXTO} caracteres."
         else:
@@ -409,6 +450,9 @@ def validar_compra(
     compra.frete, problema = _frete(_limpo(textos.get("frete", "")))
     if problema:
         e["frete"] = problema
+    compra.desconto, problema = _frete(_limpo(textos.get("desconto", "")), "desconto")
+    if problema:
+        e["desconto"] = problema
 
     canonicas = {_chave_cor(c): c for c in cores or []}
     linhas = _linhas(textos)
@@ -429,6 +473,10 @@ def validar_compra(
             compra.itens.append((item, imagem))
             if imagem is None and (atual := campos.get("foto_atual", "").strip()):
                 compra.fotos_atuais[ordem] = atual
+    # Desconto até o subtotal: só dá para conferir com todas as linhas válidas.
+    if "desconto" not in e and linhas and len(compra.itens) == len(linhas):
+        if compra.desconto > subtotal_itens([item for item, _ in compra.itens]):
+            e["desconto"] = "O desconto não pode ser maior que o subtotal dos itens."
     return compra
 
 
@@ -487,6 +535,7 @@ def _gravar(
                 usuario_id=usuario_id,
                 itens=tuple(itens),
                 frete=compra.frete,
+                desconto=compra.desconto,
             )
         )
     except Exception as erro:

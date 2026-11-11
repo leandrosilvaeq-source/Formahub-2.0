@@ -30,6 +30,11 @@ def registrar(estoque, *linhas, fotos=None, **extra):
     assert enviar(compra(*linhas, **extra), fotos=fotos).status_code == 200
 
 
+def pagina(html: str) -> str:
+    """A tela sem a janela Registrar Compra (que traz sugestões de todas as compras)."""
+    return html[: html.index('<dialog id="compra-janela"')]
+
+
 def card(html: str, chave: str) -> str:
     """Texto do card (compras, filamento, acessorio ou embalagem), sem as marcas HTML."""
     inicio = html.index(f'id="card-{chave}"')
@@ -40,7 +45,7 @@ def card(html: str, chave: str) -> str:
 # ---------- Estado vazio, falha e botão ----------
 
 
-def test_sem_compras_mostra_quatro_cards_zerados_e_mensagem(estoque):
+def test_sem_compras_mostra_seis_cards_zerados_e_mensagem(estoque):
     resposta = client.get("/compras")
 
     assert resposta.status_code == 200
@@ -50,8 +55,10 @@ def test_sem_compras_mostra_quatro_cards_zerados_e_mensagem(estoque):
     for chave, titulo in (
         ("compras", "Compras"),
         ("filamento", "Filamentos"),
-        ("acessorio", "Acessórios"),
-        ("embalagem", "Embalagens"),
+        ("acessorio", "Acessórios para produtos"),
+        ("embalagem", "Embalagens para produtos"),
+        ("peca_manutencao", "Peças de reposição"),
+        ("outro", "Itens gerais"),
     ):
         assert card(html, chave).startswith(f"{titulo} R$ 0,00 0 compras")
     assert "Nenhuma compra registrada" in html
@@ -106,7 +113,9 @@ def test_cards_somam_itens_e_frete_sem_ratear_o_frete(estoque):
     # Compra mista: filamento 269,70 + acessório 14,00 + frete 20,00 = 303,70.
     registrar(estoque, filamento(0), item(1, "acessorio"), frete="R$ 20,00")
     registrar(estoque, filamento(0, valor_unitario="R$ 10,00"))  # 30,00, sem frete
-    registrar(estoque, item(0, "embalagem", valor_total="R$ 5,00"), frete="R$ 2,00")
+    registrar(
+        estoque, item(0, "embalagem", quantidade="10", valor_total="R$ 5,00"), frete="R$ 2,00"
+    )
 
     html = client.get("/compras").text
 
@@ -114,6 +123,62 @@ def test_cards_somam_itens_e_frete_sem_ratear_o_frete(estoque):
     assert "R$ 299,70 2 compras" in card(html, "filamento")  # 269,70 + 30,00
     assert "R$ 14,00 1 compra " in card(html, "acessorio")
     assert "R$ 5,00 1 compra " in card(html, "embalagem")
+
+
+def test_cards_das_categorias_novas_e_total_sem_contar_item_duas_vezes(estoque):
+    # filamento 269,70 + peça 30,00 + outro 7,50 + frete 10,00 = 317,20.
+    registrar(
+        estoque,
+        filamento(0),
+        item(1, "peca_manutencao", nome="Bico", quantidade="2", valor_total="R$ 30,00"),
+        item(2, "outro", nome="Fita", quantidade="1", valor_total="R$ 7,50"),
+        frete="R$ 10,00",
+    )
+    registrar(estoque, item(0, "peca_manutencao", nome="Correia", valor_total="R$ 12,00"))
+
+    html = client.get("/compras").text
+
+    assert "R$ 329,20 2 compras" in card(html, "compras")  # 317,20 + 12,00
+    assert "R$ 42,00 2 compras" in card(html, "peca_manutencao")
+    assert "R$ 7,50 1 compra " in card(html, "outro")
+    assert "R$ 269,70 1 compra " in card(html, "filamento")
+    assert "2 un · Bico" in html and "1 un · Fita" in html and "40 un · Correia" in html
+
+
+def test_janela_tem_lista_unica_com_as_cinco_categorias(estoque):
+    html = client.get("/compras").text
+
+    assert html.count('<template id="modelo-') == 1  # um só modelo de linha
+    modelo = html[html.index('<template id="modelo-item">') :]
+    modelo = modelo[: modelo.index("</template>")]
+    for codigo, rotulo in (
+        ("filamento", "Filamento"),
+        ("acessorio", "Acessórios para produtos"),
+        ("embalagem", "Embalagens para produtos"),
+        ("peca_manutencao", "Peças de reposição"),
+        ("outro", "Itens gerais"),
+    ):
+        assert f'<option value="{codigo}">{rotulo}</option>' in modelo
+    for campo in (
+        "categoria",
+        "nome",
+        "material",
+        "cor",
+        "tipo",
+        "peso_rolo",
+        "quantidade",
+        "marca",
+        "medidas",
+        "valor_unitario",
+    ):
+        assert f'data-campo="{campo}"' in modelo
+    assert 'data-campo="valor_total"' not in modelo
+    assert "upload-item" in modelo
+    assert "compra-item-duplicar" in modelo and "compra-item-remover" in modelo
+    assert html.count("data-adicionar") == 1 and ">+ Adicionar item</button>" in html
+    # Campos de cada categoria (na ordem) vêm do servidor.
+    assert '"peca_manutencao": ["nome", "quantidade", "marca", "valor_unitario"]' in html
+    assert 'name="desconto"' in html and 'name="frete"' in html
 
 
 def test_compra_mista_conta_uma_vez_em_compras_e_em_cada_categoria(estoque):
@@ -186,8 +251,9 @@ def test_filtro_atualiza_cards_e_tabela_pela_data_da_compra(estoque):
 
     assert '<option value="2026-09" selected>' in html
     assert "Compras de Setembro/2026" in html
-    assert "Início de setembro" in html and "Fim de setembro" in html
-    assert "De agosto" not in html and "De outubro" not in html  # limites do mês
+    tela = pagina(html)
+    assert "Início de setembro" in tela and "Fim de setembro" in tela
+    assert "De agosto" not in tela and "De outubro" not in tela  # limites do mês
     assert "R$ 28,00 2 compras" in card(html, "compras")
     assert "R$ 14,00 1 compra " in card(html, "acessorio")
     assert "R$ 14,00 1 compra " in card(html, "embalagem")
@@ -199,7 +265,7 @@ def test_dezembro_vai_ate_o_fim_do_ano(estoque):
 
     html = client.get("/compras?periodo=2026-12").text
 
-    assert "De dezembro" in html and "De outubro" not in html
+    assert "De dezembro" in pagina(html) and "De outubro" not in pagina(html)
     assert "1 compra " in card(html, "compras")
 
 
@@ -247,7 +313,8 @@ def test_leitura_pede_o_periodo_ao_repositorio(estoque):
     client.get("/compras?periodo=2026-12")
     client.get("/compras")
 
-    assert chamadas == [(date(2026, 12, 1), date(2027, 1, 1)), ()]
+    # Com período, uma segunda leitura (todas as compras) alimenta as sugestões da janela.
+    assert chamadas == [(date(2026, 12, 1), date(2027, 1, 1)), (), ()]
 
 
 # ---------- Tabela ----------

@@ -1,9 +1,15 @@
-// Tela Compras: janela Registrar Compra (abrir, linhas dinâmicas, máscaras, cálculos e envio).
+// Tela Compras: janela Registrar Compra (abrir, lista única de itens, máscaras, cálculos e envio).
 //
-// Os cálculos da tela são só uma prévia (valores inteiros em centavos e centigramas, para não
-// acumular erro); o servidor valida e calcula tudo de novo com Decimal.
-// Envio: multipart/form-data com cada campo da linha na posição i como item_{i}_{campo} e a foto
-// como item_{i}_foto. A resposta é JSON: {destino} no sucesso; {erro, campos} quando não salva.
+// Cada linha tem uma categoria e mostra só os campos dela, na ordem de data-campos (vinda do
+// servidor). Trocar a categoria não apaga nada: os campos que deixam de aparecer guardam o que
+// foi digitado (e voltam se a categoria voltar), mas não são enviados; a linha avisa e oferece
+// "Desfazer troca".
+// Os cálculos da tela são só uma prévia (valores inteiros em centavos, para não acumular erro):
+// subtotal = soma de quantidade x valor unitário; total = subtotal − desconto + frete. O servidor
+// valida e calcula tudo de novo com Decimal.
+// Envio: multipart/form-data com cada campo visível da linha na posição i como item_{i}_{campo} e
+// a foto como item_{i}_foto. A resposta é JSON: {destino} no sucesso; {erro, campos} quando não
+// salva (a janela continua aberta com tudo o que foi digitado).
 // Cancelar (botão, × ou Esc) fecha a janela sem enviar nada e descarta o que foi digitado.
 // Editar (botão de cada compra da lista, data-editar-compra com os dados em JSON) abre a mesma
 // janela já preenchida, com o título "Editar Compra", e envia para /compras/{id}/editar.
@@ -15,14 +21,17 @@
 
   const form = document.getElementById("form-compra");
   const lista = document.getElementById("compra-itens");
+  const vazio = form.querySelector(".compra-itens-vazio");
+  const botaoAdicionar = form.querySelector("[data-adicionar]");
   const alerta = document.getElementById("compra-alerta");
   const corpo = janela.querySelector(".compra-corpo");
   const campoData = document.getElementById("compra-data");
   const caixaNome = document.getElementById("campo-local_nome");
   const campoNome = document.getElementById("compra-local-nome");
   const campoFrete = document.getElementById("compra-frete");
+  const campoDesconto = document.getElementById("compra-desconto");
+  const avisoDesconto = document.getElementById("compra-desconto-aviso");
   const saidaSubtotal = document.getElementById("compra-subtotal");
-  const saidaFrete = document.getElementById("compra-total-frete");
   const saidaTotal = document.getElementById("compra-total");
   const botaoSalvar = form.querySelector('button[type="submit"]');
   const titulo = document.getElementById("compra-titulo");
@@ -30,9 +39,13 @@
   const EDICAO = { titulo: "Editar Compra", salvar: "Salvar alterações" };
   let textoSalvar = NOVA.salvar;
 
+  const CAMPOS = JSON.parse(form.dataset.campos); // categoria -> campos, na ordem da linha
+  const OPCIONAIS = JSON.parse(form.dataset.opcionais); // opcionais fora do filamento
+  const NOMES_CATEGORIAS = JSON.parse(form.dataset.categorias);
+  const LIMITE_ITENS = Number(form.dataset.limiteItens) || 50;
+
   const MENSAGEM_FALHA = "Não foi possível salvar agora. Tente novamente em instantes.";
   const MENSAGEM_SESSAO = "Sua sessão expirou. Entre novamente para registrar a compra.";
-  const NOMES = { filamento: "Filamento", acessorio: "Acessório", embalagem: "Embalagem" };
 
   let sequencia = 0; // ids únicos dos campos de cada linha
   let abridor = null; // botão que abriu a janela (recebe o foco ao fechar)
@@ -55,11 +68,12 @@
     return String(texto).replace(/\D/g, "");
   }
 
-  // Centavos (inteiro) -> "R$ 1.234,56".
+  // Centavos (inteiro) -> "R$ 1.234,56" (negativo: "−R$ 1,00").
   function formatarCentavos(centavos) {
-    const texto = String(Math.round(centavos)).padStart(3, "0");
+    const sinal = centavos < 0 ? "−" : "";
+    const texto = String(Math.round(Math.abs(centavos))).padStart(3, "0");
     const inteiro = texto.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-    return "R$ " + inteiro + "," + texto.slice(-2);
+    return sinal + "R$ " + inteiro + "," + texto.slice(-2);
   }
 
   // Estilo bancário: os dígitos entram pela direita ("123456" -> "R$ 1.234,56").
@@ -68,116 +82,130 @@
     return d.length === 0 ? "" : formatarCentavos(Number(d));
   }
 
-  // Peso por rolo: até 5 dígitos inteiros e 2 decimais, com vírgula ("750,5").
-  function mascaraPeso(texto) {
-    const t = String(texto).replace(/\./g, ",").replace(/[^\d,]/g, "");
-    const virgula = t.indexOf(",");
-    if (virgula === -1) return t.slice(0, 5);
-    return t.slice(0, virgula).slice(0, 5) + "," + t.slice(virgula + 1).replace(/,/g, "").slice(0, 2);
+  // Data: só números, com as barras no lugar ("10092026" -> "10/09/2026").
+  function mascaraData(texto) {
+    const d = digitos(texto).slice(0, 8);
+    if (d.length <= 2) return d;
+    if (d.length <= 4) return d.slice(0, 2) + "/" + d.slice(2);
+    return d.slice(0, 2) + "/" + d.slice(2, 4) + "/" + d.slice(4);
   }
 
   const MASCARAS = {
     quantidade: function (t) { return digitos(t); },
-    peso_rolo: mascaraPeso,
     valor_unitario: mascaraMoeda,
-    valor_total: mascaraMoeda,
   };
 
   // ---------- Cálculos (prévia) ----------
 
   function centavos(texto) {
     const d = digitos(texto);
-    return d ? Number(d) : null;
+    return d ? Number(d) : 0;
   }
 
-  function centigramas(texto) {
-    const m = /^(\d+)(?:,(\d{0,2}))?$/.exec(texto);
-    if (!m) return null;
-    return Number(m[1]) * 100 + Number((m[2] || "").padEnd(2, "0"));
+  function campoDe(linha, nome) {
+    return linha.querySelector('[data-campo="' + nome + '"]');
   }
 
-  function gramas(cg) {
-    return (cg / 100).toLocaleString("pt-BR", { maximumFractionDigits: 2 }) + " g";
-  }
-
-  function valorDe(linha, campo) {
-    const el = linha.querySelector('[data-campo="' + campo + '"]');
+  function valorDe(linha, nome) {
+    const el = campoDe(linha, nome);
     return el ? el.value : "";
   }
 
-  // Resumos das seções (sem frete) e totais da compra. Subtotal = soma dos valores das linhas;
-  // total = subtotal + frete (frete vazio vale zero). Linhas incompletas contam o que já tem valor.
+  // Valor da linha = quantidade x valor unitário (linhas incompletas contam o que já têm).
+  function valorDaLinha(linha) {
+    return (Number(digitos(valorDe(linha, "quantidade"))) || 0) * centavos(valorDe(linha, "valor_unitario"));
+  }
+
   function atualizarTotais() {
-    const secoes = {
-      filamento: { pesoCg: 0, valor: 0 },
-      acessorio: { quantidade: 0, valor: 0 },
-      embalagem: { quantidade: 0, valor: 0 },
-    };
+    let subtotal = 0;
     linhas().forEach(function (linha) {
-      const resumo = secoes[linha.dataset.categoria];
-      const qtd = Number(digitos(valorDe(linha, "quantidade"))) || 0;
-      if (linha.dataset.categoria === "filamento") {
-        resumo.pesoCg += qtd * (centigramas(valorDe(linha, "peso_rolo")) || 0);
-        resumo.valor += qtd * (centavos(valorDe(linha, "valor_unitario")) || 0);
-      } else {
-        resumo.quantidade += qtd;
-        resumo.valor += centavos(valorDe(linha, "valor_total")) || 0;
-      }
+      const valor = valorDaLinha(linha);
+      linha.querySelector("[data-total-linha]").textContent = formatarCentavos(valor);
+      subtotal += valor;
     });
-    Object.keys(secoes).forEach(function (categoria) {
-      const caixa = lista.querySelector('[data-lista="' + categoria + '"]');
-      const resumo = secoes[categoria];
-      const preencher = function (nome, texto) {
-        const el = caixa.querySelector('[data-resumo="' + nome + '"]');
-        if (el) el.textContent = texto;
-      };
-      if (categoria === "filamento") preencher("peso", gramas(resumo.pesoCg));
-      else preencher("quantidade", resumo.quantidade.toLocaleString("pt-BR") + " un");
-      preencher("valor", formatarCentavos(resumo.valor));
-    });
-    const subtotal = secoes.filamento.valor + secoes.acessorio.valor + secoes.embalagem.valor;
-    const frete = centavos(campoFrete.value) || 0;
+    const desconto = centavos(campoDesconto.value);
+    const frete = centavos(campoFrete.value);
     saidaSubtotal.textContent = formatarCentavos(subtotal);
-    saidaFrete.textContent = formatarCentavos(frete);
-    saidaTotal.textContent = formatarCentavos(subtotal + frete);
+    saidaTotal.textContent = formatarCentavos(subtotal - desconto + frete);
+    avisoDesconto.hidden = desconto <= subtotal;
   }
 
   // ---------- Linhas ----------
 
   function linhas() {
-    // Na ordem da tela (Filamentos, Acessórios, Embalagens): é a posição enviada ao servidor.
+    // Na ordem da tela: é a posição enviada ao servidor.
     return Array.prototype.slice.call(lista.querySelectorAll(".compra-item"));
   }
 
-  // Cada linha é numerada dentro da sua seção (só no aria-label: as linhas não têm título);
-  // data-pos é a posição na tela.
+  // Campos de outras categorias que guardam algo digitado (ficariam de fora ao salvar).
+  function guardados(linha) {
+    const visiveis = CAMPOS[linha.dataset.categoria] || [];
+    return Array.prototype.filter.call(linha.querySelectorAll("[data-campo-de]"), function (caixa) {
+      const nome = caixa.dataset.campoDe;
+      const el = campoDe(linha, nome);
+      return visiveis.indexOf(nome) === -1 && el && el.value.trim() !== "";
+    }).map(function (caixa) {
+      return caixa.querySelector("label").firstChild.textContent.trim();
+    });
+  }
+
+  function atualizarAviso(linha) {
+    const aviso = linha.querySelector(".compra-item-aviso");
+    const nomes = guardados(linha);
+    aviso.hidden = nomes.length === 0 || !linha.dataset.anterior;
+    if (!aviso.hidden) {
+      aviso.querySelector(".compra-item-aviso-texto").textContent =
+        "Não usados em " + NOMES_CATEGORIAS[linha.dataset.categoria] + " e não serão salvos: " +
+        nomes.join(", ") + ".";
+    }
+  }
+
+  // Mostra só os campos da categoria, na ordem dela; os outros ficam ocultos com o que já têm.
+  function aplicarCategoria(linha, categoria) {
+    const visiveis = CAMPOS[categoria] || [];
+    const caixa = linha.querySelector(".compra-item-campos");
+    linha.dataset.categoria = categoria;
+    campoDe(linha, "categoria").value = categoria;
+    linha.querySelectorAll("[data-campo-de]").forEach(function (campo) {
+      const nome = campo.dataset.campoDe;
+      campo.hidden = visiveis.indexOf(nome) === -1;
+      const opcional = categoria !== "filamento" && OPCIONAIS.indexOf(nome) !== -1;
+      campo.querySelector(".obrigatorio").hidden = opcional;
+      campo.classList.toggle("compra-campo-opcional", opcional);
+    });
+    visiveis.forEach(function (nome) {
+      caixa.insertBefore(linha.querySelector('[data-campo-de="' + nome + '"]'), caixa.querySelector(".compra-item-total"));
+    });
+    const nome = campoDe(linha, "nome");
+    if (categoria === "filamento") nome.removeAttribute("list");
+    else nome.setAttribute("list", "compra-nomes-" + categoria);
+    // Erro de um campo que sumiu deixa de valer.
+    linha.querySelectorAll(".compra-campo[hidden].tem-erro").forEach(limparErro);
+    atualizarAviso(linha);
+  }
+
+  // Cada linha é numerada na lista (aria-label e botões); data-pos é a posição na tela.
   function numerar() {
-    const contagem = {};
     linhas().forEach(function (linha, i) {
-      const categoria = linha.dataset.categoria;
-      const n = (contagem[categoria] = (contagem[categoria] || 0) + 1);
-      const nome = NOMES[categoria];
-      linha.dataset.pos = String(i + 1);
-      linha.setAttribute("aria-label", nome + " " + n);
+      const n = i + 1;
+      linha.dataset.pos = String(n);
+      linha.setAttribute("aria-label", "Item " + n);
       const remover = linha.querySelector(".compra-item-remover");
-      remover.setAttribute("aria-label", "Remover " + nome.toLowerCase() + " " + n);
-      remover.title = "Remover " + nome.toLowerCase() + " " + n;
+      remover.setAttribute("aria-label", "Remover item " + n);
+      remover.title = "Remover item " + n;
+      const duplicar = linha.querySelector(".compra-item-duplicar");
+      duplicar.setAttribute("aria-label", "Duplicar item " + n);
+      duplicar.title = "Duplicar item " + n;
     });
-    // Seção sem linhas mostra o aviso; a lista (cabeçalho, linhas e resumo) só aparece com linhas.
-    lista.querySelectorAll(".compra-secao").forEach(function (secao) {
-      const vazia = !secao.querySelector(".compra-item");
-      secao.querySelector(".compra-secao-vazio").hidden = !vazia;
-      const caixa = secao.querySelector(".compra-lista");
-      if (caixa) caixa.hidden = vazia;
-    });
+    const total = linhas().length;
+    vazio.hidden = total > 0;
+    botaoAdicionar.disabled = total >= LIMITE_ITENS;
     atualizarTotais();
   }
 
-  // `categoria`: seção que recebe a nova linha (sempre dentro da seção existente, no fim dela).
-  function adicionar(categoria, focar) {
-    const modelo = document.getElementById("modelo-" + categoria);
-    const destino = lista.querySelector('[data-linhas="' + categoria + '"]');
-    if (!modelo || !destino) return;
+  // Nova linha (no fim da lista ou logo depois de `depois`), na categoria pedida.
+  function adicionar(categoria, focar, depois) {
+    const modelo = document.getElementById("modelo-item");
     const fragmento = modelo.content.cloneNode(true);
     const linha = fragmento.querySelector(".compra-item");
     const n = ++sequencia;
@@ -187,32 +215,56 @@
     linha.querySelectorAll("label[data-para]").forEach(function (rotulo) {
       rotulo.htmlFor = "compra-" + n + "-" + rotulo.dataset.para;
     });
-    destino.appendChild(fragmento);
+    aplicarCategoria(linha, categoria || "filamento");
+    if (depois) depois.after(fragmento);
+    else lista.appendChild(fragmento);
     limparErro(document.getElementById("campo-itens"));
     numerar();
-    if (focar) linha.querySelector('[data-campo]:not([type="hidden"])').focus();
+    if (focar) campoDe(linha, "categoria").focus();
+    return linha;
   }
 
-  form.querySelectorAll("[data-adicionar]").forEach(function (botao) {
-    botao.addEventListener("click", function () { adicionar(botao.dataset.adicionar, true); });
+  botaoAdicionar.addEventListener("click", function () {
+    const ultima = linhas().pop();
+    adicionar(ultima ? ultima.dataset.categoria : "filamento", true);
   });
 
-  // Remover uma linha ainda não salva; o foco vai para a vizinha da mesma seção (ou para o
-  // "+ Adicionar" da seção).
+  // Duplicar: nova linha logo abaixo, com os mesmos dados (a foto não é copiada: cada linha
+  // tem a sua).
+  function duplicar(linha) {
+    const copia = adicionar(linha.dataset.categoria, false, linha);
+    linha.querySelectorAll("[data-campo]").forEach(function (el) {
+      const nome = el.dataset.campo;
+      if (nome === "categoria" || nome === "foto_atual") return;
+      campoDe(copia, nome).value = el.value;
+    });
+    atualizarTotais();
+    campoDe(copia, "categoria").focus();
+  }
+
   lista.addEventListener("click", function (evento) {
-    const botao = evento.target.closest(".compra-item-remover");
-    if (!botao) return;
-    const linha = botao.closest(".compra-item");
-    const vizinha = linha.nextElementSibling || linha.previousElementSibling;
-    const adicionarDaSecao = linha.closest(".compra-secao").querySelector("[data-adicionar]");
-    linha.remove();
-    numerar();
-    (vizinha ? vizinha.querySelector(".compra-item-remover") : adicionarDaSecao).focus();
+    const linha = evento.target.closest(".compra-item");
+    if (!linha) return;
+    if (evento.target.closest(".compra-item-duplicar")) {
+      duplicar(linha);
+    } else if (evento.target.closest(".compra-item-remover")) {
+      // O foco vai para a vizinha (ou para "+ Adicionar item").
+      const vizinha = linha.nextElementSibling || linha.previousElementSibling;
+      linha.remove();
+      numerar();
+      (vizinha ? vizinha.querySelector(".compra-item-remover") : botaoAdicionar).focus();
+    } else if (evento.target.closest(".compra-item-desfazer")) {
+      const anterior = linha.dataset.anterior;
+      delete linha.dataset.anterior;
+      aplicarCategoria(linha, anterior);
+      atualizarTotais();
+      campoDe(linha, "categoria").focus();
+    }
   });
 
   // ---------- Local de compra ----------
 
-  // Outro e Loja Física pedem o nome do local; ao trocar para uma plataforma, o texto é limpo.
+  // Loja Física e Outros sites pedem o nome; ao trocar para uma plataforma, o texto é limpo.
   function atualizarLocal() {
     const escolhido = form.querySelector('input[name="local"]:checked');
     const comNome = !!escolhido && escolhido.hasAttribute("data-com-nome");
@@ -269,13 +321,14 @@
         const caixa = linha.querySelector(".compra-item-foto");
         return [caixa, caixa.querySelector(".upload-botao:not([hidden])")];
       }
-      const alvo = linha.querySelector('[data-campo="' + doItem[2] + '"]');
-      if (!alvo || alvo.type === "hidden") return [linha.querySelector(".compra-item-campos"), linha.querySelector(".compra-item-remover")];
-      return [alvo.closest(".campo"), alvo];
+      const alvo = campoDe(linha, doItem[2]);
+      const caixa = alvo && alvo.closest(".campo");
+      if (!caixa || caixa.hidden || alvo.type === "hidden") {
+        return [linha.querySelector(".compra-item-campos"), campoDe(linha, "categoria")];
+      }
+      return [caixa, alvo];
     }
-    if (chave === "itens") {
-      return [document.getElementById("campo-itens"), form.querySelector("[data-adicionar]")];
-    }
+    if (chave === "itens") return [document.getElementById("campo-itens"), botaoAdicionar];
     if (chave === "local") {
       const caixa = document.getElementById("campo-local");
       return [caixa, caixa.querySelector("input:checked") || caixa.querySelector("input")];
@@ -296,32 +349,42 @@
       const alvo = marcarErro(encontrado[0], encontrado[1], campos[chave]);
       if (!primeiro && alvo) primeiro = alvo;
     });
-    if (primeiro) {
-      primeiro.focus();
-    } else {
-      corpo.scrollTop = 0;
-    }
+    if (primeiro) primeiro.focus();
+    else corpo.scrollTop = 0;
   }
 
   // ---------- Digitação ----------
 
   form.addEventListener("input", function (evento) {
     const alvo = evento.target;
-    if (alvo === campoFrete) {
+    if (alvo === campoFrete || alvo === campoDesconto) {
       alvo.value = mascaraMoeda(alvo.value);
       atualizarTotais();
+    } else if (alvo === campoData) {
+      alvo.value = mascaraData(alvo.value);
     } else if (alvo.tagName !== "SELECT" && alvo.dataset && MASCARAS[alvo.dataset.campo]) {
       alvo.value = MASCARAS[alvo.dataset.campo](alvo.value);
     }
     limparErro(alvo.closest(".tem-erro"));
     const linha = alvo.closest(".compra-item");
-    if (linha) atualizarTotais();
+    if (linha) {
+      atualizarTotais();
+      if (!linha.querySelector(".compra-item-aviso").hidden) atualizarAviso(linha);
+    }
   });
-
 
   form.addEventListener("change", function (evento) {
     const alvo = evento.target;
     if (alvo.name === "local") atualizarLocal();
+    if (alvo.dataset && alvo.dataset.campo === "categoria") {
+      const linha = alvo.closest(".compra-item");
+      if (alvo.value !== linha.dataset.categoria) {
+        linha.dataset.anterior = linha.dataset.categoria;
+        aplicarCategoria(linha, alvo.value);
+        limparErro(linha.querySelector(".compra-item-campos"));
+        atualizarTotais();
+      }
+    }
     limparErro(alvo.closest(".tem-erro"));
   });
 
@@ -347,30 +410,33 @@
   function limpar() {
     definirModo(null);
     form.reset();
-    // Esvazia cada seção (libera as miniaturas: imagem-referencia.js observa a lista).
-    lista.querySelectorAll("[data-linhas]").forEach(function (secao) { secao.replaceChildren(); });
+    lista.replaceChildren(); // libera as miniaturas (imagem-referencia.js observa a lista)
     limparErros();
     atualizarLocal();
     numerar();
     form.elements.chave_envio.value = novaChave();
-    campoData.value = hojeISO();
+    campoData.value = hoje();
   }
 
-  // Data de hoje (fuso local) no formato aaaa-mm-dd, o valor do campo de calendário.
-  function hojeISO() {
+  // Data de hoje (fuso local) em dd/mm/aaaa.
+  function hoje() {
     const agora = new Date();
-    const mes = String(agora.getMonth() + 1).padStart(2, "0");
     const dia = String(agora.getDate()).padStart(2, "0");
-    return agora.getFullYear() + "-" + mes + "-" + dia;
+    const mes = String(agora.getMonth() + 1).padStart(2, "0");
+    return dia + "/" + mes + "/" + agora.getFullYear();
   }
 
-  function abrir(categoria, botao) {
-    abridor = botao || null;
-    limpar();
-    if (categoria) adicionar(categoria, false);
+  function mostrar() {
     janela.showModal();
     corpo.scrollTop = 0;
     campoData.focus();
+  }
+
+  function abrir(botao) {
+    abridor = botao || null;
+    limpar();
+    adicionar("filamento", false);
+    mostrar();
   }
 
   // "99.90" (reais, do servidor) -> "R$ 99,90"; zero ou vazio -> "".
@@ -378,8 +444,6 @@
     const c = digitos(Number(texto || 0).toFixed(2));
     return Number(c) ? formatarCentavos(Number(c)) : "";
   }
-
-  const CAMPOS_MOEDA = { valor_unitario: true, valor_total: true };
 
   // Abre a janela com a compra `dados` (JSON do botão Editar da lista) já preenchida.
   function abrirEdicao(dados, botao) {
@@ -392,22 +456,25 @@
     atualizarLocal();
     campoNome.value = dados.local_nome || "";
     campoFrete.value = moedaDoServidor(dados.frete);
+    campoDesconto.value = moedaDoServidor(dados.desconto);
     dados.itens.forEach(function (item) {
-      adicionar(item.categoria, false);
-      const linha = lista.querySelector('[data-linhas="' + item.categoria + '"]').lastElementChild;
+      const linha = adicionar(item.categoria, false);
       Object.keys(item).forEach(function (campo) {
-        const el = linha.querySelector('[data-campo="' + campo + '"]');
+        const el = campoDe(linha, campo);
         if (!el || campo === "categoria") return;
-        el.value = CAMPOS_MOEDA[campo] ? moedaDoServidor(item[campo]) : item[campo];
+        el.value = campo === "valor_unitario" ? moedaDoServidor(item[campo]) : item[campo];
       });
+      if (item.nota) {
+        const nota = linha.querySelector(".compra-item-nota");
+        nota.textContent = item.nota;
+        nota.hidden = false;
+      }
       if (item.foto_atual && window.ImagensReferencia) {
         window.ImagensReferencia.mostrarGravada(linha, item.foto_url, "Foto atual");
       }
     });
     atualizarTotais();
-    janela.showModal();
-    corpo.scrollTop = 0;
-    campoData.focus();
+    mostrar();
   }
 
   document.querySelectorAll("[data-editar-compra]").forEach(function (botao) {
@@ -426,7 +493,7 @@
   }
 
   document.querySelectorAll("[data-abrir-compra]").forEach(function (botao) {
-    botao.addEventListener("click", function () { abrir(botao.dataset.abrirCompra, botao); });
+    botao.addEventListener("click", function () { abrir(botao); });
   });
 
   form.querySelectorAll("[data-cancelar]").forEach(function (botao) {
@@ -455,10 +522,12 @@
   }
 
   function dadosDoFormulario() {
-    const dados = new FormData(form); // csrf, chave_envio, data, local e nome do local
+    // csrf, chave_envio, data, local, nome do local, desconto e frete
+    const dados = new FormData(form);
     linhas().forEach(function (linha, i) {
-      linha.querySelectorAll("[data-campo]").forEach(function (el) {
-        dados.append("item_" + i + "_" + el.dataset.campo, el.value);
+      const enviar = ["categoria", "foto_atual"].concat(CAMPOS[linha.dataset.categoria] || []);
+      enviar.forEach(function (nome) {
+        dados.append("item_" + i + "_" + nome, valorDe(linha, nome));
       });
     });
     const arquivos = window.ImagensReferencia ? window.ImagensReferencia.arquivos() : [];

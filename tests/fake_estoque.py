@@ -37,7 +37,7 @@ def _valor(item) -> Decimal:
 
 
 def _listar(compra: CompraParaGravar) -> CompraListada:
-    """A compra como o banco a devolve em listar_compras (total = itens + frete)."""
+    """A compra como o banco a devolve em listar_compras (total = itens − desconto + frete)."""
     itens = tuple(
         ItemCompraListado(
             ordem=i.ordem,
@@ -51,6 +51,8 @@ def _listar(compra: CompraParaGravar) -> CompraListada:
             nome=i.nome,
             valor=_valor(i),
             imagem_caminho=i.imagem_caminho,
+            medidas=i.medidas,
+            valor_unitario=i.valor_unitario,
         )
         for i in compra.itens
     )
@@ -61,9 +63,20 @@ def _listar(compra: CompraParaGravar) -> CompraListada:
         compra.local_tipo,
         compra.local_nome,
         compra.frete,
-        valor + compra.frete,
+        valor - compra.desconto + compra.frete,
         itens,
+        compra.desconto,
     )
+
+
+def _conferir(compra: CompraParaGravar) -> None:
+    """Os CHECK do banco: valor_total = quantidade x unitário e desconto até o subtotal."""
+    for i in compra.itens:
+        if i.categoria != "filamento" and i.valor_unitario is not None:
+            assert i.valor_total == i.quantidade * i.valor_unitario, "valor_total incoerente"
+        if i.categoria == "filamento":
+            assert i.medidas is None, "medidas em filamento"
+    assert 0 <= compra.desconto <= sum((_valor(i) for i in compra.itens), Decimal(0))
 
 
 class RepositorioEstoqueMemoria:
@@ -141,6 +154,7 @@ class RepositorioEstoqueMemoria:
         if any(g.compra.chave_envio == compra.chave_envio for g in self.compras.values()):
             return True
         assert compra.itens, "compra sem itens"
+        _conferir(compra)
         lotes = self._criar_lotes(compra)
         self.compras[compra.id] = CompraGravada(compra, lotes)
         if "registrar_depois" in self.falhar_em:
@@ -166,7 +180,8 @@ class RepositorioEstoqueMemoria:
                     imagem_caminho=item.imagem_caminho,
                 )
                 lotes.append(("filamento", lote_id))
-            else:
+            elif item.categoria in ("acessorio", "embalagem"):
+                # Peças de manutenção e outros ficam só na compra (sem lote), como no banco.
                 lote_id = self._novo("item")
                 self.itens[lote_id] = ItemEstoque(
                     id=lote_id,
@@ -190,6 +205,7 @@ class RepositorioEstoqueMemoria:
         if antiga is None:
             raise LoteNaoEncontrado
         assert compra.itens, "compra sem itens"
+        _conferir(compra)
         for item in compra.itens:  # o CHECK do caminho: só fotos da pasta da própria compra
             assert item.imagem_caminho is None or item.imagem_caminho.startswith(
                 f"compras/{compra.id}/itens/"

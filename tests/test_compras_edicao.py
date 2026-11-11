@@ -60,11 +60,21 @@ def dados_de_edicao(pagina_html: str) -> list[dict]:
 def test_cada_compra_tem_botao_editar_com_os_dados_da_janela(estoque):
     registrar(
         filamento(0, quantidade="2", peso_rolo="500", valor_unitario="R$ 45,90", tipo="velvet"),
-        item(1, "embalagem", nome="Caixa <P>", quantidade="7", valor_total="R$ 3,50"),
+        item(
+            1,
+            "embalagem",
+            nome="Caixa <P>",
+            quantidade="7",
+            valor_total="R$ 3,50",
+            cor="Kraft",
+            medidas="10x10 cm",
+            marca="ignorada",  # embalagem não tem marca: o campo oculto não é gravado
+        ),
         fotos={0: ("a.png", PNG)},
         local="loja_fisica",
         local_nome="Papelaria",
         frete="R$ 12,00",
+        desconto="R$ 1,50",
     )
 
     pagina = client.get("/compras").text
@@ -72,12 +82,14 @@ def test_cada_compra_tem_botao_editar_com_os_dados_da_janela(estoque):
     assert pagina.count("data-editar-compra=") == 1
     assert 'aria-label="Editar compra de 10/09/2026 (Loja Física · Papelaria)"' in pagina
     (dados,) = dados_de_edicao(pagina)
-    assert {k: dados[k] for k in ("id", "data", "local", "local_nome", "frete")} == {
+    campos = ("id", "data", "local", "local_nome", "frete", "desconto")
+    assert {k: dados[k] for k in campos} == {
         "id": 1,
-        "data": "2026-09-10",
+        "data": "10/09/2026",
         "local": "loja_fisica",
         "local_nome": "Papelaria",
         "frete": "12.00",
+        "desconto": "1.50",
     }
     fil, emb = dados["itens"]
     assert {k: fil[k] for k in fil if k not in ("foto_atual", "foto_url")} == {
@@ -96,7 +108,10 @@ def test_cada_compra_tem_botao_editar_com_os_dados_da_janela(estoque):
         "categoria": "embalagem",
         "quantidade": "7",
         "nome": "Caixa <P>",
-        "valor_total": "3.50",
+        "cor": "Kraft",
+        "medidas": "10x10 cm",
+        "marca": "",
+        "valor_unitario": "0.50",
         "foto_atual": "",
         "foto_url": "",
     }
@@ -106,7 +121,43 @@ def test_cada_compra_tem_botao_editar_com_os_dados_da_janela(estoque):
 def test_janela_tem_campo_da_foto_mantida_em_cada_linha(estoque):
     pagina = client.get("/compras").text
 
-    assert pagina.count('data-campo="foto_atual"') == 3  # um modelo de linha por categoria
+    assert pagina.count('data-campo="foto_atual"') == 1  # um só modelo de linha
+
+
+def test_item_antigo_sem_unitario_abre_com_nota_do_total_anterior(estoque):
+    """Item gravado antes do valor unitário (só valor total): a janela divide pela quantidade e,
+    se a divisão não for exata, a linha avisa o total anterior (nada muda calado)."""
+    from tests.fake_estoque import CompraGravada
+
+    estoque._ultimo_id_compra = 1
+    antigo = CompraParaGravar(
+        id=1,
+        chave_envio=uuid.uuid4(),
+        data_compra=date(2026, 9, 10),
+        local_tipo="shopee",
+        local_nome=None,
+        usuario_id=1,
+        itens=(
+            ItemCompraParaGravar(
+                ordem=1,
+                categoria="embalagem",
+                quantidade=3,
+                nome="Caixa",
+                valor_total=Decimal("10"),
+            ),
+            ItemCompraParaGravar(
+                ordem=2, categoria="acessorio", quantidade=4, nome="Pino", valor_total=Decimal("2")
+            ),
+        ),
+    )
+    estoque.compras[1] = CompraGravada(antigo, [])
+
+    (dados,) = dados_de_edicao(client.get("/compras").text)
+
+    caixa, pino = dados["itens"]
+    assert caixa["valor_unitario"] == "3.33"
+    assert caixa["nota"] == "Valor unitário arredondado: o total anterior da linha era R$ 10,00."
+    assert pino["valor_unitario"] == "0.50" and "nota" not in pino
 
 
 # ---------- Gravação da edição ----------
@@ -332,6 +383,7 @@ def test_repositorio_envia_a_edicao_e_le_as_fotos_removidas():
         "p_frete",
         "p_itens",
         "p_usuario_id",
+        "p_desconto",
     }
     assert (p["p_id"], p["p_data_compra"], p["p_frete"], p["p_usuario_id"]) == (
         7,

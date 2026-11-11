@@ -41,11 +41,11 @@
 </form>
 
 <section class="compras-resumo" aria-label="Resumo das compras{% if periodo_rotulo %} de {{ periodo_rotulo }}{% endif %}">
-  {% for chave, titulo, dica in (
-    ("compras", "Compras", "itens + frete"),
-    ("filamento", "Filamentos", "só itens"),
-    ("acessorio", "Acessórios", "só itens"),
-    ("embalagem", "Embalagens", "só itens")) %}
+  {% set cards = [("compras", "Compras", "itens − desconto + frete")] %}
+  {% for codigo, rotulo in categorias.items() %}
+    {% set _ = cards.append((codigo, "Filamentos" if codigo == "filamento" else rotulo, "só itens")) %}
+  {% endfor %}
+  {% for chave, titulo, dica in cards %}
   <div class="compras-card" id="card-{{ chave }}">
     <p class="compras-card-rotulo">{{ titulo }}</p>
     <p class="compras-card-valor">{{ resumo[chave].total | brl }}</p>
@@ -107,7 +107,7 @@
             {% if c.fotos_indisponiveis %}<span class="pedido-card-aviso">Indisponível</span>
             {% elif not c.fotos %}<span class="compra-registro-sem-foto">Sem foto</span>{% endif %}
           </td>
-          <td class="coluna-numero tabela-pedidos-valor">{{ c.total | brl }}{% if c.frete %}<span class="compra-registro-frete">inclui frete de {{ c.frete | brl }}</span>{% endif %}</td>
+          <td class="coluna-numero tabela-pedidos-valor">{{ c.total | brl }}{% if c.desconto %}<span class="compra-registro-frete">desconto de {{ c.desconto | brl }}</span>{% endif %}{% if c.frete %}<span class="compra-registro-frete">inclui frete de {{ c.frete | brl }}</span>{% endif %}</td>
           <td class="tabela-pedidos-acoes tabela-compras-acoes">
             {# Abre a janela da compra já preenchida (js/estoque-compra.js). #}
             <button type="button" class="acao-tabela acao-icone" data-editar-compra='{{ c.edicao | tojson }}'

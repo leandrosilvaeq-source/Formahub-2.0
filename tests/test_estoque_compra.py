@@ -69,13 +69,20 @@ def filamento(i: int, **extra) -> dict:
 
 
 def item(i: int, categoria: str, **extra) -> dict:
+    """Linha sem filamento. `valor_total` (atalho dos testes) vira o valor unitário exato."""
+    total = extra.pop("valor_total", None)
     dados = {
         "categoria": categoria,
         "nome": "Argola Teste" if categoria == "acessorio" else "Caixa Teste",
         "quantidade": "40",
-        "valor_total": "R$ 14,00",
+        "valor_unitario": "R$ 0,35",  # 40 x 0,35 = 14,00
     }
     dados.update(extra)
+    if total is not None:
+        centavos, quantidade = int(re.sub(r"\D", "", total)), int(dados["quantidade"])
+        assert centavos % quantidade == 0, "valor total sem unitário exato"
+        unitario = centavos // quantidade
+        dados["valor_unitario"] = f"R$ {unitario // 100},{unitario % 100:02d}"
     return {f"item_{i}_{campo}": valor for campo, valor in dados.items()}
 
 
@@ -159,7 +166,7 @@ def test_compra_com_as_tres_categorias_e_varias_linhas(estoque):
             valor_unitario="R$ 100,00",
         ),
         item(2, "acessorio", quantidade="40", valor_total="R$ 14,00"),
-        item(3, "embalagem", quantidade="3", valor_total="R$ 10,00"),
+        item(3, "embalagem", quantidade="4", valor_total="R$ 10,00"),
         item(4, "embalagem", nome="Caixa G", quantidade="2", valor_total="R$ 7,00"),
     )
     resposta = enviar(dados)
@@ -220,7 +227,7 @@ def test_plataforma_desconsidera_o_nome_do_local(estoque, local):
 def test_local_personalizado_exige_o_nome(estoque, local):
     resposta = enviar(compra(item(0, "embalagem"), local=local, local_nome="  "))
     assert resposta.status_code == 422
-    assert resposta.json()["campos"] == {"local_nome": "Informe o nome do local."}
+    assert resposta.json()["campos"] == {"local_nome": "Informe o nome do estabelecimento ou site."}
     assert nada_gravado(estoque)
 
     resposta = enviar(compra(item(0, "embalagem"), local=local, local_nome=" Papelaria  Centro "))
@@ -285,8 +292,8 @@ def test_validacao_da_data(estoque, campo, valor, mensagem):
         ("quantidade", "-1", "Use um número inteiro."),
         ("quantidade", "1,5", "Use um número inteiro."),
         ("quantidade", "²", "Use um número inteiro."),
-        ("quantidade", "6", "Escolha de 1 a 5 rolos"),
-        ("quantidade", "10000", "Escolha de 1 a 5 rolos"),
+        ("quantidade", "6", "Use de 1 a 5 rolos"),
+        ("quantidade", "10000", "Use de 1 a 5 rolos"),
         ("cor", "", "Informe a cor."),
         ("cor", "x" * 61, "Use no máximo 60 caracteres."),
         ("material", "", "Escolha o material."),
@@ -314,18 +321,18 @@ def test_validacao_do_filamento(estoque, campo, valor, mensagem):
     assert nada_gravado(estoque)  # a linha válida também não foi gravada
 
 
-@pytest.mark.parametrize("categoria", ["acessorio", "embalagem"])
+@pytest.mark.parametrize("categoria", ["acessorio", "embalagem", "peca_manutencao", "outro"])
 @pytest.mark.parametrize(
     ("campo", "valor", "mensagem"),
     [
-        ("nome", "", "Informe o nome d"),
+        ("nome", "", "Informe o nome do item."),
         ("nome", "x" * 61, "Use no máximo 60 caracteres."),
         ("quantidade", "", "Informe a quantidade."),
         ("quantidade", "0", "A quantidade deve ser maior que zero."),
         ("quantidade", "2.5", "Use um número inteiro."),
         ("quantidade", "1000000", "Quantidade alta demais."),
-        ("valor_total", "", "Informe o valor total."),
-        ("valor_total", "-0,50", "O valor não pode ser negativo."),
+        ("valor_unitario", "", "Informe o valor unitário."),
+        ("valor_unitario", "-0,50", "O valor não pode ser negativo."),
     ],
 )
 def test_validacao_de_acessorio_e_embalagem(estoque, categoria, campo, valor, mensagem):
@@ -337,13 +344,53 @@ def test_validacao_de_acessorio_e_embalagem(estoque, categoria, campo, valor, me
 
 
 def test_mensagem_de_nome_conforme_a_categoria(estoque):
-    campos = enviar(compra(item(0, "acessorio", nome=""), item(1, "embalagem", nome=""))).json()[
-        "campos"
-    ]
+    campos = enviar(
+        compra(
+            item(0, "acessorio", nome=""),
+            item(1, "embalagem", nome=""),
+            item(2, "peca_manutencao", nome=""),
+            item(3, "outro", nome=""),
+        )
+    ).json()["campos"]
     assert campos == {
-        "item_0_nome": "Informe o nome do acessório.",
-        "item_1_nome": "Informe o nome da embalagem.",
+        "item_0_nome": "Informe o nome do item.",
+        "item_1_nome": "Informe o nome do item.",
+        "item_2_nome": "Informe o nome do item.",
+        "item_3_nome": "Informe o nome do item.",
     }
+
+
+def test_compra_com_as_cinco_categorias_so_gera_estoque_das_tres_atuais(estoque):
+    resposta = enviar(
+        compra(
+            filamento(0, quantidade="1"),
+            item(1, "acessorio"),
+            item(2, "embalagem"),
+            item(3, "peca_manutencao", nome="Bico 0,4", quantidade="2", valor_total="R$ 30,00"),
+            item(4, "outro", nome="Fita dupla face", quantidade="1", valor_total="R$ 7,50"),
+            frete="R$ 10,00",
+        ),
+        fotos={3: ("bico.png", PNG)},
+    )
+
+    assert resposta.status_code == 200
+    (gravada,) = estoque.compras.values()
+    itens = gravada.compra.itens
+    assert [i.categoria for i in itens] == [
+        "filamento",
+        "acessorio",
+        "embalagem",
+        "peca_manutencao",
+        "outro",
+    ]
+    peca, outro = itens[3], itens[4]
+    assert (peca.nome, peca.quantidade, peca.valor_total) == ("Bico 0,4", 2, Decimal("30.00"))
+    assert peca.imagem_caminho is not None and peca.cor is None
+    assert (outro.nome, outro.valor_total) == ("Fita dupla face", Decimal("7.50"))
+    assert gravada.compra.frete == Decimal("10.00")
+    # Só filamento, acessório e embalagem viram lote; as categorias novas ficam só na compra.
+    assert len(estoque.filamentos) == 1
+    assert sorted(i.categoria for i in estoque.itens.values()) == ["acessorio", "embalagem"]
 
 
 def test_valor_zero_e_aceito(estoque):
@@ -365,7 +412,7 @@ def test_erros_usam_a_posicao_da_linha_na_tela(estoque):
     # Posições salteadas (a tela renumera, mas o servidor não depende disso).
     resposta = enviar(compra(item(3, "acessorio", nome=""), filamento(7, cor="")))
     assert resposta.json()["campos"] == {
-        "item_3_nome": "Informe o nome do acessório.",
+        "item_3_nome": "Informe o nome do item.",
         "item_7_cor": "Informe a cor.",
     }
 
@@ -826,12 +873,146 @@ def test_repositorio_envia_fotos_ao_bucket_privado_sem_sobrescrever():
 
 def test_locais_na_ordem_pedida():
     assert list(LOCAIS.values()) == [
+        "TikTok Shop",
         "Mercado Livre",
-        "Shopee",
         "AliExpress",
+        "Shopee",
         "Loja Física",
-        "Outro",
+        "Outros sites",
     ]
+
+
+# ---------- Lista única: atributos, valor unitário e desconto ----------
+
+
+def test_compra_mista_grava_atributos_de_cada_categoria(estoque):
+    resposta = enviar(
+        compra(
+            filamento(0, quantidade="2", valor_unitario="R$ 80,00", medidas="ignorada"),
+            item(
+                1,
+                "acessorio",
+                nome="Argola",
+                quantidade="10",
+                valor_unitario="R$ 1,50",
+                cor="Dourada",
+                medidas="2 cm",
+                marca="ignorada",
+            ),
+            item(
+                2,
+                "embalagem",
+                nome="Caixa",
+                quantidade="4",
+                valor_unitario="R$ 2,25",
+                cor="",
+                medidas="",
+            ),
+            item(
+                3,
+                "peca_manutencao",
+                nome="Bico",
+                quantidade="2",
+                valor_unitario="R$ 15,00",
+                marca="Bambu",
+                cor="ignorada",
+            ),
+            item(4, "outro", nome="Fita", quantidade="1", valor_unitario="R$ 7,50", marca=""),
+            local="tiktok_shop",
+            desconto="R$ 21,50",
+            frete="R$ 12,00",
+        )
+    )
+
+    assert resposta.status_code == 200, resposta.json()
+    (gravada,) = estoque.compras.values()
+    c = gravada.compra
+    assert (c.local_tipo, c.desconto, c.frete) == ("tiktok_shop", Decimal("21.50"), Decimal("12"))
+    fil, ace, emb, peca, outro = c.itens
+    assert fil.medidas is None and fil.valor_unitario == Decimal("80.00")
+    assert (ace.cor, ace.medidas, ace.marca) == ("Dourada", "2 cm", None)
+    assert (ace.valor_unitario, ace.valor_total) == (Decimal("1.50"), Decimal("15.00"))
+    assert (emb.cor, emb.medidas, emb.valor_total) == (None, None, Decimal("9.00"))
+    assert (peca.marca, peca.cor, peca.valor_total) == ("Bambu", None, Decimal("30.00"))
+    assert (outro.marca, outro.valor_total) == (None, Decimal("7.50"))
+    # Estoque: custo unitário do lote = valor total / quantidade (o critério de antes); frete e
+    # desconto não entram.
+    (lote_ace,) = [i for i in estoque.itens.values() if i.categoria == "acessorio"]
+    assert lote_ace.custo_unitario == Decimal("1.50")
+    (lote_fil,) = estoque.filamentos.values()
+    assert lote_fil.custo_kg == Decimal("80.00")
+    assert sorted(i.categoria for i in estoque.itens.values()) == ["acessorio", "embalagem"]
+    # Total: 160 + 15 + 9 + 30 + 7,50 − 21,50 + 12 = 212
+    (listada,) = estoque.listar_compras().compras
+    assert listada.total == Decimal("212.00")
+
+
+def test_subtotal_desconto_e_total_em_decimal():
+    linhas = [
+        ItemCompraParaGravar(
+            ordem=1,
+            categoria="outro",
+            quantidade=3,
+            nome="X",
+            valor_unitario=Decimal("0.10"),
+            valor_total=Decimal("0.30"),
+        ),
+        ItemCompraParaGravar(
+            ordem=2,
+            categoria="filamento",
+            quantidade=1,
+            cor="P",
+            material="PLA",
+            tipo="silk",
+            marca="M",
+            peso_rolo_g=Decimal("1000"),
+            valor_unitario=Decimal("0.20"),
+        ),
+    ]
+    subtotal = subtotal_itens(linhas)
+    assert subtotal == Decimal("0.50")
+    assert total_da_compra(subtotal, Decimal("0.70"), Decimal("0.50")) == Decimal("0.70")
+
+
+@pytest.mark.parametrize(
+    ("desconto", "mensagem"),
+    [
+        ("-1,00", "O valor não pode ser negativo."),
+        ("R$ 14,01", "O desconto não pode ser maior que o subtotal dos itens."),
+        ("1,234", "Use no máximo 2 casas decimais."),
+    ],
+)
+def test_desconto_invalido_nao_grava(estoque, desconto, mensagem):
+    resposta = enviar(compra(item(0, "acessorio"), desconto=desconto))  # subtotal 14,00
+
+    assert resposta.status_code == 422
+    assert resposta.json()["campos"] == {"desconto": mensagem}
+    assert nada_gravado(estoque)
+
+
+def test_desconto_igual_ao_subtotal_e_vazio_valem(estoque):
+    assert enviar(compra(item(0, "acessorio"), desconto="R$ 14,00")).status_code == 200
+    assert enviar(compra(item(0, "acessorio"), desconto="")).status_code == 200
+    descontos = [g.compra.desconto for g in estoque.compras.values()]
+    assert descontos == [Decimal("14.00"), Decimal("0")]
+
+
+def test_opcionais_longos_e_valor_da_linha_alto_demais(estoque):
+    campos = enviar(
+        compra(
+            item(0, "acessorio", cor="x" * 61, medidas="y" * 61),
+            item(1, "outro", marca="z" * 61),
+            item(2, "outro", quantidade="999999", valor_unitario="R$ 1.000.000,00"),
+        )
+    ).json()["campos"]
+
+    assert campos == {
+        "item_0_cor": "Use no máximo 60 caracteres.",
+        "item_0_medidas": "Use no máximo 60 caracteres.",
+        "item_1_marca": "Use no máximo 60 caracteres.",
+        "item_2_valor_unitario": "Valor total da linha alto demais.",
+    }
+    assert nada_gravado(estoque)
 
 
 def test_frete_vazio_vale_zero_e_e_gravado_na_compra(estoque):
@@ -876,7 +1057,7 @@ def test_subtotal_e_total_com_decimal_sem_arredondar_etapas():
     c = validar_compra(
         compra(
             filamento(0, quantidade="3", valor_unitario="R$ 0,10"),
-            item(1, "acessorio", valor_total="R$ 0,20"),
+            item(1, "acessorio", quantidade="2", valor_total="R$ 0,20"),
             frete="R$ 0,05",
         )
     )
@@ -898,6 +1079,15 @@ def test_frete_nao_muda_o_custo_dos_lotes(estoque):
 
     (lote,) = estoque.filamentos.values()
     assert lote.valor_unitario == Decimal("100.00")  # o frete não é distribuído nos lotes
+
+
+def test_desconto_nao_muda_o_custo_dos_lotes(estoque):
+    enviar(
+        compra(item(0, "acessorio", quantidade="10", valor_total="R$ 20,00"), desconto="R$ 5,00")
+    )
+
+    (lote,) = estoque.itens.values()
+    assert lote.custo_unitario == Decimal("2.00")  # o desconto não é distribuído nos lotes
 
 
 # ---------- Listas do filamento e cores já salvas ----------

@@ -129,7 +129,8 @@ begin
       ('reservar_id_compra', '', 'bigint'),
       ('registrar_compra',
        'p_id bigint, p_chave_envio uuid, p_data_compra date, p_local_tipo text, '
-       'p_local_nome text, p_itens jsonb, p_usuario_id bigint, p_frete numeric',
+       'p_local_nome text, p_itens jsonb, p_usuario_id bigint, p_frete numeric, '
+       'p_desconto numeric',
        'jsonb'),
       ('editar_estoque_filamento',
        'p_id bigint, p_cor text, p_material text, p_tipo text, p_marca text, p_usuario_id bigint',
@@ -435,7 +436,7 @@ begin
       ('valor negativo', 'shopee', null, pg_temp.item(1, 'embalagem', '{"valor_total": "-0.01"}'),
        '23514'),
       ('nome nulo', 'shopee', null, pg_temp.item(1, 'embalagem', '{"nome": null}'), '23514'),
-      ('acessório com cor', 'shopee', null, pg_temp.item(1, 'acessorio', '{"cor": "Preto"}'),
+      ('acessório com material', 'shopee', null, pg_temp.item(1, 'acessorio', '{"material": "PLA"}'),
        '23514'),
       ('peso por rolo zero', 'shopee', null, pg_temp.filamento(1, '{"peso_rolo_g": "0"}'),
        '23514'),

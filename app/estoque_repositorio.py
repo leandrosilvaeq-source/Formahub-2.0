@@ -2,8 +2,8 @@
 
 Leitura e gravação passam pelas funções do banco listar_estoque, reservar_id_compra,
 registrar_compra, editar_compra, editar_estoque_filamento e editar_estoque_item (migrations
-20261009120000_estoque, 20261010120000_compras_estoque e 20261107130000_editar_compra); as
-tabelas não têm acesso direto.
+20261009120000_estoque, 20261010120000_compras_estoque, 20261107130000_editar_compra e
+20261112120000_compra_janela_itens); as tabelas não têm acesso direto.
 Todo lote nasce de um item de compra; a edição só corrige a descrição (o saldo não muda).
 As fotos dos itens ficam no bucket privado compra-imagens e o banco guarda só o caminho.
 Números vão e voltam como texto, para não passar por float.
@@ -101,10 +101,12 @@ class Estoque:
 
 @dataclass(frozen=True)
 class ItemCompraParaGravar:
-    """Uma linha da compra. Filamento usa cor..valor_unitario; os outros, nome e valor_total."""
+    """Uma linha da compra. Filamento usa cor..valor_unitario; as demais categorias, nome,
+    valor_unitario e valor_total (= quantidade x valor_unitario) e, conforme a categoria, cor e
+    medidas (acessório, embalagem) ou marca (peça, item geral)."""
 
     ordem: int
-    categoria: str  # filamento, acessorio ou embalagem
+    categoria: str  # filamento, acessorio, embalagem, peca_manutencao ou outro
     quantidade: int  # rolos ou unidades
     cor: str | None = None
     material: str | None = None
@@ -115,6 +117,7 @@ class ItemCompraParaGravar:
     nome: str | None = None
     valor_total: Decimal | None = None
     imagem_caminho: str | None = None
+    medidas: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,7 @@ class CompraParaGravar:
     usuario_id: int
     itens: tuple[ItemCompraParaGravar, ...]
     frete: Decimal = Decimal("0")  # fica na compra; não entra no custo dos lotes
+    desconto: Decimal = Decimal("0")  # idem: só reduz o total da compra
 
 
 @dataclass(frozen=True)
@@ -134,7 +138,7 @@ class ItemCompraListado:
     """Uma linha de uma compra já registrada (filamento usa cor..peso_rolo_g; os outros, nome)."""
 
     ordem: int
-    categoria: str  # filamento, acessorio ou embalagem
+    categoria: str  # filamento, acessorio, embalagem, peca_manutencao ou outro
     quantidade: int  # rolos ou unidades
     cor: str | None
     material: str | None
@@ -142,8 +146,10 @@ class ItemCompraListado:
     marca: str | None
     peso_rolo_g: Decimal | None
     nome: str | None
-    valor: Decimal  # filamento: rolos x valor unitário; acessório e embalagem: valor total
+    valor: Decimal  # filamento: rolos x valor unitário; demais categorias: valor total
     imagem_caminho: str | None
+    medidas: str | None = None
+    valor_unitario: Decimal | None = None  # None em itens antigos sem valor unitário gravado
 
 
 @dataclass(frozen=True)
@@ -153,8 +159,9 @@ class CompraListada:
     local_tipo: str
     local_nome: str | None
     frete: Decimal
-    total: Decimal  # itens + frete
+    total: Decimal  # itens − desconto + frete
     itens: tuple[ItemCompraListado, ...]
+    desconto: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True)
@@ -225,6 +232,7 @@ def _itens(compra: CompraParaGravar) -> list[dict]:
             "valor_unitario": _texto(item.valor_unitario),
             "nome": item.nome,
             "valor_total": _texto(item.valor_total),
+            "medidas": item.medidas,
             "imagem_caminho": item.imagem_caminho,
         }
         for item in compra.itens
@@ -312,6 +320,8 @@ class RepositorioEstoqueSupabase:
                         local_nome=c["local_nome"],
                         frete=Decimal(c["frete"]),
                         total=Decimal(c["total"]),
+                        # Banco ainda sem a migration 20261112120000: sem desconto.
+                        desconto=Decimal(c.get("desconto") or "0"),
                         itens=tuple(
                             ItemCompraListado(
                                 ordem=i["ordem"],
@@ -327,6 +337,12 @@ class RepositorioEstoqueSupabase:
                                 nome=i["nome"],
                                 valor=Decimal(i["valor"]),
                                 imagem_caminho=i["imagem_caminho"],
+                                medidas=i.get("medidas"),
+                                valor_unitario=(
+                                    None
+                                    if i.get("valor_unitario") is None
+                                    else Decimal(i["valor_unitario"])
+                                ),
                             )
                             for i in c["itens"]
                         ),
@@ -376,6 +392,7 @@ class RepositorioEstoqueSupabase:
             "p_itens": _itens(compra),
             "p_usuario_id": compra.usuario_id,
             "p_frete": _texto(compra.frete),
+            "p_desconto": _texto(compra.desconto),
         }
         resposta = self._rpc("registrar_compra", parametros)
         try:
@@ -394,6 +411,7 @@ class RepositorioEstoqueSupabase:
             "p_frete": _texto(compra.frete),
             "p_itens": _itens(compra),
             "p_usuario_id": compra.usuario_id,
+            "p_desconto": _texto(compra.desconto),
         }
         resposta = self._rpc("editar_compra", parametros)
         try:

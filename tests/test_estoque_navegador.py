@@ -54,43 +54,49 @@ def tecla(p, key, code=None, codigo=0, shift=False):
     p.cmd("Input.dispatchKeyEvent", type="keyUp", **dados)
 
 
-def abrir_janela(p, categoria="filamento"):
-    # Há um único botão Registrar Compra; a janela abre com uma linha de filamento. Para outra
-    # categoria, adiciona a linha pedida e remove a de filamento (como o usuário faria).
+def abrir_janela(p):
+    # Há um único botão Registrar Compra; a janela abre com uma linha de filamento.
     p.clicar("[data-abrir-compra]")
     nav.esperar(lambda: p.js("document.getElementById('compra-janela').open"))
-    if categoria != "filamento":
-        p.clicar(f'[data-adicionar="{categoria}"]')
-        p.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-remover")
-        nav.esperar(
-            lambda: p.js("document.querySelectorAll('#compra-itens .compra-item').length") == 1
-        )
-
-
-# Nome de cada linha, na ordem da tela: o título do cartão (acessório, embalagem) ou, nas linhas
-# da lista de filamentos, que não têm título, o rótulo de acessibilidade.
-NOMES_DAS_LINHAS = (
-    "[...document.querySelectorAll('.compra-item')].map(l =>"
-    " l.querySelector('.compra-item-titulo')?.textContent ?? l.getAttribute('aria-label'))"
-)
 
 
 def linha(n: int, campo: str) -> str:
     return f'#compra-itens .compra-item[data-pos="{n}"] [data-campo="{campo}"]'
 
 
-def resumo(p, categoria: str) -> list[str]:
-    """Resumo no fim da seção: [Peso total, Valor total] ou [Quantidade total, Valor total]."""
+def mudar_categoria(p, n: int, categoria: str):
+    escolher_opcao(p, linha(n, "categoria"), categoria)
+
+
+def adicionar(p, categoria=None) -> int:
+    """'+ Adicionar item' (a linha nova repete a categoria da última); devolve a posição."""
+    p.clicar("[data-adicionar]")
+    n = p.js("document.querySelectorAll('#compra-itens .compra-item').length")
+    if categoria:
+        mudar_categoria(p, n, categoria)
+    return n
+
+
+# Nome acessível de cada linha, na ordem da tela.
+NOMES_DAS_LINHAS = (
+    "[...document.querySelectorAll('#compra-itens .compra-item')]"
+    ".map(l => l.getAttribute('aria-label'))"
+)
+
+
+def rotulos(p, n: int) -> list[str]:
+    """Rótulos dos campos visíveis da linha n, na ordem da tela."""
     return p.js(
-        f"[...document.querySelectorAll('[data-lista={categoria}] .compra-resumo-secao dd')]"
-        ".map(d => d.textContent.trim())"
+        f'[...document.querySelectorAll(\'#compra-itens .compra-item[data-pos="{n}"]'
+        " .compra-item-campos > .campo:not([hidden]) > label')]"
+        ".map(l => l.firstChild.textContent.trim())"
     )
 
 
-# Data local de hoje (aaaa-mm-dd), como a janela a preenche ao abrir.
+# Data local de hoje (dd/mm/aaaa), como a janela a preenche ao abrir.
 HOJE_JS_EXPR = (
-    "(() => { const d = new Date(); return d.getFullYear() + '-'"
-    " + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') })()"
+    "(() => { const d = new Date(); return String(d.getDate()).padStart(2, '0') + '/'"
+    " + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear() })()"
 )
 
 
@@ -117,20 +123,25 @@ def preencher_filamento(p, n, qtd="3", peso="1000", valor="8990", cor="Preto", m
         p,
         {
             linha(n, "cor"): cor,
+            linha(n, "quantidade"): qtd,
             linha(n, "marca"): "Marca Teste",
             linha(n, "valor_unitario"): valor,
         },
     )
-    escolher_opcao(p, linha(n, "quantidade"), qtd)
     escolher_opcao(p, linha(n, "material"), material)
     escolher_opcao(p, linha(n, "peso_rolo"), peso)
     escolher_opcao(p, linha(n, "tipo"), "silk")
 
 
-def preencher_item(p, n, nome="Argola", qtd="40", valor="1400"):
-    preencher(
-        p, {linha(n, "nome"): nome, linha(n, "quantidade"): qtd, linha(n, "valor_total"): valor}
-    )
+def preencher_item(p, n, nome="Argola", qtd="40", valor="35", **extras):
+    """Linha sem filamento: nome, quantidade, valor unitário (centavos digitados) e extras."""
+    campos = {
+        linha(n, "nome"): nome,
+        linha(n, "quantidade"): qtd,
+        linha(n, "valor_unitario"): valor,
+    }
+    campos.update({linha(n, campo): texto for campo, texto in extras.items()})
+    preencher(p, campos)
 
 
 def salvar(p):
@@ -253,9 +264,10 @@ def test_cards_lado_a_lado_no_desktop_e_empilhados_no_celular(pagina, com_compra
         "[...document.querySelectorAll('.compras-card')]"
         ".map(c => Math.round(c.getBoundingClientRect().top))"
     )
-    assert len(topos) == 4
+    assert len(topos) == 6
     assert (topos[0] == topos[1]) == (largura >= 640)
-    assert (len(set(topos)) == 1) == (largura >= 1000)  # os quatro numa só linha no desktop
+    # Desktop: duas linhas de três cards.
+    assert (topos[:3] == [topos[0]] * 3 and topos[3:] == [topos[3]] * 3) == (largura >= 1000)
 
 
 def test_filtro_de_periodo_troca_cards_e_tabela(pagina, com_compras):
@@ -395,45 +407,52 @@ def test_edicao_pelo_navegador_so_tem_a_descricao(pagina, estoque):
 # ---------- Janela Registrar Compra: layout ----------
 
 
+def totais(p):
+    return [p.texto(f"#{i}") for i in ("compra-subtotal", "compra-total")]
+
+
+CATEGORIAS = ("filamento", "acessorio", "embalagem", "peca_manutencao", "outro")
+
+
+def janela_com_as_cinco_categorias(p):
+    abrir_janela(p)
+    for categoria in CATEGORIAS[1:]:
+        adicionar(p, categoria)
+
+
 @pytest.mark.parametrize("largura", LARGURAS)
 def test_janela_cabe_na_tela_com_rolagem_interna(pagina, estoque, largura):
     pagina.tela(largura, 700)
     pagina.abrir("/compras")
-    abrir_janela(pagina, "filamento")
-    for categoria in ("filamento", "acessorio", "embalagem", "filamento"):
-        pagina.clicar(f'[data-adicionar="{categoria}"]')
+    janela_com_as_cinco_categorias(pagina)
+    for _ in range(2):
+        pagina.clicar('#compra-itens .compra-item[data-pos="1"] .compra-item-duplicar')
 
     medidas = pagina.js(
         """(() => {
              const j = document.getElementById('compra-janela').getBoundingClientRect();
              const c = document.querySelector('.compra-corpo');
              const r = document.querySelector('.compra-rodape').getBoundingClientRect();
+             const s = document.querySelector('#form-compra button[type=submit]')
+               .getBoundingClientRect();
              return {topo: j.top, base: j.bottom, esq: j.left, dir: j.right,
-                     rodape: r.bottom, rola: c.scrollHeight > c.clientHeight,
+                     rodape: r.bottom, salvar: s.bottom, rola: c.scrollHeight > c.clientHeight,
                      overflow: getComputedStyle(c).overflowY,
                      largo: c.scrollWidth <= c.clientWidth};
            })()"""
     )
     assert medidas["topo"] >= 0 and medidas["base"] <= 700
     assert medidas["esq"] >= 0 and medidas["dir"] <= largura
-    assert medidas["rodape"] <= 700  # Salvar e Cancelar sempre visíveis
-    assert medidas["overflow"] == "auto" and medidas["rola"]  # só o corpo rola
-    assert medidas["largo"]  # sem rolagem horizontal dentro da janela
-    # O campo Foto de cada linha tem rótulo visível: no celular, na própria linha; no desktop, no
-    # cabeçalho de colunas da lista.
-    if largura < 960:
-        assert pagina.js(
-            "[...document.querySelectorAll('.compra-item-foto .item-rotulo')]"
-            ".every(r => r.getClientRects().length > 0)"
-        )
-    else:
-        assert pagina.js(
-            "[...document.querySelectorAll('.compra-lista:not([hidden]) .compra-colunas')]"
-            ".every(c => c.getClientRects().length > 0 && c.textContent.includes('Foto'))"
-        )
+    # Resumo e Salvar/Cancelar ficam no rodapé fixo; só o corpo (com os itens) rola.
+    assert medidas["rodape"] <= 700 and medidas["salvar"] <= 700
+    assert medidas["overflow"] == "auto" and medidas["rola"]
+    assert medidas["largo"]
+    pagina.js("document.querySelector('.compra-corpo').scrollTop = 99999")
+    assert pagina.js(
+        "document.getElementById('compra-total').getBoundingClientRect().bottom <= 700"
+    )
     assert sem_rolagem_horizontal(pagina)
-    # No celular a janela ocupa a tela inteira.
-    if largura < 640:
+    if largura < 640:  # no celular a janela ocupa a tela inteira
         assert (medidas["esq"], medidas["dir"]) == (0, largura)
 
     pequenos = pagina.js(
@@ -448,17 +467,269 @@ def test_janela_cabe_na_tela_com_rolagem_interna(pagina, estoque, largura):
     cortes = pagina.js(
         """[...document.querySelectorAll('#compra-janela .compra-item')].flatMap(l => {
              const lim = l.getBoundingClientRect();
-             return [...l.querySelectorAll('input, select, .botao, dd')]
+             return [...l.querySelectorAll('input, select, .botao, output, label')]
                .filter(el => el.getClientRects().length && el.type !== 'hidden'
                        && (el.getBoundingClientRect().right > lim.right + 1
-                           || el.getBoundingClientRect().left < lim.left - 1))
+                           || el.getBoundingClientRect().left < lim.left - 1
+                           || el.scrollWidth > el.clientWidth + 1 && el.tagName === 'LABEL'))
                .map(el => el.dataset.campo || el.textContent.trim());
            })"""
     )
     assert cortes == []
 
 
-# ---------- Janela Registrar Compra: comportamento ----------
+@pytest.mark.parametrize("largura", [1280, 1920])
+def test_desktop_cada_linha_numa_faixa_com_icones(pagina, estoque, largura):
+    pagina.tela(largura, 900)
+    pagina.abrir("/compras")
+    janela_com_as_cinco_categorias(pagina)
+
+    # Em cada linha, campos, foto e ícones começam na mesma altura (uma só faixa).
+    faixas = pagina.js(
+        """[...document.querySelectorAll('#compra-itens .compra-item')].map(l =>
+             new Set([...l.querySelectorAll(
+                 '.compra-item-campos > .campo:not([hidden]) input,'
+                 + ' .compra-item-campos > .campo:not([hidden]) select,'
+                 + ' .upload-selecionar, .compra-item-duplicar, .compra-item-remover')]
+               .map(el => Math.round(el.getBoundingClientRect().top))).size)"""
+    )
+    assert faixas == [1, 1, 1, 1, 1]
+    # Rótulos compactos e visíveis acima de cada campo.
+    assert pagina.js(
+        "[...document.querySelectorAll('.compra-item-campos > .campo:not([hidden]) > label')]"
+        ".every(l => l.getClientRects().length && parseFloat(getComputedStyle(l).fontSize) <= 13)"
+    )
+    # Foto, duplicar e remover são ícones (sem texto), com nome acessível e dica.
+    icones = pagina.js(
+        """[...document.querySelectorAll('.compra-item[data-pos="1"] .upload-selecionar,'
+             + ' .compra-item[data-pos="1"] .compra-item-duplicar,'
+             + ' .compra-item[data-pos="1"] .compra-item-remover')]
+           .map(b => [b.textContent.trim(), b.getAttribute('aria-label'), b.title,
+                      !!b.querySelector('svg')])"""
+    )
+    assert icones == [
+        ["", "Selecionar foto (PNG, JPG ou WebP, até 10 MB)", "Selecionar foto", True],
+        ["", "Duplicar item 1", "Duplicar item 1", True],
+        ["", "Remover item 1", "Remover item 1", True],
+    ]
+
+
+def test_cada_categoria_mostra_so_os_campos_dela_na_ordem(pagina, estoque):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    janela_com_as_cinco_categorias(pagina)
+
+    assert [rotulos(pagina, n) for n in range(1, 6)] == [
+        ["Categoria", "Material", "Cor", "Tipo", "Peso/un (g)", "Qtd.", "Marca", "Valor unit."],
+        ["Categoria", "Item", "Qtd.", "Cor", "Medidas", "Valor unit."],
+        ["Categoria", "Item", "Qtd.", "Cor", "Medidas", "Valor unit."],
+        ["Categoria", "Item", "Qtd.", "Marca", "Valor unit."],
+        ["Categoria", "Item", "Qtd.", "Marca", "Valor unit."],
+    ]
+    opcoes = pagina.js(
+        f"[...document.querySelector('{linha(1, 'categoria')}').options].map(o => o.text)"
+    )
+    assert opcoes == [
+        "Filamento",
+        "Acessórios para produtos",
+        "Embalagens para produtos",
+        "Peças de reposição",
+        "Itens gerais",
+    ]
+    # Asterisco só nos obrigatórios da categoria: cor e marca são opcionais fora do filamento.
+    obrigatorios = (
+        '[...document.querySelectorAll(\'#compra-itens .compra-item[data-pos="{n}"]'
+        " .campo:not([hidden]) > label')].filter(l => !l.querySelector('.obrigatorio').hidden)"
+        ".map(l => l.firstChild.textContent.trim())"
+    )
+    assert pagina.js(obrigatorios.format(n=1))[-2:] == ["Marca", "Valor unit."]
+    assert pagina.js(obrigatorios.format(n=2)) == ["Categoria", "Item", "Qtd.", "Valor unit."]
+    assert pagina.js(obrigatorios.format(n=4)) == ["Categoria", "Item", "Qtd.", "Valor unit."]
+    # Sugestões de nomes da categoria da linha; cor e marca com as listas gerais.
+    assert pagina.js(f"document.querySelector('{linha(4, 'nome')}').getAttribute('list')") == (
+        "compra-nomes-peca_manutencao"
+    )
+    assert pagina.js(f"document.querySelector('{linha(2, 'cor')}').getAttribute('list')") == (
+        "compra-cores"
+    )
+
+
+def test_trocar_categoria_preenchida_avisa_guarda_e_desfaz(pagina, estoque):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    preencher_filamento(pagina, 1, qtd="2", valor="5000")
+
+    mudar_categoria(pagina, 1, "outro")
+
+    # Nada é apagado calado: os campos que somem são listados e a troca pode ser desfeita.
+    aviso = "#compra-itens .compra-item[data-pos='1'] .compra-item-aviso"
+    assert pagina.js(f'!document.querySelector("{aviso}").hidden')
+    assert pagina.texto(f"{aviso} .compra-item-aviso-texto") == (
+        "Não usados em Itens gerais e não serão salvos: Material, Cor, Tipo, Peso/un (g)."
+    )
+    # Quantidade, marca e valor unitário servem às duas categorias e continuam visíveis.
+    assert rotulos(pagina, 1) == ["Categoria", "Item", "Qtd.", "Marca", "Valor unit."]
+    assert [pagina.valor(linha(1, c)) for c in ("quantidade", "marca", "valor_unitario")] == [
+        "2",
+        "Marca Teste",
+        "R$ 50,00",
+    ]
+    assert pagina.texto("#compra-subtotal") == "R$ 100,00"
+
+    pagina.clicar(f"{aviso} .compra-item-desfazer")
+    assert pagina.valor(linha(1, "categoria")) == "filamento"
+    assert pagina.js(f'document.querySelector("{aviso}").hidden')
+    assert [pagina.valor(linha(1, c)) for c in ("material", "cor", "tipo", "peso_rolo")] == [
+        "PLA",
+        "Preto",
+        "silk",
+        "1000",
+    ]
+
+    # Trocar de novo e salvar: só os campos visíveis da categoria são enviados.
+    mudar_categoria(pagina, 1, "peca_manutencao")
+    preencher(pagina, {linha(1, "nome"): "Bico"})
+    escolher_local(pagina, "shopee")
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    (gravada,) = estoque.compras.values()
+    (peca,) = gravada.compra.itens
+    assert (peca.categoria, peca.nome, peca.marca, peca.cor, peca.material) == (
+        "peca_manutencao",
+        "Bico",
+        "Marca Teste",
+        None,
+        None,
+    )
+    assert not estoque.itens and not estoque.filamentos
+
+
+def test_adicionar_duplicar_e_remover_linhas(pagina, estoque):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    assert pagina.js(NOMES_DAS_LINHAS) == ["Item 1"]
+
+    n = adicionar(pagina, "acessorio")
+    preencher_item(pagina, n, nome="Argola", qtd="10", valor="150", cor="Dourada", medidas="2 cm")
+    nav.novo_arquivo(pagina, "argola.png")
+    nav.escolher(pagina, 1)
+    nav.esperar_previa(pagina, "argola.png", 1)
+
+    # Duplicar: a cópia entra logo abaixo, com os mesmos dados e sem a foto (cada linha tem a
+    # sua), sem abrir outra janela.
+    pagina.clicar("#compra-itens .compra-item[data-pos='2'] .compra-item-duplicar")
+    assert pagina.js(NOMES_DAS_LINHAS) == ["Item 1", "Item 2", "Item 3"]
+    assert pagina.js("document.activeElement.dataset.campo") == "categoria"
+    assert [pagina.valor(linha(3, c)) for c in ("categoria", "nome", "cor", "medidas")] == [
+        "acessorio",
+        "Argola",
+        "Dourada",
+        "2 cm",
+    ]
+    assert nav.arquivos_por_item(pagina) == [None, "argola.png", None]
+    assert pagina.texto("#compra-subtotal") == "R$ 30,00"
+
+    # Duplicar a primeira insere entre ela e a segunda.
+    pagina.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-duplicar")
+    assert pagina.js(
+        "[...document.querySelectorAll('#compra-itens .compra-item')].map(l => l.dataset.categoria)"
+    ) == ["filamento", "filamento", "acessorio", "acessorio"]
+
+    # Remover: o foco vai para a vizinha; sem linhas, para "+ Adicionar item".
+    pagina.clicar("#compra-itens .compra-item[data-pos='3'] .compra-item-remover")
+    assert pagina.js("document.activeElement.getAttribute('aria-label')") == "Remover item 3"
+    assert nav.arquivos_por_item(pagina) == [None, None, None]
+    for _ in range(3):
+        pagina.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-remover")
+    assert pagina.js("document.activeElement.hasAttribute('data-adicionar')")
+    assert not pagina.js("document.querySelector('.compra-itens-vazio').hidden")
+    assert pagina.texto("#compra-total") == "R$ 0,00"
+
+
+def test_totais_atualizam_na_hora_com_desconto_e_frete(pagina, estoque):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+
+    assert pagina.valor("#compra-desconto") == "" and pagina.valor("#compra-frete") == ""
+    assert totais(pagina) == ["R$ 0,00", "R$ 0,00"]
+    preencher_filamento(pagina, 1, qtd="3", valor="8990")  # 3 x 89,90 = 269,70
+    assert pagina.texto("#compra-itens .compra-item[data-pos='1'] [data-total-linha]") == (
+        "R$ 269,70"
+    )
+    n = adicionar(pagina, "embalagem")
+    preencher_item(pagina, n, nome="Caixa", qtd="4", valor="225")  # 4 x 2,25 = 9,00
+    assert totais(pagina) == ["R$ 278,70", "R$ 278,70"]
+
+    preencher(pagina, {"#compra-desconto": "870", "#compra-frete": "1250"})
+    assert pagina.valor("#compra-desconto") == "R$ 8,70"
+    assert totais(pagina) == ["R$ 278,70", "R$ 282,50"]  # 278,70 − 8,70 + 12,50
+
+    pagina.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-remover")
+    assert totais(pagina) == ["R$ 9,00", "R$ 12,80"]  # 9,00 − 8,70 + 12,50
+    assert pagina.js("document.getElementById('compra-desconto-aviso').hidden")
+    pagina.js(
+        "(() => { const f = document.getElementById('compra-desconto'); f.value = '';"
+        " f.dispatchEvent(new Event('input', {bubbles: true})) })()"
+    )
+    preencher(pagina, {"#compra-desconto": "1000"})  # 10,00 > subtotal 9,00
+    assert not pagina.js("document.getElementById('compra-desconto-aviso').hidden")
+    preencher(pagina, {"#compra-frete": "-"})  # sem sinal: nunca fica negativo
+    assert pagina.valor("#compra-frete").startswith("R$ ")
+
+
+@pytest.mark.parametrize("largura", [360, 1280])
+def test_compra_mista_com_as_cinco_categorias_fotos_e_atributos(pagina, estoque, largura):
+    pagina.tela(largura, 800)
+    pagina.abrir("/compras")
+    janela_com_as_cinco_categorias(pagina)
+    pagina.js("document.getElementById('compra-data').value = ''")
+    preencher(pagina, {"#compra-data": "10092026"})
+    assert pagina.valor("#compra-data") == "10/09/2026"
+    escolher_local(pagina, "tiktok_shop")
+    preencher_filamento(pagina, 1, qtd="2", valor="8000")
+    preencher_item(pagina, 2, nome="Argola", qtd="10", valor="150", cor="Dourada", medidas="2 cm")
+    preencher_item(pagina, 3, nome="Caixa", qtd="4", valor="225", medidas="10x10x5 cm")
+    preencher_item(pagina, 4, nome="Bico 0,4", qtd="2", valor="1500", marca="Bambu")
+    preencher_item(pagina, 5, nome="Fita dupla face", qtd="1", valor="750")
+    preencher(pagina, {"#compra-desconto": "2150", "#compra-frete": "1200"})
+    for indice, nome in ((1, "argola.png"), (4, "fita.png")):  # fotos independentes por linha
+        nav.novo_arquivo(pagina, nome)
+        nav.escolher(pagina, indice)
+        nav.esperar_previa(pagina, nome, indice)
+    assert totais(pagina) == ["R$ 221,50", "R$ 212,00"]
+
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    assert pagina.js("location.pathname + location.search") == "/compras?salvo=compra"
+    (gravada,) = estoque.compras.values()
+    c = gravada.compra
+    assert (c.data_compra, c.local_tipo, c.desconto, c.frete) == (
+        date(2026, 9, 10),
+        "tiktok_shop",
+        Decimal("21.50"),
+        Decimal("12.00"),
+    )
+    fil, ace, emb, peca, outro = c.itens
+    assert [i.categoria for i in c.itens] == list(CATEGORIAS)
+    assert (fil.cor, fil.marca, fil.valor_unitario) == ("Preto", "Marca Teste", Decimal("80.00"))
+    assert (ace.cor, ace.medidas, ace.valor_total) == ("Dourada", "2 cm", Decimal("15.00"))
+    assert (emb.cor, emb.medidas) == (None, "10x10x5 cm")
+    assert (peca.marca, peca.valor_unitario) == ("Bambu", Decimal("15.00"))
+    assert (outro.marca, outro.valor_total) == (None, Decimal("7.50"))
+    assert [i.imagem_caminho is not None for i in c.itens] == [False, True, False, False, True]
+    # Estoque só para filamento, acessório e embalagem.
+    assert len(estoque.filamentos) == 1
+    assert sorted(i.categoria for i in estoque.itens.values()) == ["acessorio", "embalagem"]
+    # A compra aparece com o total já com desconto e frete.
+    assert "R$ 212,00" in pagina.texto("#card-compras")
+    lista = pagina.texto("#ultimas-compras")
+    assert "TikTok Shop" in lista and "10 un · Argola · Dourada · 2 cm" in lista
+    assert "2 un · Bico 0,4 · Bambu" in lista and "desconto de R$ 21,50" in lista
 
 
 def test_abrir_focar_e_cancelar_sem_gravar(pagina, estoque):
@@ -467,24 +738,22 @@ def test_abrir_focar_e_cancelar_sem_gravar(pagina, estoque):
     abrir_janela(pagina)
 
     assert pagina.js("document.activeElement.id") == "compra-data"
-    assert pagina.js("document.querySelectorAll('#compra-itens .compra-item').length") == 1
-    assert pagina.js(NOMES_DAS_LINHAS) == ["Filamento 1"]
+    assert pagina.js(NOMES_DAS_LINHAS) == ["Item 1"]
+    assert pagina.valor(linha(1, "categoria")) == "filamento"
     chave = pagina.valor('[name="chave_envio"]')
     assert len(chave) == 36 and chave[14] == "4"
 
-    preencher(pagina, {"#compra-data": "10092026"})
     preencher_filamento(pagina, 1)
     pagina.clicar(".compra-rodape [data-cancelar]")
 
     assert not pagina.js("document.getElementById('compra-janela').open")
-    # O foco volta ao botão que abriu a janela (o evento close chega logo depois).
-    nav.esperar(lambda: pagina.js("document.activeElement.dataset.abrirCompra") == "filamento")
+    nav.esperar(lambda: pagina.js("document.activeElement.hasAttribute('data-abrir-compra')"))
     assert not estoque.compras and not estoque.itens
     # Reabrir começa do zero, com outra chave de submissão.
     abrir_janela(pagina)
     assert pagina.valor("#compra-data") == pagina.js(HOJE_JS_EXPR)
-    assert pagina.js("document.querySelectorAll('#compra-itens .compra-item').length") == 1
-    assert pagina.js(NOMES_DAS_LINHAS) == ["Filamento 1"]
+    assert pagina.js(NOMES_DAS_LINHAS) == ["Item 1"]
+    assert pagina.valor(linha(1, "cor")) == ""
     assert pagina.valor('[name="chave_envio"]') != chave
 
     tecla(pagina, "Escape", codigo=27)  # Esc também cancela
@@ -492,105 +761,81 @@ def test_abrir_focar_e_cancelar_sem_gravar(pagina, estoque):
     assert not estoque.compras
 
 
-def test_data_de_hoje_no_calendario_e_local_por_teclado(pagina, estoque):
+def test_data_em_dd_mm_aaaa_e_local_por_teclado(pagina, estoque):
     pagina.tela(1280, 900)
     pagina.abrir("/compras")
     abrir_janela(pagina)
 
-    assert pagina.js("document.getElementById('compra-data').type") == "date"
+    assert pagina.js("document.getElementById('compra-data').type") == "text"
+    assert pagina.js("document.getElementById('compra-data').placeholder") == "dd/mm/aaaa"
     assert pagina.valor("#compra-data") == pagina.js(HOJE_JS_EXPR)
-    preencher(pagina, {"#compra-data": "10092026"})
-    assert pagina.valor("#compra-data") == "2026-09-10"
+    pagina.js("document.getElementById('compra-data').value = ''")
+    preencher(pagina, {"#compra-data": "1009a2026"})
+    assert pagina.valor("#compra-data") == "10/09/2026"
 
     # Botões de seleção única: Tab chega ao grupo e as setas escolhem.
     pagina.js("document.querySelector('#campo-local input[value=mercado_livre]').focus()")
     tecla(pagina, " ", "Space", 32)
-    assert (
-        pagina.js("document.querySelector('#campo-local input:checked').value") == "mercado_livre"
-    )
     for _ in range(3):
         tecla(pagina, "ArrowRight", codigo=39)
     assert pagina.js("document.querySelector('#campo-local input:checked').value") == "loja_fisica"
-    assert pagina.js("document.activeElement.matches(':focus-visible')")
     assert not pagina.js("document.getElementById('campo-local_nome').hidden")
+    assert pagina.texto("#campo-local_nome label") == "Nome do estabelecimento ou site *"
 
     pagina.digitar("#compra-local-nome", "Feira")
     pagina.js("document.querySelector('#campo-local input:checked').focus()")
     tecla(pagina, "ArrowRight", codigo=39)
     assert pagina.js("document.querySelector('#campo-local input:checked').value") == "outro"
-    assert pagina.valor("#compra-local-nome") == "Feira"  # entre Loja Física e Outro, fica
+    assert pagina.valor("#compra-local-nome") == "Feira"  # entre Loja Física e Outros sites, fica
 
-    escolher_local(pagina, "shopee")
+    escolher_local(pagina, "tiktok_shop")
     assert pagina.js("document.getElementById('campo-local_nome').hidden")
     assert pagina.valor("#compra-local-nome") == ""  # plataforma: o texto é limpo
 
 
-def test_linhas_calculos_e_remocao(pagina, estoque):
+def test_locais_na_ordem_com_logos_e_icones(pagina, estoque):
     pagina.tela(1280, 900)
     pagina.abrir("/compras")
-    abrir_janela(pagina, "filamento")
-    pagina.clicar('[data-adicionar="filamento"]')
-    pagina.clicar('[data-adicionar="acessorio"]')
-    pagina.clicar('[data-adicionar="embalagem"]')
+    abrir_janela(pagina)
 
-    titulos = pagina.js(NOMES_DAS_LINHAS)
-    assert titulos == ["Filamento 1", "Filamento 2", "Acessório 1", "Embalagem 1"]
-    # Adicionar leva o foco ao primeiro campo da nova linha.
-    assert pagina.js(
-        f"document.activeElement === document.querySelector('{linha(4, 'quantidade')}')"
+    nomes = pagina.js(
+        "[...document.querySelectorAll('#campo-local .escolha-titulo')].map(e => e.textContent)"
     )
-    # Rótulos com unidade, ligados aos campos.
-    rotulos = pagina.js(
-        "[...document.querySelectorAll('#compra-itens .compra-item label')].slice(0, 7)"
-        ".map(l => l.control && l.textContent.replace('*', '').replace(/\s+/g, ' ').trim())"
-    )
-    assert rotulos == [
-        "Quantidade",
-        "Material",
-        "Tipo",
-        "Peso (g) (gramas de cada rolo)",
-        "Cor",
-        "Marca",
-        "Valor unitário (de cada rolo, em reais)",
+    assert nomes == [
+        "TikTok Shop",
+        "Mercado Livre",
+        "AliExpress",
+        "Shopee",
+        "Loja Física",
+        "Outros sites",
     ]
-
-    preencher_filamento(pagina, 1, qtd="3", peso="500", valor="10000")
-    assert pagina.valor(linha(1, "valor_unitario")) == "R$ 100,00"
-    # Sem resultados por linha: só o resumo da seção, que soma os filamentos (sem frete).
-    assert pagina.js("document.querySelectorAll('[data-calculo]').length") == 0
-    assert resumo(pagina, "filamento") == ["1.500 g", "R$ 300,00"]  # 3 rolos x 500 g; 3 x 100,00
-    preencher_filamento(pagina, 2, qtd="2", peso="1000", valor="8990")
-    assert resumo(pagina, "filamento") == ["3.500 g", "R$ 479,80"]
-    preencher_item(pagina, 3, qtd="3", valor="1000")
-    assert resumo(pagina, "acessorio") == ["3 un", "R$ 10,00"]
-    assert resumo(pagina, "embalagem") == ["0 un", "R$ 0,00"]
-
-    # Remover a linha 2: as outras são renumeradas e o foco vai para a vizinha.
-    pagina.clicar("#compra-itens .compra-item[data-pos='2'] .compra-item-remover")
-    titulos = pagina.js(NOMES_DAS_LINHAS)
-    assert titulos == ["Filamento 1", "Acessório 1", "Embalagem 1"]
-    assert pagina.js("document.activeElement.getAttribute('aria-label')") == "Remover filamento 1"
-    assert pagina.valor(linha(2, "nome")) == "Argola"  # dados das outras linhas continuam
-    for _ in range(3):
-        pagina.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-remover")
-    # Sem linhas, cada seção continua com título, botão de adicionar e o aviso de vazia.
-    assert pagina.js("document.querySelectorAll('.compra-secao').length") == 3
     assert pagina.js(
-        "[...document.querySelectorAll('.compra-secao-vazio')].every(p => p.offsetParent !== null)"
+        "[...document.querySelectorAll('#campo-local .compra-local-marca img')]"
+        ".every(i => i.complete && i.naturalWidth > 0)"
     )
-    assert pagina.js("document.activeElement.dataset.adicionar") == "embalagem"
-    assert not estoque.compras
+    assert (
+        pagina.js("document.querySelectorAll('#campo-local .compra-local-marca svg').length") == 3
+    )
+    # Todos os locais numa só linha no desktop.
+    topos = pagina.js(
+        "new Set([...document.querySelectorAll('#campo-local .escolha-card')]"
+        ".map(c => Math.round(c.getBoundingClientRect().top))).size"
+    )
+    assert topos == 1
 
 
 def test_erros_do_servidor_nos_campos_preservando_o_que_foi_digitado(pagina, estoque):
     pagina.tela(360, 740)
     pagina.abrir("/compras")
-    abrir_janela(pagina, "filamento")
-    pagina.clicar('[data-adicionar="embalagem"]')
+    abrir_janela(pagina)
+    n = adicionar(pagina, "embalagem")
     preencher_filamento(pagina, 1, cor="")
-    preencher(pagina, {linha(2, "nome"): "Caixa", linha(2, "quantidade"): "3"})
+    preencher(pagina, {linha(n, "nome"): "Caixa", linha(n, "quantidade"): "3"})
     escolher_local(pagina, "outro")
     pagina.js("document.getElementById('compra-data').value = ''")  # vem preenchida com hoje
+    nav.novo_arquivo(pagina, "caixa.png")
+    nav.escolher(pagina, 1)
+    nav.esperar_previa(pagina, "caixa.png", 1)
     salvar(pagina)
     esperar_fim_do_envio(pagina)
 
@@ -602,18 +847,19 @@ def test_erros_do_servidor_nos_campos_preservando_o_que_foi_digitado(pagina, est
     )
     assert erros == [
         "Informe a data de compra.",
-        "Informe o nome do local.",
+        "Informe o nome do estabelecimento ou site.",
         "Informe a cor.",
-        "Informe o valor total.",
+        "Informe o valor unitário.",
     ]
     # O foco vai para o primeiro campo com erro, ligado à mensagem.
     assert pagina.js("document.activeElement.id") == "compra-data"
     assert pagina.js("document.activeElement.getAttribute('aria-invalid')") == "true"
     descrito = pagina.js("document.activeElement.getAttribute('aria-describedby')")
     assert pagina.texto(f"#{descrito}") == "Informe a data de compra."
-    # O que foi digitado continua lá.
+    # O que foi digitado e a foto escolhida continuam lá.
     assert pagina.valor(linha(1, "marca")) == "Marca Teste"
-    assert pagina.valor(linha(2, "nome")) == "Caixa"
+    assert pagina.valor(linha(n, "nome")) == "Caixa"
+    assert nav.arquivos_por_item(pagina) == [None, "caixa.png"]
     # Corrigir um campo apaga o aviso dele.
     pagina.digitar("#compra-data", "10092026")
     assert not pagina.js(
@@ -622,71 +868,44 @@ def test_erros_do_servidor_nos_campos_preservando_o_que_foi_digitado(pagina, est
     assert not estoque.compras
 
 
+def test_desconto_maior_que_o_subtotal_volta_marcado(pagina, estoque):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    mudar_categoria(pagina, 1, "outro")
+    preencher_item(pagina, 1, nome="Fita", qtd="1", valor="500")
+    escolher_local(pagina, "shopee")
+    preencher(pagina, {"#compra-desconto": "600"})
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    assert pagina.texto("#campo-desconto .campo-erro") == (
+        "O desconto não pode ser maior que o subtotal dos itens."
+    )
+    assert pagina.js("document.activeElement.id") == "compra-desconto"
+    assert not estoque.compras
+
+
 def test_compra_sem_itens_pede_um_item(pagina, estoque):
     pagina.tela(1280, 900)
     pagina.abrir("/compras")
     abrir_janela(pagina)
     pagina.clicar(".compra-item-remover")
-    preencher(pagina, {"#compra-data": "10092026"})
     escolher_local(pagina, "shopee")
     salvar(pagina)
     esperar_fim_do_envio(pagina)
 
     assert pagina.texto("#campo-itens .campo-erro") == "Adicione pelo menos um item."
-    assert pagina.js("document.activeElement.dataset.adicionar") == "filamento"
-    pagina.clicar('[data-adicionar="acessorio"]')
+    assert pagina.js("document.activeElement.hasAttribute('data-adicionar')")
+    pagina.clicar("[data-adicionar]")
     assert pagina.js("!document.querySelector('#campo-itens .campo-erro')")
-
-
-@pytest.mark.parametrize("largura", [360, 1280])
-def test_registrar_compra_com_as_tres_categorias_e_foto(pagina, estoque, largura):
-    pagina.tela(largura, 800)
-    pagina.abrir("/compras")
-    abrir_janela(pagina, "filamento")
-    pagina.clicar('[data-adicionar="acessorio"]')
-    pagina.clicar('[data-adicionar="embalagem"]')
-    preencher(pagina, {"#compra-data": "10092026"})
-    escolher_local(pagina, "loja_fisica")
-    pagina.digitar("#compra-local-nome", "Papelaria Centro")
-    preencher_filamento(pagina, 1)
-    preencher_item(pagina, 2)
-    preencher_item(pagina, 3, nome="Caixa P", qtd="3", valor="1000")
-    nav.novo_arquivo(pagina, "argola.png")
-    nav.escolher(pagina, 1)  # foto só na linha do acessório
-    nav.esperar_previa(pagina, "argola.png", 1)
-
-    salvar(pagina)
-    esperar_fim_do_envio(pagina)
-
-    assert pagina.js("location.pathname + location.search") == "/compras?salvo=compra"
-    assert pagina.texto(".alerta-sucesso") == "Compra registrada. Os itens já estão no estoque."
-    (gravada,) = estoque.compras.values()
-    c = gravada.compra
-    assert (c.data_compra, c.local_tipo, c.local_nome) == (
-        date(2026, 9, 10),
-        "loja_fisica",
-        "Papelaria Centro",
-    )
-    assert [i.categoria for i in c.itens] == ["filamento", "acessorio", "embalagem"]
-    assert [i.imagem_caminho is not None for i in c.itens] == [False, True, False]
-    assert len(estoque.imagens) == 1
-    # 3 x 89,90 + 14,00 + 10,00: a compra já aparece no resumo e na lista, com a foto do acessório.
-    assert "R$ 293,70" in pagina.texto("#card-compras")
-    assert "1 compra" in pagina.texto("#card-compras")
-    assert "R$ 14,00" in pagina.texto("#card-acessorio")
-    lista = pagina.texto("#ultimas-compras")
-    assert "10/09/2026" in lista and "Loja Física · Papelaria Centro" in lista
-    assert "3 rolos · PLA Silk Preto" in lista and "40 un · Argola" in lista
-    assert (
-        pagina.js("document.querySelectorAll('.tabela-compras .foto-previa-botao img').length") == 1
-    )
 
 
 def test_duplo_clique_grava_uma_vez(pagina, estoque):
     pagina.tela(1280, 900)
     pagina.abrir("/compras")
-    abrir_janela(pagina, "embalagem")
-    preencher(pagina, {"#compra-data": "10092026"})
+    abrir_janela(pagina)
+    mudar_categoria(pagina, 1, "embalagem")
     escolher_local(pagina, "aliexpress")
     preencher_item(pagina, 1, nome="Caixa")
     pagina.js(
@@ -702,10 +921,11 @@ def test_falha_ao_gravar_mantem_a_janela_e_os_dados(pagina, estoque):
     estoque.falhar_em = {"registrar"}
     pagina.tela(1280, 900)
     pagina.abrir("/compras")
-    abrir_janela(pagina, "embalagem")
-    preencher(pagina, {"#compra-data": "10092026"})
+    abrir_janela(pagina)
+    mudar_categoria(pagina, 1, "embalagem")
     escolher_local(pagina, "shopee")
-    preencher_item(pagina, 1, nome="Caixa")
+    preencher_item(pagina, 1, nome="Caixa", cor="Kraft")
+    preencher(pagina, {"#compra-desconto": "100"})
     nav.novo_arquivo(pagina, "caixa.png")
     nav.escolher(pagina, 0)
     nav.esperar_previa(pagina, "caixa.png", 0)
@@ -716,7 +936,8 @@ def test_falha_ao_gravar_mantem_a_janela_e_os_dados(pagina, estoque):
     assert pagina.texto("#compra-alerta") == (
         "Não foi possível salvar agora. Tente novamente em instantes."
     )
-    assert pagina.valor(linha(1, "nome")) == "Caixa"
+    assert pagina.valor(linha(1, "nome")) == "Caixa" and pagina.valor(linha(1, "cor")) == "Kraft"
+    assert pagina.valor("#compra-desconto") == "R$ 1,00"
     assert nav.arquivos_por_item(pagina) == ["caixa.png"]  # a foto continua escolhida
     assert not estoque.compras and not estoque.imagens  # a foto enviada foi removida
 
@@ -727,630 +948,73 @@ def test_falha_ao_gravar_mantem_a_janela_e_os_dados(pagina, estoque):
     assert len(estoque.compras) == 1 and len(estoque.imagens) == 1
 
 
-# ---------- Local de compra, frete e totais ----------
-
-
-def test_locais_na_ordem_com_logos_e_nomes_visiveis(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    nomes = pagina.js(
-        "[...document.querySelectorAll('#campo-local .escolha-titulo')].map(e => e.textContent)"
-    )
-    assert nomes == ["Mercado Livre", "Shopee", "AliExpress", "Loja Física", "Outro"]
-    assert pagina.js(
-        "[...document.querySelectorAll('#campo-local .compra-local-marca img')]"
-        ".every(i => i.complete && i.naturalWidth > 0)"
-    )
-    assert (
-        pagina.js("document.querySelectorAll('#campo-local .compra-local-marca img').length") == 3
-    )
-    assert (
-        pagina.js("document.querySelectorAll('#campo-local .compra-local-marca svg').length") == 2
-    )
-
-
-def totais(p):
-    return [p.texto(f"#{i}") for i in ("compra-subtotal", "compra-total-frete", "compra-total")]
-
-
-def test_frete_e_totais_atualizam_ao_editar_adicionar_e_remover(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    assert pagina.valor("#compra-frete") == ""  # vazio vale zero (placeholder R$ 0,00)
-    assert totais(pagina) == ["R$ 0,00", "R$ 0,00", "R$ 0,00"]
-
-    preencher_filamento(pagina, 1, qtd="3", valor="8990")  # 3 x 89,90 = 269,70
-    assert totais(pagina) == ["R$ 269,70", "R$ 0,00", "R$ 269,70"]
-
-    pagina.clicar('[data-adicionar="acessorio"]')
-    preencher_item(pagina, 2, nome="Argola", qtd="40", valor="1400")  # 14,00
-    assert totais(pagina) == ["R$ 283,70", "R$ 0,00", "R$ 283,70"]
-
-    preencher(pagina, {"#compra-frete": "1250"})
-    assert pagina.valor("#compra-frete") == "R$ 12,50"
-    assert totais(pagina) == ["R$ 283,70", "R$ 12,50", "R$ 296,20"]
-
-    pagina.js(
-        "(() => { const f = document.getElementById('compra-frete'); f.value = '';"
-        " f.dispatchEvent(new Event('input', {bubbles: true})) })()"
-    )
-    assert totais(pagina)[1] == "R$ 0,00"  # frete apagado vale zero
-    preencher(pagina, {"#compra-frete": "-99"})  # sem sinal: nunca fica negativo
-    assert pagina.valor("#compra-frete") == "R$ 0,99"
-
-    pagina.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-remover")
-    assert totais(pagina) == ["R$ 14,00", "R$ 0,99", "R$ 14,99"]
-
-
-def test_compra_com_frete_grava_e_reabrir_zera(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina, "embalagem")
-    preencher(pagina, {"#compra-data": "10092026", "#compra-frete": "2500"})
-    escolher_local(pagina, "shopee")
-    preencher_item(pagina, 1, nome="Caixa", qtd="2", valor="1000")
-    salvar(pagina)
-    esperar_fim_do_envio(pagina)
-
-    (gravada,) = estoque.compras.values()
-    assert gravada.compra.frete == Decimal("25.00")
-    abrir_janela(pagina)
-    assert pagina.valor("#compra-frete") == ""  # vazio vale zero (placeholder R$ 0,00)
-    assert totais(pagina) == ["R$ 0,00", "R$ 0,00", "R$ 0,00"]
-
-
-@pytest.mark.parametrize("largura", LARGURAS)
-def test_campos_do_item_alinhados_no_desktop_e_frete_sem_cortes(pagina, estoque, largura):
-    pagina.tela(largura, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    pagina.clicar('[data-adicionar="acessorio"]')
-    pagina.clicar('[data-adicionar="embalagem"]')
-
-    linhas = pagina.js(
-        """[...document.querySelectorAll('#compra-itens .compra-item')].map(l => {
-             const seletor = '.compra-item-campos [data-campo]:not([type=hidden])';
-             const c = [...l.querySelectorAll(seletor)].map(e => e.getBoundingClientRect());
-             const r = l.querySelector('.compra-item-campos').getBoundingClientRect();
-             return {baixos: new Set(c.map(x => Math.round(x.bottom))).size,
-                     esq: Math.min(...c.map(x => x.left)), dir: Math.max(...c.map(x => x.right)),
-                     lim: [r.left, r.right]};
-           })"""
-    )
-    for linha in linhas:
-        assert linha["esq"] >= linha["lim"][0] - 1 and linha["dir"] <= linha["lim"][1] + 1
-        if largura >= 1024:  # desktop: todos os controles na mesma linha, na mesma altura
-            assert linha["baixos"] == 1
-    # Frete e totais cabem na janela, sem rolagem horizontal.
-    assert sem_rolagem_horizontal(pagina)
-    assert pagina.js(
-        "(() => { const j = document.querySelector('.compra-corpo');"
-        " return j.scrollWidth <= j.clientWidth })()"
-    )
-    assert pagina.js(
-        "[...document.querySelectorAll('.compra-resumo input, .compra-resumo dd')]"
-        ".every(e => e.getBoundingClientRect().right <= document.documentElement.clientWidth)"
-    )
-
-
-# ---------- Listas, cores e linhas de filamento ----------
-
-
-def opcoes(p, seletor):
-    return p.js(
-        f"[...document.querySelector('{seletor}').options]"
-        ".map(o => [o.value, o.textContent.trim()])"
-    )
-
-
-def test_listas_do_filamento_e_acessorios_sem_limite(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    assert [v for v, _ in opcoes(pagina, linha(1, "quantidade"))] == ["1", "2", "3", "4", "5"]
-    assert pagina.valor(linha(1, "quantidade")) == "1"
-    assert opcoes(pagina, linha(1, "material"))[1:] == [
-        ["PLA", "PLA"],
-        ["PETG", "PETG"],
-        ["TPU", "TPU"],
-    ]
-    assert opcoes(pagina, linha(1, "peso_rolo"))[1:] == [
-        ["250", "250 g"],
-        ["500", "500 g"],
-        ["1000", "1.000 g"],
-    ]
-    # Acessório e embalagem seguem com quantidade livre (campo numérico, não lista).
-    pagina.clicar('[data-adicionar="acessorio"]')
-    assert pagina.js(f"document.querySelector('{linha(2, 'quantidade')}').tagName") == "INPUT"
-    preencher(pagina, {linha(2, "quantidade"): "123456"})
-    assert pagina.valor(linha(2, "quantidade")) == "123456"
-
-
-def test_linhas_entram_na_secao_existente_sem_repetir_titulo(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    secoes = "[...document.querySelectorAll('.compra-secao-topo h4')].map(h => h.textContent)"
-    assert pagina.js(secoes) == ["Filamentos", "Acessórios", "Embalagens"]
-    for categoria in ("filamento", "filamento", "acessorio", "acessorio", "embalagem"):
-        pagina.clicar(f'.compra-secao [data-adicionar="{categoria}"]')
-
-    # Os títulos das seções não se repetem; as linhas entram dentro da seção da categoria.
-    assert pagina.js(secoes) == ["Filamentos", "Acessórios", "Embalagens"]
-    contagem = pagina.js(
-        "[...document.querySelectorAll('.compra-secao')]"
-        ".map(s => [s.dataset.secao, s.querySelectorAll('.compra-item').length])"
-    )
-    assert contagem == [["filamento", 3], ["acessorio", 2], ["embalagem", 1]]
-    titulos = pagina.js(NOMES_DAS_LINHAS)
-    assert titulos == [
-        "Filamento 1",
-        "Filamento 2",
-        "Filamento 3",
-        "Acessório 1",
-        "Acessório 2",
-        "Embalagem 1",
-    ]
-    # Cada linha, em qualquer seção, tem a sua foto opcional e o seu botão de remover.
-    assert pagina.js("document.querySelectorAll('.compra-item-foto').length") == 6
-    assert pagina.js("document.querySelectorAll('.compra-item-remover').length") == 6
-    # Um botão "+ Adicionar" por seção, nenhum dentro das linhas.
-    assert pagina.js("document.querySelectorAll('[data-adicionar]').length") == 3
-
-    # Dados preenchidos e totais seguem ao adicionar e remover linhas.
-    preencher_filamento(pagina, 1, qtd="2", peso="500", valor="1000")
-    preencher_filamento(pagina, 2, qtd="5", peso="1000", valor="2000")
-    preencher_item(pagina, 4, nome="Argola", qtd="4", valor="1000")
-    assert totais(pagina)[0] == "R$ 130,00"  # 2 x 10,00 + 5 x 20,00 + 10,00 (argola)
-    pagina.clicar('.compra-secao [data-adicionar="filamento"]')  # nova linha no fim da seção
-    assert resumo(pagina, "filamento") == ["6.000 g", "R$ 120,00"]
-    assert totais(pagina)[0] == "R$ 130,00"
-    pagina.clicar("#compra-itens .compra-item[data-pos='4'] .compra-item-remover")  # a nova
-    pagina.clicar("#compra-itens .compra-item[data-pos='1'] .compra-item-remover")
-    assert totais(pagina)[0] == "R$ 110,00"
-    assert resumo(pagina, "filamento") == ["5.000 g", "R$ 100,00"]  # só o antigo filamento 2
-    titulos = pagina.js(NOMES_DAS_LINHAS)
-    assert titulos == ["Filamento 1", "Filamento 2", "Acessório 1", "Acessório 2", "Embalagem 1"]
-
-
-def test_compra_com_varios_filamentos_e_fotos_independentes(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    pagina.clicar('.compra-secao [data-adicionar="filamento"]')
-    preencher(pagina, {"#compra-data": "10092026"})
-    escolher_local(pagina, "shopee")
-    preencher_filamento(pagina, 1, qtd="5", peso="250", valor="1000", cor="Preto")
-    preencher_filamento(pagina, 2, qtd="1", peso="1000", valor="2000", cor="Azul", material="TPU")
-    nav.novo_arquivo(pagina, "azul.png")
-    nav.escolher(pagina, 1)  # foto só na segunda linha de filamento
-    nav.esperar_previa(pagina, "azul.png", 1)
-    salvar(pagina)
-    esperar_fim_do_envio(pagina)
-
-    pesos = sorted((f.cor, f.peso_g, f.material) for f in estoque.filamentos.values())
-    assert pesos == [("Azul", 1000, "TPU"), ("Preto", 1250, "PLA")]
-    assert len(estoque.imagens) == 1 and "/itens/2/" in next(iter(estoque.imagens))
-
-
-def test_cor_sugere_as_ja_salvas_e_aceita_nova(pagina, estoque):
-    estoque.com_filamento(
-        "Preto",
-        "PLA",
-        "solido",
-        "M",
-        peso_g=Decimal("1000"),
-        data_compra=date(2026, 9, 1),
-        peso_rolo_g=Decimal("1000"),
-        valor_unitario=Decimal("10"),
-    )
-    estoque.com_filamento(
-        "preto ",
-        "PLA",
-        "solido",
-        "M",
-        peso_g=Decimal("1000"),
-        data_compra=date(2026, 9, 1),
-        peso_rolo_g=Decimal("1000"),
-        valor_unitario=Decimal("10"),
-    )
-    estoque.com_filamento(
-        "Verde Musgo",
-        "PLA",
-        "solido",
-        "M",
-        peso_g=Decimal("1000"),
-        data_compra=date(2026, 9, 1),
-        peso_rolo_g=Decimal("1000"),
-        valor_unitario=Decimal("10"),
-    )
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    assert (
-        pagina.js("document.querySelector('#compra-itens [data-campo=cor]').getAttribute('list')")
-        == "compra-cores"
-    )
-    sugestoes = pagina.js(
-        "[...document.querySelectorAll('#compra-cores option')].map(o => o.value)"
-    )
-    assert sugestoes == ["Preto", "Verde Musgo"]  # sem repetição por espaço ou caixa
-    preencher(pagina, {linha(1, "cor"): "Rosa Choque"})  # cor nova é permitida
-    assert pagina.valor(linha(1, "cor")) == "Rosa Choque"
-
-
-def test_filamentos_em_lista_unica_com_tres_imagens_e_remocao_da_do_meio(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    for _ in range(2):
-        pagina.clicar('.compra-secao [data-adicionar="filamento"]')
-
-    # Um único contêiner, um só cabeçalho de colunas e nenhuma linha com título próprio.
-    lista = "[data-lista=filamento]"
-    assert pagina.js("document.querySelectorAll('.compra-lista').length") == 3  # uma por seção
-    assert pagina.js(f"document.querySelectorAll('{lista} .compra-colunas').length") == 1
-    assert pagina.js(f"document.querySelectorAll('{lista} .compra-linha').length") == 3
-    assert pagina.js("document.querySelectorAll('.compra-linha .compra-item-titulo').length") == 0
-    assert pagina.js(NOMES_DAS_LINHAS) == ["Filamento 1", "Filamento 2", "Filamento 3"]
-    cabecalho = pagina.js(
-        "[...document.querySelectorAll('[data-lista=filamento] .compra-colunas-rotulos span')]"
-        ".map(s => s.textContent.replace('*', '').trim()).filter(Boolean)"
-    )
-    assert cabecalho == [
-        "Quantidade",
-        "Material",
-        "Tipo",
-        "Peso (g)",
-        "Cor",
-        "Marca",
-        "Valor unitário",
-    ]
-
-    dados = [
-        ("Preto", "1", "250", "1000"),
-        ("Azul", "3", "500", "2000"),
-        ("Verde", "5", "1000", "3000"),
-    ]
-    for n, (cor, qtd, peso, valor) in enumerate(dados, 1):
-        preencher_filamento(pagina, n, qtd=qtd, peso=peso, valor=valor, cor=cor)
-        nav.novo_arquivo(pagina, f"{cor.lower()}.png")
-        nav.escolher(pagina, n - 1)
-        nav.esperar_previa(pagina, f"{cor.lower()}.png", n - 1)
-
-    # Remover a linha do meio: as outras duas mantêm valores e imagens, na mesma ordem.
-    pagina.clicar("#compra-itens .compra-item[data-pos='2'] .compra-item-remover")
-    assert pagina.js(NOMES_DAS_LINHAS) == ["Filamento 1", "Filamento 2"]
-    assert [pagina.valor(linha(n, "cor")) for n in (1, 2)] == ["Preto", "Verde"]
-    assert [pagina.valor(linha(n, "quantidade")) for n in (1, 2)] == ["1", "5"]
-    assert [pagina.valor(linha(n, "peso_rolo")) for n in (1, 2)] == ["250", "1000"]
-    assert [pagina.valor(linha(n, "valor_unitario")) for n in (1, 2)] == ["R$ 10,00", "R$ 30,00"]
-    assert resumo(pagina, "filamento") == ["5.250 g", "R$ 160,00"]
-    assert [nav.previa_visivel(pagina, n) for n in (0, 1)] == [True, True]
-    nomes = pagina.js("[...document.querySelectorAll('.upload-nome')].map(e => e.textContent)")
-    assert nomes == ["preto.png", "verde.png"]
-    assert totais(pagina)[0] == "R$ 160,00"  # 1 x 10,00 + 5 x 30,00
-
-    preencher(pagina, {"#compra-data": "10092026"})
-    escolher_local(pagina, "shopee")
-    salvar(pagina)
-    esperar_fim_do_envio(pagina)
-
-    assert sorted((f.cor, f.peso_g) for f in estoque.filamentos.values()) == [
-        ("Preto", 250),
-        ("Verde", 5000),
-    ]
-    assert sorted(estoque.imagens) and len(estoque.imagens) == 2
-    assert [c.split("/")[3] for c in sorted(estoque.imagens)] == [
-        "1",
-        "2",
-    ]  # só as linhas restantes
-
-
-def test_lista_de_filamentos_no_celular_sem_rolagem_horizontal(pagina, estoque):
-    pagina.tela(360, 700)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    pagina.clicar('.compra-secao [data-adicionar="filamento"]')
-
-    assert (
-        not pagina.js("getComputedStyle(document.querySelector('.compra-colunas')).display")
-        != "none"
-    )
-    assert pagina.js("document.querySelectorAll('.compra-linha .campo > label').length") == 14
-    assert pagina.js(  # no celular o rótulo de cada campo aparece em cada linha
-        "[...document.querySelectorAll('.compra-linha .campo > label')]"
-        ".every(l => l.getBoundingClientRect().width > 1)"
-    )
-    assert pagina.js(
-        "(() => { const c = document.querySelector('.compra-corpo');"
-        " return c.scrollWidth <= c.clientWidth })()"
-    )
-    assert sem_rolagem_horizontal(pagina)
-
-
-@pytest.mark.parametrize("largura", [1024, 1100, 1280, 1920])
-def test_cabecalho_compartilhado_alinha_com_os_campos_no_desktop(pagina, estoque, largura):
-    pagina.tela(largura, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    pagina.clicar('.compra-secao [data-adicionar="filamento"]')
-
-    posicoes = pagina.js(
-        """(() => {
-             const seletor = '.compra-lista:not([hidden]) .compra-colunas-rotulos > span';
-             const cab = [...document.querySelectorAll(seletor)]
-               .map(e => Math.round(e.getBoundingClientRect().left));
-             return [...document.querySelectorAll('.compra-linha')].map(l => ({
-               cab,
-               campos: [...l.querySelectorAll('.compra-item-campos > .campo')]
-                 .map(c => Math.round(c.getBoundingClientRect().left)),
-               remover: Math.round(
-                 l.querySelector('.compra-item-remover').getBoundingClientRect().left),
-               fim: Math.round(l.querySelector('.compra-campo-valor_unitario')
-                 .getBoundingClientRect().right),
-             }));
-           })()"""
-    )
-    for linha_ in posicoes:
-        assert linha_["cab"] == linha_["campos"]  # cada coluna do cabeçalho sobre o seu campo
-        assert linha_["fim"] <= linha_["remover"]  # o botão Remover fica depois dos campos
-    assert pagina.js(  # sem rótulos repetidos nas linhas: só o cabeçalho os mostra
-        "[...document.querySelectorAll('.compra-linha .campo > label')]"
-        ".every(l => l.getBoundingClientRect().width <= 1)"
-    )
-
-
-def test_acessorios_e_embalagens_em_lista_com_resumo_sem_frete(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    for categoria in ("acessorio", "acessorio", "embalagem"):
-        pagina.clicar(f'.compra-secao [data-adicionar="{categoria}"]')
-
-    # Lista única por seção: sem cartões nem títulos nas linhas, cabeçalho compartilhado.
-    assert pagina.js("document.querySelectorAll('.compra-item-titulo').length") == 0
-    for categoria in ("acessorio", "embalagem"):
-        cabecalho = pagina.js(
-            "[...document.querySelectorAll("
-            f"'[data-lista={categoria}] .compra-colunas-rotulos > span')]"
-            ".map(s => s.textContent.replace('*', '').trim())"
+def test_sugestoes_de_nomes_cores_e_marcas_ja_registrados(pagina, estoque):
+    estoque.reservar_id_compra()
+    estoque.registrar_compra(
+        CompraParaGravar(
+            1,
+            uuid.uuid4(),
+            date(2026, 9, 1),
+            "shopee",
+            None,
+            1,
+            (
+                ItemCompraParaGravar(
+                    ordem=1,
+                    categoria="acessorio",
+                    quantidade=2,
+                    nome="Argola",
+                    cor="Dourada",
+                    valor_unitario=Decimal("1"),
+                    valor_total=Decimal("2"),
+                ),
+                ItemCompraParaGravar(
+                    ordem=2,
+                    categoria="peca_manutencao",
+                    quantidade=1,
+                    nome="Bico 0,4",
+                    marca="Bambu",
+                    valor_unitario=Decimal("1"),
+                    valor_total=Decimal("1"),
+                ),
+            ),
         )
-        assert cabecalho == ["Quantidade", "Nome", "Valor total"]
-    campos = pagina.js(
-        "[...document.querySelectorAll('[data-lista=acessorio] .compra-linha:first-child"
-        " [data-campo]:not([type=hidden])')].map(e => e.dataset.campo)"
     )
-    assert campos == ["quantidade", "nome", "valor_total"]
-    assert (
-        pagina.js("document.querySelectorAll('[data-lista=acessorio] .compra-linha').length") == 2
-    )
-    assert (
-        pagina.js("document.querySelectorAll('[data-calculo]').length") == 0
-    )  # sem custo por item
-
-    preencher_item(pagina, 2, nome="Argola", qtd="40", valor="1400")  # acessório 1
-    preencher_item(pagina, 3, nome="Chaveiro", qtd="10", valor="600")  # acessório 2
-    preencher_item(pagina, 4, nome="Caixa", qtd="3", valor="1000")  # embalagem 1
-    preencher(pagina, {"#compra-frete": "5000"})
-    assert resumo(pagina, "acessorio") == ["50 un", "R$ 20,00"]
-    assert resumo(pagina, "embalagem") == ["3 un", "R$ 10,00"]  # o frete não entra nos resumos
-    assert totais(pagina) == ["R$ 30,00", "R$ 50,00", "R$ 80,00"]  # mas entra no total geral
-    assert pagina.valor(linha(2, "valor_total")) == "R$ 14,00"  # o valor informado continua
-
-    pagina.clicar("#compra-itens .compra-item[data-pos='2'] .compra-item-remover")
-    assert resumo(pagina, "acessorio") == ["10 un", "R$ 6,00"]
-    assert pagina.valor(linha(2, "nome")) == "Chaveiro"  # os dados da outra linha ficam
-
-
-@pytest.mark.parametrize("largura", [1024, 1100, 1280, 1920])
-def test_foto_na_mesma_linha_dos_campos_no_desktop(pagina, estoque, largura):
-    pagina.tela(largura, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    pagina.clicar('.compra-secao [data-adicionar="filamento"]')
-
-    def posicoes():
-        return pagina.js(
-            """[...document.querySelectorAll('[data-lista=filamento] .compra-linha')].map(l => {
-                 const topo = e => Math.round(l.querySelector(e).getBoundingClientRect().top);
-                 const dir = e => Math.round(l.querySelector(e).getBoundingClientRect().right);
-                 const limite = Math.round(l.getBoundingClientRect().right);
-                 return {campos: topo('[data-campo=quantidade]'),
-                         foto: topo('.upload-botao:not([hidden])'),
-                         remover: topo('.compra-item-remover'), fim: dir('.upload-item'), limite};
-               })"""
-        )
-
-    for linha_ in posicoes():  # foto e Remover na mesma linha horizontal dos demais campos
-        assert linha_["foto"] == linha_["campos"] == linha_["remover"]
-        assert linha_["fim"] <= linha_["limite"]
-    assert pagina.js(  # prévia compacta: sem a área de arrastar nem o nome do arquivo
-        "['.upload-dica', '.upload-ou'].every(s => "
-        "[...document.querySelectorAll('.compra-linha ' + s)].every(e => e.offsetParent === null))"
-    )
-
-    # Seleção, prévia, troca e remoção, independentes por linha.
-    nav.novo_arquivo(pagina, "a.png")
-    nav.escolher(pagina, 1)
-    nav.esperar_previa(pagina, "a.png", 1)
-    assert nav.previa_visivel(pagina, 1) and not nav.previa_visivel(pagina, 0)
-    assert (
-        pagina.js("document.querySelectorAll('.compra-linha .upload-trocar:not([hidden])').length")
-        == 1
-    )
-    assert (
-        pagina.js("document.querySelectorAll('.compra-linha .upload-remover:not([hidden])').length")
-        == 1
-    )
-    assert sem_rolagem_horizontal(pagina)
-    nav.novo_arquivo(pagina, "b.png")
-    nav.escolher(pagina, 1)
-    nav.esperar_previa(pagina, "b.png", 1)
-    pagina.js(
-        "document.querySelectorAll('.compra-linha')[1].querySelector('.upload-remover').click()"
-    )
-    assert not nav.previa_visivel(pagina, 1)
-
-
-# ---------- Ícones, Local reduzido e Data ao lado do Local ----------
-
-
-@pytest.mark.parametrize("largura", LARGURAS)
-def test_lixeira_e_camera_com_nome_acessivel_tooltip_e_area_de_44px(pagina, estoque, largura):
-    pagina.tela(largura, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    pagina.clicar('.compra-secao [data-adicionar="acessorio"]')
-    pagina.clicar('.compra-secao [data-adicionar="embalagem"]')
-
-    botoes = pagina.js(
-        """[...document.querySelectorAll('.compra-item-remover, .upload-selecionar')].map(b => {
-             const r = b.getBoundingClientRect();
-             return {texto: b.textContent.trim(), nome: b.getAttribute('aria-label'),
-                     dica: b.title, svg: !!b.querySelector('svg[aria-hidden=true]'),
-                     w: Math.round(r.width), h: Math.round(r.height)};
-           })"""
-    )
-    assert len(botoes) == 6  # lixeira e câmera em cada uma das três linhas
-    for b in botoes:
-        assert b["texto"] == "" and b["svg"]  # só o ícone, sem texto visível
-        assert b["nome"] and b["dica"] == b["nome"]  # nome acessível e tooltip
-        assert b["w"] >= 44 and b["h"] >= 44
-    nomes = [b["nome"] for b in botoes]
-    assert nomes.count("Selecionar foto") == 3
-    assert {"Remover filamento 1", "Remover acessório 1", "Remover embalagem 1"} <= set(nomes)
-
-
-def test_foto_com_icone_de_camera_preserva_previa_troca_e_remocao(pagina, estoque):
     pagina.tela(1280, 900)
     pagina.abrir("/compras")
     abrir_janela(pagina)
-    nav.novo_arquivo(pagina, "a.png")
+
+    def opcoes(lista):
+        return pagina.js(f"[...document.querySelectorAll('#{lista} option')].map(o => o.value)")
+
+    assert opcoes("compra-nomes-acessorio") == ["Argola"]
+    assert opcoes("compra-nomes-peca_manutencao") == ["Bico 0,4"]
+    assert "Dourada" in opcoes("compra-cores") and opcoes("compra-marcas") == ["Bambu"]
+    # Valores novos são aceitos.
+    mudar_categoria(pagina, 1, "peca_manutencao")
+    preencher_item(pagina, 1, nome="Correia GT2", qtd="1", valor="900", marca="Genérica")
+    escolher_local(pagina, "shopee")
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+    assert estoque.compras[2].compra.itens[0].marca == "Genérica"
+
+
+def test_foto_compacta_preserva_previa_troca_e_remocao(pagina, estoque):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    nav.novo_arquivo(pagina, "rolo.png")
     nav.escolher(pagina, 0)
-    nav.esperar_previa(pagina, "a.png", 0)
+    nav.esperar_previa(pagina, "rolo.png", 0)
 
-    assert nav.previa_visivel(pagina, 0)
-    assert pagina.js("document.querySelector('.upload-selecionar').offsetParent === null")
-    assert pagina.js("document.querySelector('.upload-trocar').offsetParent !== null")
-    nav.novo_arquivo(pagina, "b.png")
-    nav.escolher(pagina, 0)
-    nav.esperar_previa(pagina, "b.png", 0)  # troca
-    pagina.js("document.querySelector('.upload-remover').click()")
-    assert not nav.previa_visivel(pagina, 0)
+    foto = "#compra-itens .compra-item[data-pos='1'] "
+    assert pagina.js(f'!document.querySelector("{foto}.upload-miniatura").hidden')
     assert pagina.js(
-        "document.querySelector('.upload-selecionar').offsetParent !== null"
-    )  # volta a câmera
-
-
-@pytest.mark.parametrize("largura", LARGURAS)
-def test_local_25_por_cento_menor_sem_reduzir_a_area_clicavel(pagina, estoque, largura):
-    pagina.tela(largura, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    medidas = pagina.js(
-        """[...document.querySelectorAll('#campo-local .escolha-card')].map(c => {
-             const m = c.querySelector('.compra-local-marca');
-             const img = m.querySelector('img');
-             const t = c.querySelector('.escolha-titulo');
-             const r = c.getBoundingClientRect();
-             const caixa = img ? img.getBoundingClientRect() : null;
-             const natural = img ? img.naturalWidth / img.naturalHeight : 0;
-             return {marca: Math.round(m.getBoundingClientRect().height),
-                     proporcao: img ? Math.abs(caixa.width / caixa.height - natural) < 0.05 : true,
-                     fonte: parseFloat(getComputedStyle(t).fontSize), h: Math.round(r.height)};
-           })"""
-    )
-    assert len(medidas) == 5
-    for m in medidas:
-        assert m["fonte"] >= 11  # fonte mínima
-        assert m["proporcao"]  # logos sem distorção
-        assert m["h"] >= 84  # a área clicável do card não encolheu
-    assert [m["marca"] for m in medidas] == [27, 21, 21, 21, 21]  # 36/28 px menos 25%
-    # A tela de Pedidos não muda: a regra vale só dentro da janela de compra.
-    assert pagina.js("getComputedStyle(document.querySelector('.estoque')).fontSize !== undefined")
-
-
-def test_sem_titulo_itens_nem_texto_de_ajuda_dos_rolos(pagina, estoque):
-    pagina.tela(1280, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    texto = pagina.js("document.getElementById('compra-janela').innerText")
-    assert "Cada linha de filamento é um conjunto de rolos iguais" not in texto
-    assert pagina.js("document.getElementById('compra-itens-titulo')") is None
-    assert [
-        t.strip()
-        for t in pagina.js(
-            "[...document.querySelectorAll('#compra-janela h3')].map(h => h.textContent)"
-        )
-    ] == ["Frete e total"]
-
-
-@pytest.mark.parametrize("largura", [1024, 1100, 1280, 1920])
-def test_data_e_local_lado_a_lado_no_desktop(pagina, estoque, largura):
-    pagina.tela(largura, 900)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-
-    def caixas():
-        return pagina.js(
-            """(() => {
-                 const r = s => document.querySelector(s).getBoundingClientRect();
-                 const data = r('#compra-data'), cartao = r('#campo-local .escolha-card');
-                 const rotulo = r('#campo-data_compra label'), legenda = r('#campo-local legend');
-                 return {dataTopo: Math.round(data.top), cartaoTopo: Math.round(cartao.top),
-                         rotuloTopo: Math.round(rotulo.top), legendaTopo: Math.round(legenda.top),
-                         dataDir: Math.round(data.right), cartaoEsq: Math.round(cartao.left)};
-               })()"""
-        )
-
-    c = caixas()
-    assert abs(c["rotuloTopo"] - c["legendaTopo"]) <= 2  # rótulos na mesma altura
-    assert abs(c["dataTopo"] - c["cartaoTopo"]) <= 2  # controles alinhados pelo topo
-    assert c["dataDir"] < c["cartaoEsq"]  # lado a lado
-
-    # Outro / Loja Física: o nome do local aparece sob o Local, sem desalinhar a Data.
-    assert pagina.js("document.getElementById('campo-local_nome').hidden")
-    escolher_local(pagina, "outro")
-    nome = pagina.js(
-        "(() => { const n = document.getElementById('campo-local_nome').getBoundingClientRect();"
-        " const l = document.getElementById('campo-local').getBoundingClientRect();"
-        " return {topo: Math.round(n.top), basel: Math.round(l.bottom), esq: Math.round(n.left),"
-        " esql: Math.round(l.left)} })()"
-    )
-    assert nome["topo"] >= nome["basel"] and abs(nome["esq"] - nome["esql"]) <= 2
-    assert abs(caixas()["dataTopo"] - c["dataTopo"]) <= 2
-    assert sem_rolagem_horizontal(pagina)
-
-
-@pytest.mark.parametrize("largura", [360, 768])
-def test_data_e_local_empilhados_no_celular_sem_cortes(pagina, estoque, largura):
-    pagina.tela(largura, 800)
-    pagina.abrir("/compras")
-    abrir_janela(pagina)
-    escolher_local(pagina, "loja_fisica")
-
-    assert pagina.js(
-        "document.getElementById('campo-local_nome').getBoundingClientRect().width > 0"
-    )
-    assert pagina.js(
-        "document.querySelector('#compra-data').getBoundingClientRect().bottom"
-        " <= document.querySelector('#campo-local legend').getBoundingClientRect().top + 1"
-    )  # Data acima do Local
-    assert sem_rolagem_horizontal(pagina)
-    assert pagina.js(
-        "(() => { const c = document.querySelector('.compra-corpo');"
-        " return c.scrollWidth <= c.clientWidth })()"
-    )
+        f"document.querySelector(\"{foto}.upload-trocar\").getAttribute('aria-label')"
+    ) == ("Trocar foto")
+    pagina.clicar(f"{foto}.upload-remover")
+    assert nav.arquivos_por_item(pagina) == [None]
+    assert pagina.js(f'!document.querySelector("{foto}.upload-selecionar").hidden')
 
 
 @pytest.mark.parametrize("categoria", ["filamento", "acessorios", "embalagens"])
@@ -1667,7 +1331,14 @@ def com_compra_editavel(estoque):
         imagem_caminho=foto,
     )
     argola = ItemCompraParaGravar(
-        ordem=2, categoria="acessorio", quantidade=40, nome="Argola", valor_total=Decimal("14.00")
+        ordem=2,
+        categoria="acessorio",
+        quantidade=40,
+        nome="Argola",
+        cor="Dourada",
+        medidas="2 cm",
+        valor_unitario=Decimal("0.35"),
+        valor_total=Decimal("14.00"),
     )
     for n, (dia, local, nome, itens) in enumerate(
         [(1, "loja_fisica", "Papelaria", (filamento, argola)), (5, "shopee", None, (argola,))], 1
@@ -1675,7 +1346,15 @@ def com_compra_editavel(estoque):
         estoque.reservar_id_compra()
         estoque.registrar_compra(
             CompraParaGravar(
-                n, uuid.uuid4(), date(2026, 9, dia), local, nome, 1, itens, Decimal("7.50")
+                n,
+                uuid.uuid4(),
+                date(2026, 9, dia),
+                local,
+                nome,
+                1,
+                itens,
+                Decimal("7.50"),
+                Decimal("1.00"),
             )
         )
     return estoque
@@ -1727,35 +1406,43 @@ def test_editar_abre_a_compra_preenchida_e_salva_as_correcoes(pagina, com_compra
 
     assert pagina.texto("#compra-titulo") == "Editar Compra"
     assert pagina.texto('#form-compra button[type="submit"]') == "Salvar alterações"
-    assert pagina.valor("#compra-data") == "2026-09-01"
+    assert pagina.valor("#compra-data") == "01/09/2026"
     assert pagina.js("document.querySelector('#campo-local input:checked').value") == "loja_fisica"
     assert pagina.valor("#compra-local-nome") == "Papelaria"
     assert pagina.valor("#compra-frete") == "R$ 7,50"
-    assert [pagina.valor(linha(1, c)) for c in ("quantidade", "material", "tipo", "peso_rolo")] == [
+    assert pagina.valor("#compra-desconto") == "R$ 1,00"
+    campos = ("categoria", "quantidade", "material", "tipo", "peso_rolo", "cor", "marca")
+    assert [pagina.valor(linha(1, c)) for c in campos] == [
+        "filamento",
         "2",
         "PETG",
         "silk",
         "500",
-    ]
-    assert [pagina.valor(linha(1, c)) for c in ("cor", "marca", "valor_unitario")] == [
         "Preto",
         "Voolt",
-        "R$ 45,90",
     ]
-    assert [pagina.valor(linha(2, c)) for c in ("quantidade", "nome", "valor_total")] == [
+    assert pagina.valor(linha(1, "valor_unitario")) == "R$ 45,90"
+    # Atributos do acessório reabrem como foram gravados.
+    campos = ("categoria", "quantidade", "nome", "cor", "medidas", "valor_unitario")
+    assert [pagina.valor(linha(2, c)) for c in campos] == [
+        "acessorio",
         "40",
         "Argola",
-        "R$ 14,00",
+        "Dourada",
+        "2 cm",
+        "R$ 0,35",
     ]
+    assert rotulos(pagina, 2) == ["Categoria", "Item", "Qtd.", "Cor", "Medidas", "Valor unit."]
     # A foto atual aparece na linha do filamento, com Trocar e Remover.
     assert pagina.valor(linha(1, "foto_atual")).startswith("compras/1/itens/1/")
     assert pagina.js(
         "!document.querySelector('.compra-item[data-pos=\"1\"] .upload-remover').hidden"
     )
-    assert pagina.texto("#compra-total") == "R$ 113,30"  # 2 x 45,90 + 14,00 + 7,50
+    assert totais(pagina) == ["R$ 105,80", "R$ 112,30"]  # 2 x 45,90 + 14,00 − 1,00 + 7,50
     assert sem_rolagem_horizontal(pagina)
 
-    # Correções: outra data e outro nome; a argola sai e a foto do filamento é mantida.
+    # Correções: outra data e outra cor; a argola sai e a foto do filamento é mantida.
+    pagina.js("document.getElementById('compra-data').value = ''")
     preencher(pagina, {"#compra-data": "03092026"})
     pagina.js(f"document.querySelector('{linha(1, 'cor')}').value = ''")
     pagina.digitar(linha(1, "cor"), "Branco")
@@ -1766,11 +1453,27 @@ def test_editar_abre_a_compra_preenchida_e_salva_as_correcoes(pagina, com_compra
     assert pagina.js("location.pathname + location.search") == "/compras?salvo=compra-editada"
     assert pagina.texto(".alerta-sucesso") == "Compra atualizada. O estoque foi ajustado."
     c = com_compra_editavel.compras[1].compra
-    assert c.data_compra == date(2026, 9, 3)
+    assert c.data_compra == date(2026, 9, 3) and c.desconto == Decimal("1.00")
     assert [(i.categoria, i.cor) for i in c.itens] == [("filamento", "Branco")]
     assert c.itens[0].imagem_caminho.startswith("compras/1/itens/1/")
     assert len(com_compra_editavel.compras) == 2  # nenhuma compra nova
     assert "2 rolos · PETG Silk Branco" in pagina.texto("#ultimas-compras")
+
+
+def test_editar_mantem_atributos_ao_salvar_sem_mudar(pagina, com_compra_editavel):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_edicao(pagina, 2)
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    _, argola = com_compra_editavel.compras[1].compra.itens
+    assert (argola.cor, argola.medidas, argola.valor_unitario, argola.valor_total) == (
+        "Dourada",
+        "2 cm",
+        Decimal("0.35"),
+        Decimal("14.00"),
+    )
 
 
 def test_remover_a_foto_na_edicao_apaga_a_foto_gravada(pagina, com_compra_editavel):
@@ -1795,7 +1498,7 @@ def test_cancelar_edicao_e_registrar_volta_ao_modo_de_compra_nova(pagina, com_co
     abrir_edicao(pagina, 1)
     pagina.clicar("#form-compra [data-cancelar]")
     nav.esperar(lambda: not pagina.js("document.getElementById('compra-janela').open"))
-    assert pagina.js("document.activeElement.hasAttribute('data-editar-compra')")
+    nav.esperar(lambda: pagina.js("document.activeElement.hasAttribute('data-editar-compra')"))
 
     abrir_janela(pagina)
 
@@ -1804,4 +1507,5 @@ def test_cancelar_edicao_e_registrar_volta_ao_modo_de_compra_nova(pagina, com_co
     assert pagina.js("document.getElementById('form-compra').getAttribute('action')") == "/compras"
     assert pagina.js("document.querySelectorAll('#compra-itens .compra-item').length") == 1
     assert pagina.valor(linha(1, "cor")) == "" and pagina.valor("#compra-frete") == ""
+    assert pagina.valor("#compra-desconto") == ""
     assert com_compra_editavel.edicoes == []

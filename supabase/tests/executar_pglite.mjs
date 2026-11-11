@@ -3,7 +3,8 @@
 //
 // Uso (na raiz do projeto, depois de `npm install`):
 //   npm run test:sql        -> custos_test, custos_gestao_test, manutencoes_test, estoque_test
-//                              e editar_compra_test
+//                              editar_compra_test, compras_novas_categorias_test
+//                              e compra_janela_itens_test
 //   node supabase/tests/executar_pglite.mjs <teste.sql> [...]
 //   node supabase/tests/executar_pglite.mjs --chamadas entrada.json --listagem saida.json
 //     Executa as chamadas RPC [{funcao, parametros}] por nome de parâmetro (como o PostgREST)
@@ -33,6 +34,8 @@ const PADRAO = [
   "supabase/tests/manutencoes_test.sql",
   "supabase/tests/estoque_test.sql",
   "supabase/tests/editar_compra_test.sql",
+  "supabase/tests/compras_novas_categorias_test.sql",
+  "supabase/tests/compra_janela_itens_test.sql",
 ];
 
 function lerArgumentos(argv) {

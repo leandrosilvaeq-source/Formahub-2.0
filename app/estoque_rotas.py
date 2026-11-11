@@ -47,16 +47,17 @@ from app.estoque import (
     validar_item,
 )
 from app.estoque_compra import (
+    CAMPOS_CATEGORIA,
     CATEGORIAS,
-    COLUNAS_COMPRA,
     LIMITE_ITENS,
     LIMITE_ROLOS,
     LOCAIS,
     LOCAIS_COM_NOME,
     LOGOS_LOCAIS,
     MATERIAIS,
+    OPCIONAIS,
     PESOS_ROLO_G,
-    SECOES_COMPRA,
+    ROTULOS_CAMPOS,
     CompraNaoEncontrada,
     CompraNaoSalva,
     cores_conhecidas,
@@ -252,14 +253,15 @@ def compras(
         "locais_com_nome": LOCAIS_COM_NOME,
         "logos_locais": LOGOS_LOCAIS,
         "categorias": CATEGORIAS,
-        "secoes_compra": SECOES_COMPRA,
-        "colunas_compra": COLUNAS_COMPRA,
+        "campos_categoria": CAMPOS_CATEGORIA,
+        "opcionais": sorted(OPCIONAIS),
+        "rotulos_campos": ROTULOS_CAMPOS,
         "limite_itens": LIMITE_ITENS,
         "limite_imagem_mb": LIMITE_IMAGEM_MB,
         "materiais_compra": MATERIAIS,
         "pesos_compra": PESOS_ROLO_G,
         "limite_rolos": LIMITE_ROLOS,
-        "cores": [],
+        "sugestoes": {"cores": [], "marcas": [], "nomes": {}},
     }
     try:
         if repo is None:
@@ -276,7 +278,7 @@ def compras(
     numero = min(max(numero, 1), total_paginas)
     inicio = (numero - 1) * COMPRAS_POR_PAGINA
 
-    contexto["cores"] = cores_conhecidas(_cores_salvas(repo))
+    contexto["sugestoes"] = _sugestoes(repo, historico.compras if escolhido is None else None)
     contexto["periodo"] = escolhido[0] if escolhido else "todos"
     contexto["periodo_rotulo"] = rotulo_do_periodo(escolhido[0]) if escolhido else ""
     contexto["opcoes_periodo"] = [(m, rotulo_do_periodo(m)) for m in sorted(meses, reverse=True)]
@@ -289,6 +291,30 @@ def compras(
     contexto["pagina"] = numero
     contexto["total_paginas"] = total_paginas
     return _pagina(request, "estoque/compras.html", contexto)
+
+
+def _sugestoes(repo: RepositorioEstoque, compras) -> dict:
+    """Nomes (por categoria), cores e marcas já registrados, para as listas de sugestões.
+
+    `compras`: todas as compras, se já lidas; senão são lidas aqui. Sem o banco, a janela
+    funciona sem sugestões. Grafias iguais salvo espaços e caixa aparecem uma vez só.
+    """
+    if compras is None:
+        try:
+            compras = repo.listar_compras().compras
+        except FalhaNoEstoque:
+            compras = ()
+    itens = [i for c in compras for i in c.itens]
+    nomes = {
+        categoria: cores_conhecidas([i.nome for i in itens if i.categoria == categoria and i.nome])
+        for categoria in CATEGORIAS
+        if categoria != "filamento"
+    }
+    return {
+        "cores": cores_conhecidas(_cores_salvas(repo) + [i.cor for i in itens if i.cor]),
+        "marcas": cores_conhecidas([i.marca for i in itens if i.marca]),
+        "nomes": nomes,
+    }
 
 
 def _linhas_compras(repo: RepositorioEstoque, pagina) -> list[dict]:
@@ -305,6 +331,7 @@ def _linhas_compras(repo: RepositorioEstoque, pagina) -> list[dict]:
             "local": local_da_compra(c.local_tipo, c.local_nome),
             "total": c.total,
             "frete": c.frete,
+            "desconto": c.desconto,
             "itens": [descrever_item(i) for i in c.itens],
             "fotos": [
                 {"url": urls[i.imagem_caminho], "descricao": descrever_item(i)}
@@ -327,12 +354,20 @@ def _numero(valor: Decimal | None) -> str:
 
 
 def _dados_edicao(c, urls: dict[str, str]) -> dict:
-    """Compra no formato que a janela usa para abrir já preenchida (botão Editar)."""
+    """Compra no formato que a janela usa para abrir já preenchida (botão Editar).
+
+    Itens antigos (sem valor unitário gravado) abrem com valor total / quantidade; se a divisão
+    não for exata em centavos, a linha avisa o total anterior (nota), para nada mudar calado.
+    """
     itens = []
     for i in c.itens:
+        unitario = i.valor_unitario
+        if unitario is None:  # filamento: valor = rolos x unitário; item antigo: valor total
+            unitario = (i.valor / i.quantidade).quantize(Decimal("0.01"))
         dados = {
             "categoria": i.categoria,
             "quantidade": str(i.quantidade),
+            "valor_unitario": str(unitario),
             "foto_atual": i.imagem_caminho or "",
             "foto_url": urls.get(i.imagem_caminho or "", ""),
         }
@@ -343,18 +378,20 @@ def _dados_edicao(c, urls: dict[str, str]) -> dict:
                 peso_rolo=_numero(i.peso_rolo_g),
                 cor=i.cor,
                 marca=i.marca,
-                # valor do item = rolos x valor unitário (exato, 2 casas)
-                valor_unitario=str((i.valor / i.quantidade).quantize(Decimal("0.01"))),
             )
         else:
-            dados.update(nome=i.nome, valor_total=str(i.valor))
+            dados.update(nome=i.nome, cor=i.cor or "", medidas=i.medidas or "", marca=i.marca or "")
+        if unitario * i.quantidade != i.valor:
+            anterior = formatar_brl(i.valor)
+            dados["nota"] = f"Valor unitário arredondado: o total anterior da linha era {anterior}."
         itens.append(dados)
     return {
         "id": c.id,
-        "data": c.data_compra.isoformat(),
+        "data": c.data_compra.strftime("%d/%m/%Y"),
         "local": c.local_tipo,
         "local_nome": c.local_nome or "",
         "frete": str(c.frete),
+        "desconto": str(c.desconto),
         "itens": itens,
     }
 
