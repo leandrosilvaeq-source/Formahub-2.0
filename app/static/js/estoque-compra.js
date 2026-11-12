@@ -42,6 +42,8 @@
   const CAMPOS = JSON.parse(form.dataset.campos); // categoria -> campos, na ordem da linha
   const OPCIONAIS = JSON.parse(form.dataset.opcionais); // opcionais fora do filamento
   const NOMES_CATEGORIAS = JSON.parse(form.dataset.categorias);
+  // Categorias com a opção Kit: valor do kit informado, valor unitário = kit ÷ quantidade.
+  const CATEGORIAS_KIT = JSON.parse(form.dataset.categoriasKit || "[]");
   const LIMITE_ITENS = Number(form.dataset.limiteItens) || 50;
 
   const MENSAGEM_FALHA = "Não foi possível salvar agora. Tente novamente em instantes.";
@@ -93,6 +95,7 @@
   const MASCARAS = {
     quantidade: function (t) { return digitos(t); },
     valor_unitario: mascaraMoeda,
+    valor_kit: mascaraMoeda,
   };
 
   // ---------- Cálculos (prévia) ----------
@@ -111,14 +114,39 @@
     return el ? el.value : "";
   }
 
-  // Valor da linha = quantidade x valor unitário (linhas incompletas contam o que já têm).
+  function quantidadeDe(linha) {
+    return Number(digitos(valorDe(linha, "quantidade"))) || 0;
+  }
+
+  // Linha marcada como kit, numa categoria que aceita kit.
+  function kitAtivo(linha) {
+    const caixa = campoDe(linha, "kit");
+    return CATEGORIAS_KIT.indexOf(linha.dataset.categoria) !== -1 && !!caixa && caixa.checked;
+  }
+
+  // Valor da linha = quantidade x valor unitário; no kit, o valor do kit (linhas incompletas
+  // contam o que já têm).
   function valorDaLinha(linha) {
-    return (Number(digitos(valorDe(linha, "quantidade"))) || 0) * centavos(valorDe(linha, "valor_unitario"));
+    if (kitAtivo(linha)) return centavos(valorDe(linha, "valor_kit"));
+    return quantidadeDe(linha) * centavos(valorDe(linha, "valor_unitario"));
+  }
+
+  // Kit: valor unitário = valor do kit ÷ quantidade, arredondado ao centavo, mostrado abaixo do
+  // total (o servidor grava o valor do kit; o custo unitário do lote sai da divisão exata). O
+  // campo Valor unit. (oculto no kit) recebe o mesmo valor, para ficar pronto se o kit for
+  // desmarcado.
+  function atualizarUnitarioDoKit(linha) {
+    const quantidade = quantidadeDe(linha);
+    const kit = centavos(valorDe(linha, "valor_kit"));
+    const unitario = quantidade && kit ? formatarCentavos(Math.round(kit / quantidade)) : "";
+    campoDe(linha, "valor_unitario").value = unitario;
+    linha.querySelector("[data-unitario-kit]").textContent = (unitario || "R$ 0,00") + " / un.";
   }
 
   function atualizarTotais() {
     let subtotal = 0;
     linhas().forEach(function (linha) {
+      if (kitAtivo(linha)) atualizarUnitarioDoKit(linha);
       const valor = valorDaLinha(linha);
       linha.querySelector("[data-total-linha]").textContent = formatarCentavos(valor);
       subtotal += valor;
@@ -137,9 +165,16 @@
     return Array.prototype.slice.call(lista.querySelectorAll(".compra-item"));
   }
 
+  // Campos enviados pela linha: os da categoria e, no kit, o valor do kit.
+  function camposDaLinha(linha) {
+    const campos = (CAMPOS[linha.dataset.categoria] || []).slice();
+    if (kitAtivo(linha)) campos.push("kit", "valor_kit");
+    return campos;
+  }
+
   // Campos de outras categorias que guardam algo digitado (ficariam de fora ao salvar).
   function guardados(linha) {
-    const visiveis = CAMPOS[linha.dataset.categoria] || [];
+    const visiveis = camposDaLinha(linha);
     return Array.prototype.filter.call(linha.querySelectorAll("[data-campo-de]"), function (caixa) {
       const nome = caixa.dataset.campoDe;
       const el = campoDe(linha, nome);
@@ -179,9 +214,27 @@
     const nome = campoDe(linha, "nome");
     if (categoria === "filamento") nome.removeAttribute("list");
     else nome.setAttribute("list", "compra-nomes-" + categoria);
+    aplicarKit(linha);
     // Erro de um campo que sumiu deixa de valer.
     linha.querySelectorAll(".compra-campo[hidden].tem-erro").forEach(limparErro);
     atualizarAviso(linha);
+  }
+
+  // Opção Kit: aparece só nas categorias de kit, logo antes do valor. Marcada, troca o campo
+  // Valor unit. pelo Valor do kit, e o valor unitário calculado aparece abaixo do total.
+  function aplicarKit(linha) {
+    const caixas = linha.querySelector(".compra-item-campos");
+    const caixaKit = linha.querySelector("[data-kit]");
+    const caixaValorKit = linha.querySelector('[data-campo-de="valor_kit"]');
+    const caixaUnitario = linha.querySelector('[data-campo-de="valor_unitario"]');
+    const ativo = kitAtivo(linha);
+    caixaKit.hidden = CATEGORIAS_KIT.indexOf(linha.dataset.categoria) === -1;
+    caixas.insertBefore(caixaKit, caixaUnitario);
+    caixas.insertBefore(caixaValorKit, caixaUnitario);
+    caixaValorKit.hidden = !ativo;
+    caixaUnitario.hidden = ativo;
+    linha.querySelector("[data-unitario-kit]").hidden = !ativo;
+    limparErro(ativo ? caixaUnitario : caixaValorKit);
   }
 
   // Cada linha é numerada na lista (aria-label e botões); data-pos é a posição na tela.
@@ -236,8 +289,10 @@
     linha.querySelectorAll("[data-campo]").forEach(function (el) {
       const nome = el.dataset.campo;
       if (nome === "categoria" || nome === "foto_atual") return;
-      campoDe(copia, nome).value = el.value;
+      if (el.type === "checkbox") campoDe(copia, nome).checked = el.checked;
+      else campoDe(copia, nome).value = el.value;
     });
+    aplicarKit(copia);
     atualizarTotais();
     campoDe(copia, "categoria").focus();
   }
@@ -376,6 +431,12 @@
   form.addEventListener("change", function (evento) {
     const alvo = evento.target;
     if (alvo.name === "local") atualizarLocal();
+    if (alvo.dataset && alvo.dataset.campo === "kit") {
+      const linha = alvo.closest(".compra-item");
+      aplicarKit(linha);
+      atualizarTotais();
+      if (alvo.checked) campoDe(linha, "valor_kit").focus();
+    }
     if (alvo.dataset && alvo.dataset.campo === "categoria") {
       const linha = alvo.closest(".compra-item");
       if (alvo.value !== linha.dataset.categoria) {
@@ -462,8 +523,11 @@
       Object.keys(item).forEach(function (campo) {
         const el = campoDe(linha, campo);
         if (!el || campo === "categoria") return;
-        el.value = campo === "valor_unitario" ? moedaDoServidor(item[campo]) : item[campo];
+        if (el.type === "checkbox") el.checked = item[campo] === "1";
+        else if (campo === "valor_unitario" || campo === "valor_kit") el.value = moedaDoServidor(item[campo]);
+        else el.value = item[campo];
       });
+      aplicarKit(linha);
       if (item.nota) {
         const nota = linha.querySelector(".compra-item-nota");
         nota.textContent = item.nota;
@@ -525,9 +589,9 @@
     // csrf, chave_envio, data, local, nome do local, desconto e frete
     const dados = new FormData(form);
     linhas().forEach(function (linha, i) {
-      const enviar = ["categoria", "foto_atual"].concat(CAMPOS[linha.dataset.categoria] || []);
+      const enviar = ["categoria", "foto_atual"].concat(camposDaLinha(linha));
       enviar.forEach(function (nome) {
-        dados.append("item_" + i + "_" + nome, valorDe(linha, nome));
+        dados.append("item_" + i + "_" + nome, valorDe(linha, nome)); // kit marcado: "1"
       });
     });
     const arquivos = window.ImagensReferencia ? window.ImagensReferencia.arquivos() : [];

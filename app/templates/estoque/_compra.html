@@ -67,10 +67,19 @@
     {{ campo("quantidade", '<input type="text" data-campo="quantidade" inputmode="numeric" maxlength="6" autocomplete="off">' | safe) }}
     {{ campo("marca", '<input type="text" data-campo="marca" maxlength="60" list="compra-marcas" autocomplete="off">' | safe) }}
     {{ campo("medidas", '<input type="text" data-campo="medidas" maxlength="60" placeholder="Ex.: 10x5 cm" autocomplete="off">' | safe) }}
+    {# Kit (só em data-categorias-kit): marcado, pede o valor do kit no lugar do valor unitário,
+       que passa a ser calculado (valor do kit ÷ quantidade) e aparece abaixo do total. #}
+    <div class="compra-campo-kit" data-kit hidden>
+      <label class="compra-kit" title="Compra em kit: informe o valor do kit e o valor unitário é calculado">
+        <input type="checkbox" data-campo="kit" value="1"> Kit
+      </label>
+    </div>
+    {{ campo("valor_kit", '<input type="text" data-campo="valor_kit" inputmode="numeric" maxlength="14" placeholder="R$ 0,00" autocomplete="off">' | safe) }}
     {{ campo("valor_unitario", '<input type="text" data-campo="valor_unitario" inputmode="numeric" maxlength="14" placeholder="R$ 0,00" autocomplete="off">' | safe) }}
     <div class="compra-item-total">
       <span class="compra-item-total-rotulo">Total</span>
       <output class="compra-item-total-valor" data-total-linha>R$ 0,00</output>
+      <span class="compra-item-unitario-kit" data-unitario-kit title="Valor do kit ÷ quantidade" hidden></span>
     </div>
   </div>
   {{ foto() }}
@@ -101,7 +110,8 @@
   {% endfor %}
   <form id="form-compra" method="post" action="/compras" novalidate
     data-campos='{{ campos_categoria | tojson }}' data-opcionais='{{ opcionais | tojson }}'
-    data-categorias='{{ categorias | tojson }}' data-limite-itens="{{ limite_itens }}">
+    data-categorias='{{ categorias | tojson }}' data-categorias-kit='{{ categorias_kit | list | tojson }}'
+    data-limite-itens="{{ limite_itens }}">
     <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
     <input type="hidden" name="chave_envio" value="">
 

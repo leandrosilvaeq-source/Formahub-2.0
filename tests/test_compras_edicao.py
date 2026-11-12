@@ -140,9 +140,9 @@ def test_item_antigo_sem_unitario_abre_com_nota_do_total_anterior(estoque):
         itens=(
             ItemCompraParaGravar(
                 ordem=1,
-                categoria="embalagem",
+                categoria="peca_manutencao",
                 quantidade=3,
-                nome="Caixa",
+                nome="Bico",
                 valor_total=Decimal("10"),
             ),
             ItemCompraParaGravar(
@@ -157,7 +157,35 @@ def test_item_antigo_sem_unitario_abre_com_nota_do_total_anterior(estoque):
     caixa, pino = dados["itens"]
     assert caixa["valor_unitario"] == "3.33"
     assert caixa["nota"] == "Valor unitário arredondado: o total anterior da linha era R$ 10,00."
-    assert pino["valor_unitario"] == "0.50" and "nota" not in pino
+    # Acessório (e embalagem e item geral) sem valor unitário abre como kit: o valor do kit é
+    # o total gravado.
+    assert pino["kit"] == "1" and pino["valor_kit"] == "2"
+    assert "valor_unitario" not in pino and "nota" not in pino
+
+
+def test_kit_abre_marcado_na_edicao_e_mantem_o_valor_ao_salvar(estoque):
+    registrar(item(0, "outro", nome="Fita", quantidade="3", kit="1", valor_kit="R$ 10,00"))
+
+    (dados,) = dados_de_edicao(client.get("/compras").text)
+    (fita,) = dados["itens"]
+    assert {k: fita[k] for k in ("categoria", "quantidade", "kit", "valor_kit", "nome")} == {
+        "categoria": "outro",
+        "quantidade": "3",
+        "kit": "1",
+        "valor_kit": "10.00",
+        "nome": "Fita",
+    }
+
+    resposta = editar(
+        1, compra(item(0, "outro", nome="Fita", quantidade="4", kit="1", valor_kit="R$ 10,00"))
+    )
+    assert resposta.status_code == 200
+    (gravado,) = estoque.compras[1].compra.itens
+    assert (gravado.quantidade, gravado.valor_unitario, gravado.valor_total) == (
+        4,
+        None,
+        Decimal("10.00"),
+    )
 
 
 # ---------- Gravação da edição ----------

@@ -141,12 +141,12 @@ def resumir_compras(compras: tuple[CompraListada, ...] | list[CompraListada]):
 
 
 # Categoria da linha: código do banco -> nome na lista de categorias (e nos cards da tela).
-# "Peças de reposição" e "Itens gerais" são as antigas Peças de manutenção e Outros.
+# "Itens gerais" é o antigo Outros.
 CATEGORIAS = {
     "filamento": "Filamento",
-    "acessorio": "Acessórios para produtos",
-    "embalagem": "Embalagens para produtos",
-    "peca_manutencao": "Peças de reposição",
+    "acessorio": "Acessórios",
+    "embalagem": "Embalagens",
+    "peca_manutencao": "Peças para manutenção",
     "outro": "Itens gerais",
 }
 # Campos de cada categoria, na ordem da linha; os demais ficam ocultos (e não são lidos).
@@ -167,6 +167,10 @@ CAMPOS_CATEGORIA = {
 }
 # Campos opcionais fora do filamento (no filamento, todos são obrigatórios).
 OPCIONAIS = {"cor", "medidas", "marca"}
+# Categorias que podem ser compradas em kit: a linha marcada como kit (campo kit = "1") informa
+# o valor do kit (valor_kit) no lugar do valor unitário. Grava valor_total = valor do kit e
+# valor_unitario vazio; o custo unitário do lote continua valor_total / quantidade, sem arredondar.
+CATEGORIAS_KIT = ("acessorio", "embalagem", "outro")
 # Rótulo curto de cada campo da linha.
 ROTULOS_CAMPOS = {
     "nome": "Item",
@@ -178,6 +182,7 @@ ROTULOS_CAMPOS = {
     "marca": "Marca",
     "medidas": "Medidas",
     "valor_unitario": "Valor unit.",
+    "valor_kit": "Valor do kit",
 }
 # Os mesmos limites dos CHECK do banco.
 LIMITE_ITENS = 50
@@ -387,15 +392,21 @@ def _validar_linha(
         quantidade, problema = _quantidade(campo("quantidade"), LIMITE_QUANTIDADE, "quantidade")
         if problema:
             e["quantidade"] = problema
-        valor, problema = _valor(campo("valor_unitario"), "valor unitário")
-        if problema:
-            e["valor_unitario"] = problema
+        kit = categoria in CATEGORIAS_KIT and campo("kit") == "1"
+        if kit:
+            valor, problema = _valor(campo("valor_kit"), "valor do kit")
+            if problema:
+                e["valor_kit"] = problema
+        else:
+            valor, problema = _valor(campo("valor_unitario"), "valor unitário")
+            if problema:
+                e["valor_unitario"] = problema
         # Só os opcionais da categoria; os de outra categoria (ocultos na tela) são ignorados.
         extras = {
             nome_campo: _opcional(campo(nome_campo), e, nome_campo)
             for nome_campo in sorted(OPCIONAIS & set(CAMPOS_CATEGORIA[categoria]))
         }
-        if not e and quantidade * valor > LIMITE_VALOR:
+        if not e and not kit and quantidade * valor > LIMITE_VALOR:
             e["valor_unitario"] = "Valor total da linha alto demais."
         if not e:
             item = ItemCompraParaGravar(
@@ -403,8 +414,8 @@ def _validar_linha(
                 categoria=categoria,
                 quantidade=quantidade,
                 nome=nome,
-                valor_unitario=valor,
-                valor_total=quantidade * valor,
+                valor_unitario=None if kit else valor,
+                valor_total=valor if kit else quantidade * valor,
                 **extras,
             )
     else:

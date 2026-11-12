@@ -393,6 +393,58 @@ def test_compra_com_as_cinco_categorias_so_gera_estoque_das_tres_atuais(estoque)
     assert sorted(i.categoria for i in estoque.itens.values()) == ["acessorio", "embalagem"]
 
 
+def test_kit_de_acessorio_e_item_geral_grava_o_valor_do_kit(estoque):
+    """Kit: o valor do kit vira o valor total da linha; o valor unitário (calculado na tela e
+    arredondado) não é gravado, e o custo unitário do lote é a divisão exata."""
+    resposta = enviar(
+        compra(
+            item(0, "acessorio", quantidade="3", kit="1", valor_kit="R$ 10,00"),
+            item(1, "outro", nome="Fita", quantidade="100", kit="1", valor_kit="R$ 33,00"),
+            # A tela também envia o unitário calculado; com kit ele é ignorado.
+            **{"item_0_valor_unitario": "R$ 3,33"},
+        )
+    )
+
+    assert resposta.status_code == 200
+    (gravada,) = estoque.compras.values()
+    argola, fita = gravada.compra.itens
+    assert (argola.valor_unitario, argola.valor_total) == (None, Decimal("10.00"))
+    assert (fita.valor_unitario, fita.valor_total) == (None, Decimal("33.00"))
+    assert subtotal_itens(list(gravada.compra.itens)) == Decimal("43.00")
+    assert custo(argola) == Decimal("10.00") / 3
+    (lote,) = estoque.itens.values()
+    assert lote.quantidade_comprada == 3 and lote.valor_total == Decimal("10.00")
+
+
+def test_kit_exige_o_valor_do_kit(estoque):
+    resposta = enviar(compra(item(0, "acessorio", kit="1", valor_kit="")))
+
+    assert resposta.json()["campos"] == {"item_0_valor_kit": "Informe o valor do kit."}
+    assert nada_gravado(estoque)
+
+
+def test_kit_de_embalagem_gera_lote_com_custo_exato(estoque):
+    resposta = enviar(
+        compra(item(0, "embalagem", nome="Saquinho", quantidade="7", kit="1", valor_kit="R$ 5,00"))
+    )
+
+    assert resposta.status_code == 200
+    (saquinho,) = next(iter(estoque.compras.values())).compra.itens
+    assert (saquinho.valor_unitario, saquinho.valor_total) == (None, Decimal("5.00"))
+    (lote,) = estoque.itens.values()
+    assert lote.categoria == "embalagem" and lote.custo_unitario == Decimal("5.00") / 7
+
+
+@pytest.mark.parametrize("categoria", ["peca_manutencao", "filamento"])
+def test_kit_so_vale_para_acessorio_embalagem_e_item_geral(estoque, categoria):
+    linha = filamento if categoria == "filamento" else (lambda i, **e: item(i, categoria, **e))
+    resposta = enviar(compra(linha(0, kit="1", valor_kit="R$ 99,00")))
+
+    assert resposta.status_code == 200
+    (gravado,) = next(iter(estoque.compras.values())).compra.itens
+    assert gravado.valor_unitario is not None  # valor unitário normal; o kit é ignorado
+
+
 def test_valor_zero_e_aceito(estoque):
     resposta = enviar(
         compra(filamento(0, valor_unitario="0"), item(1, "embalagem", valor_total="0"))

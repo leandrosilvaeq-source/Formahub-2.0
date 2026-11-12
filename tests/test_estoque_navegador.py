@@ -459,6 +459,8 @@ def test_janela_cabe_na_tela_com_rolagem_interna(pagina, estoque, largura):
         """[...document.querySelectorAll(
                ['.botao', 'input', 'select', '.botao-icone', '.escolha-card']
                  .map(s => '#compra-janela ' + s).join())]
+             // Caixinha (Kit): o alvo de toque é o rótulo inteiro que a envolve.
+             .map(el => el.type === 'checkbox' ? el.closest('label') : el)
              .filter(el => el.type !== 'hidden' && el.type !== 'radio' && el.type !== 'file'
                      && el.getClientRects().length && el.getBoundingClientRect().height < 44)
              .map(el => el.textContent.trim() || el.dataset.campo || el.name)"""
@@ -531,9 +533,9 @@ def test_cada_categoria_mostra_so_os_campos_dela_na_ordem(pagina, estoque):
     )
     assert opcoes == [
         "Filamento",
-        "Acessórios para produtos",
-        "Embalagens para produtos",
-        "Peças de reposição",
+        "Acessórios",
+        "Embalagens",
+        "Peças para manutenção",
         "Itens gerais",
     ]
     # Asterisco só nos obrigatórios da categoria: cor e marca são opcionais fora do filamento.
@@ -679,6 +681,69 @@ def test_totais_atualizam_na_hora_com_desconto_e_frete(pagina, estoque):
     assert not pagina.js("document.getElementById('compra-desconto-aviso').hidden")
     preencher(pagina, {"#compra-frete": "-"})  # sem sinal: nunca fica negativo
     assert pagina.valor("#compra-frete").startswith("R$ ")
+
+
+@pytest.mark.parametrize("largura", [360, 1280])
+def test_kit_calcula_o_valor_unitario_e_grava_o_valor_do_kit(pagina, estoque, largura):
+    pagina.tela(largura, 800)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    kit_visivel = (
+        "!document.querySelector('#compra-itens .compra-item[data-pos=\"{n}\"] [data-kit]').hidden"
+    )
+
+    # Só acessório, embalagem e itens gerais têm a opção Kit.
+    assert not pagina.js(kit_visivel.format(n=1))  # filamento
+    for categoria, tem_kit in [
+        ("embalagem", True),
+        ("peca_manutencao", False),
+        ("outro", True),
+        ("acessorio", True),
+    ]:
+        mudar_categoria(pagina, 1, categoria)
+        assert pagina.js(kit_visivel.format(n=1)) is tem_kit, categoria
+
+    preencher(pagina, {linha(1, "nome"): "Argola", linha(1, "quantidade"): "3"})
+    pagina.clicar(linha(1, "kit"))
+    assert pagina.js("document.activeElement.dataset.campo") == "valor_kit"
+    assert rotulos(pagina, 1) == [
+        "Categoria",
+        "Item",
+        "Qtd.",
+        "Cor",
+        "Medidas",
+        "Valor do kit",
+    ]
+    preencher(pagina, {linha(1, "valor_kit"): "1000"})
+
+    # Valor unitário = 10,00 ÷ 3, mostrado abaixo do total; o total da linha é o valor do kit.
+    unitario = "#compra-itens .compra-item[data-pos='1'] [data-unitario-kit]"
+    assert pagina.texto(unitario) == "R$ 3,33 / un."
+    assert pagina.texto("#compra-itens .compra-item[data-pos='1'] [data-total-linha]") == "R$ 10,00"
+    assert totais(pagina) == ["R$ 10,00", "R$ 10,00"]
+    preencher(pagina, {linha(1, "quantidade"): "0"})  # "30": 10,00 ÷ 30
+    assert pagina.texto(unitario) == "R$ 0,33 / un."
+
+    # Desmarcar volta ao valor unitário digitável, já com o valor calculado (o valor do kit
+    # fica guardado, sem enviar).
+    pagina.clicar(linha(1, "kit"))
+    assert rotulos(pagina, 1)[-1] == "Valor unit." and "Valor do kit" not in rotulos(pagina, 1)
+    assert pagina.valor(linha(1, "valor_unitario")) == "R$ 0,33"
+    assert pagina.js(f'document.querySelector("{unitario}").hidden')
+    pagina.clicar(linha(1, "kit"))
+    assert pagina.valor(linha(1, "valor_kit")) == "R$ 10,00"
+
+    escolher_local(pagina, "shopee")
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    (gravada,) = estoque.compras.values()
+    (argola,) = gravada.compra.itens
+    assert (argola.quantidade, argola.valor_unitario, argola.valor_total) == (
+        30,
+        None,
+        Decimal("10.00"),
+    )
 
 
 @pytest.mark.parametrize("largura", [360, 1280])

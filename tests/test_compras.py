@@ -55,9 +55,9 @@ def test_sem_compras_mostra_seis_cards_zerados_e_mensagem(estoque):
     for chave, titulo in (
         ("compras", "Compras"),
         ("filamento", "Filamentos"),
-        ("acessorio", "Acessórios para produtos"),
-        ("embalagem", "Embalagens para produtos"),
-        ("peca_manutencao", "Peças de reposição"),
+        ("acessorio", "Acessórios"),
+        ("embalagem", "Embalagens"),
+        ("peca_manutencao", "Peças para manutenção"),
         ("outro", "Itens gerais"),
     ):
         assert card(html, chave).startswith(f"{titulo} R$ 0,00 0 compras")
@@ -153,9 +153,9 @@ def test_janela_tem_lista_unica_com_as_cinco_categorias(estoque):
     modelo = modelo[: modelo.index("</template>")]
     for codigo, rotulo in (
         ("filamento", "Filamento"),
-        ("acessorio", "Acessórios para produtos"),
-        ("embalagem", "Embalagens para produtos"),
-        ("peca_manutencao", "Peças de reposição"),
+        ("acessorio", "Acessórios"),
+        ("embalagem", "Embalagens"),
+        ("peca_manutencao", "Peças para manutenção"),
         ("outro", "Itens gerais"),
     ):
         assert f'<option value="{codigo}">{rotulo}</option>' in modelo

@@ -3930,6 +3930,42 @@ body:has(.container-custos) .deco-fundo { display: none; }
 
 .compra-campo-opcional > label { font-weight: 600; color: var(--cor-texto-suave); }
 
+/* Opção Kit (acessórios e itens gerais): caixinha discreta antes do valor unitário */
+.compra-campo-kit { display: flex; align-items: flex-end; min-width: 0; }
+.compra-campo-kit[hidden] { display: none; }
+.compra-kit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: var(--alvo-toque);
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.compra-item-campos .compra-kit input {
+  width: 1rem;
+  min-width: 1rem;
+  min-height: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--cor-primaria);
+  cursor: pointer;
+}
+
+/* Valor unitário calculado pelo kit, abaixo do total da linha */
+.compra-item-unitario-kit {
+  margin-top: -0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* Valor da linha (quantidade x valor unitário), só leitura */
 .compra-item-total {
   display: flex;
@@ -4133,6 +4169,7 @@ body:has(.container-custos) .deco-fundo { display: none; }
   }
 
   .compra-item-campos .campo,
+  .compra-campo-kit,
   .compra-item-total { flex: 0 0 auto; }
 
   .compra-item-campos { column-gap: 0.5rem; }
@@ -4148,7 +4185,8 @@ body:has(.container-custos) .deco-fundo { display: none; }
   .compra-campo-quantidade { width: 3.75rem; }
   .compra-campo-marca { flex: 1 1 5.5rem !important; }
   .compra-campo-medidas { flex: 1 1 6rem !important; }
-  .compra-campo-valor_unitario { width: 6.5rem; }
+  .compra-campo-valor_unitario,
+  .compra-campo-valor_kit { width: 6.5rem; }
   .compra-item-total { width: 6rem; }
 
   .compra-item-foto .item-rotulo { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

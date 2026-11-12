@@ -49,6 +49,7 @@ from app.estoque import (
 from app.estoque_compra import (
     CAMPOS_CATEGORIA,
     CATEGORIAS,
+    CATEGORIAS_KIT,
     LIMITE_ITENS,
     LIMITE_ROLOS,
     LOCAIS,
@@ -254,6 +255,7 @@ def compras(
         "logos_locais": LOGOS_LOCAIS,
         "categorias": CATEGORIAS,
         "campos_categoria": CAMPOS_CATEGORIA,
+        "categorias_kit": CATEGORIAS_KIT,
         "opcionais": sorted(OPCIONAIS),
         "rotulos_campos": ROTULOS_CAMPOS,
         "limite_itens": LIMITE_ITENS,
@@ -356,12 +358,30 @@ def _numero(valor: Decimal | None) -> str:
 def _dados_edicao(c, urls: dict[str, str]) -> dict:
     """Compra no formato que a janela usa para abrir já preenchida (botão Editar).
 
-    Itens antigos (sem valor unitário gravado) abrem com valor total / quantidade; se a divisão
-    não for exata em centavos, a linha avisa o total anterior (nota), para nada mudar calado.
+    Acessório, embalagem e item geral sem valor unitário gravado abrem como kit (valor do
+    kit = valor total). Outros itens antigos sem valor unitário abrem com valor total /
+    quantidade; se a divisão não for exata em centavos, a linha avisa o total anterior (nota),
+    para nada mudar calado.
     """
     itens = []
     for i in c.itens:
         unitario = i.valor_unitario
+        if unitario is None and i.categoria in CATEGORIAS_KIT:
+            itens.append(
+                {
+                    "categoria": i.categoria,
+                    "quantidade": str(i.quantidade),
+                    "kit": "1",
+                    "valor_kit": str(i.valor),
+                    "nome": i.nome,
+                    "cor": i.cor or "",
+                    "medidas": i.medidas or "",
+                    "marca": i.marca or "",
+                    "foto_atual": i.imagem_caminho or "",
+                    "foto_url": urls.get(i.imagem_caminho or "", ""),
+                }
+            )
+            continue
         if unitario is None:  # filamento: valor = rolos x unitário; item antigo: valor total
             unitario = (i.valor / i.quantidade).quantize(Decimal("0.01"))
         dados = {
