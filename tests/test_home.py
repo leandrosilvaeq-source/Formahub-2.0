@@ -56,34 +56,41 @@ def test_indicadores_do_mes_comparam_com_mes_anterior():
     from app.pedidos import indicadores_do_mes
     from app.pedidos_repositorio import PedidoResumo
 
-    def pedido(valor, criado, status="Pago", cancelado=False):
+    # Conta só pedidos finalizados ("entregue") e pagos, pelo mês do prazo de entrega. O banco
+    # devolve o status como código ("pago"/"pendente"), não como rótulo.
+    def pedido(id, valor, prazo, status="pago", valor_none=False):
         return PedidoResumo(
-            id=1,
+            id=id,
             cliente_nome="x",
             forma_pagamento="PIX",
             status_pagamento=status,
-            prazo_entrega=date(2026, 11, 20),
+            prazo_entrega=prazo,
             criado_por_nome="x",
             produtos=("a",),
             quantidade_total=1,
             observacoes=None,
-            cancelado=cancelado,
-            valor_total=Decimal(valor),
-            criado_em=criado,
+            valor_total=None if valor_none else Decimal(valor),
+            # Data de criação em outro mês: não deve influir.
+            criado_em=datetime(2026, 1, 1),
         )
 
     pedidos = [
-        pedido("100", datetime(2026, 11, 2)),
-        pedido("50", datetime(2026, 11, 5)),
-        pedido("999", datetime(2026, 11, 6), status="Pendente"),
-        pedido("999", datetime(2026, 11, 6), cancelado=True),
-        pedido("100", datetime(2026, 10, 30)),
+        pedido(1, "100", date(2026, 11, 2)),
+        pedido(2, "50", date(2026, 11, 28)),
+        pedido(3, "999", date(2026, 11, 6), status="pendente"),  # finalizado, não pago
+        pedido(4, "999", date(2026, 11, 6)),  # pago, ainda em produção
+        pedido(5, "999", date(2026, 11, 6)),  # cancelado
+        pedido(6, "999", date(2026, 12, 1)),  # prazo no mês seguinte
+        pedido(7, "100", date(2026, 10, 30)),  # mês anterior
     ]
-    ind = indicadores_do_mes(pedidos, date(2026, 11, 7))
+    etapas = {1: "entregue", 2: "entregue", 3: "entregue", 4: "em_producao", 5: "cancelado"}
+    etapas |= {6: "entregue", 7: "entregue"}
+    ind = indicadores_do_mes(pedidos, etapas, date(2026, 11, 7))
 
     assert ind["faturamento"]["atual"] == Decimal("150")
     assert ind["faturamento"]["variacao"] == {"direcao": "alta", "texto": "50,0%"}
     assert ind["pedidos"]["atual"] == 2
     assert ind["ticket"]["atual"] == Decimal("75")
     assert ind["ticket"]["variacao"]["direcao"] == "queda"
-    assert indicadores_do_mes([pedido("1", None)], date(2026, 11, 7)) is None
+    sem_valor = [pedido(1, "1", date(2026, 11, 7), valor_none=True)]
+    assert indicadores_do_mes(sem_valor, {1: "entregue"}, date(2026, 11, 7)) is None

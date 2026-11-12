@@ -574,13 +574,23 @@ def editar_pedido_gravado(
             logger.error("Não foi possível remover %d imagem(ns) antiga(s).", len(removidas))
 
 
-def indicadores_do_mes(pedidos, hoje: date) -> dict | None:
+def etapas_dos_pedidos(pedidos, quadro) -> dict[int, str]:
+    """Etapa de cada pedido (código de FILTROS_STATUS), a partir do quadro de produção.
+
+    O quadro deixa de fora o pedido concluído (entregue e pago): ele conta como finalizado
+    ("entregue"). Pedido cancelado também fica fora do quadro e vira "cancelado".
+    """
+    no_quadro = {c.id: c.etapa for c in quadro}
+    return {p.id: "cancelado" if p.cancelado else no_quadro.get(p.id, "entregue") for p in pedidos}
+
+
+def indicadores_do_mes(pedidos, etapas: dict[int, str], hoje: date) -> dict | None:
     """Faturamento, número de pedidos e ticket médio do mês de `hoje` e do mês anterior.
 
-    Conta só pedidos pagos e não cancelados, pelo mês de criação do pedido. Devolve None se o
-    banco ainda não informa a data do pedido.
+    Conta só pedidos finalizados (etapa "entregue") e pagos, pelo mês do prazo de entrega.
+    Devolve None se o banco ainda não informa o valor do pedido.
     """
-    if any(p.criado_em is None or p.valor_total is None for p in pedidos):
+    if any(p.valor_total is None for p in pedidos):
         return None
     mes_atual = (hoje.year, hoje.month)
     mes_anterior = (hoje.year - 1, 12) if hoje.month == 1 else (hoje.year, hoje.month - 1)
@@ -589,9 +599,9 @@ def indicadores_do_mes(pedidos, hoje: date) -> dict | None:
         valores = [
             p.valor_total
             for p in pedidos
-            if p.status_pagamento == "Pago"
-            and not p.cancelado
-            and (p.criado_em.year, p.criado_em.month) == mes
+            if p.status_pagamento == CODIGOS_STATUS["Pago"]  # o banco devolve o código
+            and etapas.get(p.id) == "entregue"
+            and (p.prazo_entrega.year, p.prazo_entrega.month) == mes
         ]
         faturamento = sum(valores, Decimal("0"))
         ticket = faturamento / len(valores) if valores else Decimal("0")

@@ -57,7 +57,7 @@
 {% endif %}
 
 {% if indicadores %}
-<section class="indicadores" aria-label="Indicadores do mês atual (pedidos pagos)">
+<section class="indicadores" aria-label="Indicadores do mês atual (pedidos finalizados e pagos, pelo prazo de entrega)">
   {{ indicador("faturamento", "Faturamento do mês", indicadores.faturamento, "brl") }}
   {{ indicador("total-pedidos", "Pedidos pagos no mês", indicadores.pedidos, "n") }}
   {{ indicador("ticket", "Ticket médio por pedido", indicadores.ticket, "brl") }}

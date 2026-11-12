@@ -61,6 +61,7 @@ from app.pedidos import (
     PedidoNaoEditavel,
     PedidoNaoSalvo,
     editar_pedido_gravado,
+    etapas_dos_pedidos,
     formatar_brl,
     formatar_contato,
     formatar_data_curta,
@@ -199,7 +200,9 @@ def home(
     try:
         if repo_pedidos is None:
             raise FalhaAoConsultar
-        indicadores = indicadores_do_mes(repo_pedidos.listar_pedidos(), date.today())
+        todos = repo_pedidos.listar_pedidos()
+        etapas = etapas_dos_pedidos(todos, repo_pedidos.listar_producao())
+        indicadores = indicadores_do_mes(todos, etapas, date.today())
     except FalhaAoConsultar:
         pass
     contexto = {
@@ -326,13 +329,8 @@ def listar_pedidos(
         if repo is None:
             raise FalhaAoConsultar
         todos = repo.listar_pedidos()
-        # A etapa de cada pedido vem do quadro de produção (mesma fonte da aba Produção). O
-        # quadro deixa de fora o pedido concluído (entregue e pago): ele conta como finalizado.
-        # Pedido cancelado também fica fora do quadro: aparece só no filtro "Cancelado".
-        no_quadro = {c.id: c.etapa for c in repo.listar_producao()}
-        etapas = {
-            p.id: "cancelado" if p.cancelado else no_quadro.get(p.id, "entregue") for p in todos
-        }
+        # A etapa de cada pedido vem do quadro de produção (mesma fonte da aba Produção).
+        etapas = etapas_dos_pedidos(todos, repo.listar_producao())
     except FalhaAoConsultar:
         contexto = {
             **base,
