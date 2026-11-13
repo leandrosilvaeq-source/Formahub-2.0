@@ -452,10 +452,65 @@
   // Trocar ou remover a foto apaga o aviso de foto recusada pelo servidor e, na edição, deixa
   // de manter a foto já gravada.
   lista.addEventListener("imagemreferencia:alterada", function (evento) {
+    const linha = evento.target;
+    if (linha.dataset.fotoAnterior === "limpando") return; // a própria sugestão saiu (abaixo)
+    // Foto escolhida ou removida pela pessoa: a linha não recebe mais a foto anterior sozinha.
+    delete linha.dataset.fotoAnterior;
+    linha.dataset.fotoManual = "1";
     limparErro(evento.target.querySelector(".compra-item-foto"));
     const gravada = evento.target.querySelector('[data-campo="foto_atual"]');
     if (gravada) gravada.value = "";
   });
+
+  // ---------- Foto de uma compra anterior ----------
+  // Item igual a um já comprado (mesma categoria e nome; filamento: material, tipo, cor e
+  // marca) mostra a foto mais recente dele. Ao salvar, o servidor copia essa foto para a compra
+  // (foto_atual leva o caminho). Trocar ou remover a foto vale como escolha da pessoa.
+
+  const FOTOS_ANTERIORES = JSON.parse(form.dataset.fotosAnteriores || "{}");
+  const CAMPOS_DA_FOTO = ["nome", "material", "tipo", "cor", "marca", "categoria"];
+
+  function chaveTexto(texto) {
+    return (texto || "").trim().split(/\s+/).join(" ").toLowerCase();
+  }
+
+  function chaveDaFoto(linha) {
+    const categoria = linha.dataset.categoria;
+    const campos = categoria === "filamento" ? ["material", "tipo", "cor", "marca"] : ["nome"];
+    const valores = campos.map(function (campo) { return chaveTexto(valorDe(linha, campo)); });
+    if (valores.some(function (v) { return !v; })) return "";
+    return categoria + ":" + valores.join("|");
+  }
+
+  function sugerirFoto(linha) {
+    if (!window.ImagensReferencia || linha.dataset.fotoManual) return;
+    const gravada = campoDe(linha, "foto_atual");
+    const sugerida = linha.dataset.fotoAnterior === "1";
+    if (gravada.value && !sugerida) return; // edição: a linha já tem a própria foto
+    if (window.ImagensReferencia.arquivo(linha)) return;
+    const foto = FOTOS_ANTERIORES[chaveDaFoto(linha)];
+    if (foto) {
+      if (gravada.value === foto.caminho) return;
+      linha.dataset.fotoAnterior = "1";
+      gravada.value = foto.caminho;
+      window.ImagensReferencia.mostrarGravada(linha, foto.url, "Foto anterior");
+    } else if (sugerida) {
+      linha.dataset.fotoAnterior = "limpando";
+      window.ImagensReferencia.limparLinha(linha);
+      delete linha.dataset.fotoAnterior;
+      gravada.value = "";
+    }
+  }
+
+  function aoMudarCampo(evento) {
+    const alvo = evento.target;
+    const linha = alvo.closest(".compra-item");
+    if (linha && alvo.dataset && CAMPOS_DA_FOTO.indexOf(alvo.dataset.campo) !== -1) {
+      sugerirFoto(linha);
+    }
+  }
+  form.addEventListener("input", aoMudarCampo);
+  form.addEventListener("change", aoMudarCampo);
 
   // ---------- Abrir e fechar ----------
 
@@ -541,10 +596,10 @@
     mostrar();
   }
 
-  document.querySelectorAll("[data-editar-compra]").forEach(function (botao) {
-    botao.addEventListener("click", function () {
-      abrirEdicao(JSON.parse(botao.dataset.editarCompra), botao);
-    });
+  // Delegado no documento: a tabela de Compras é trocada pelos filtros sem recarregar a tela.
+  document.addEventListener("click", function (evento) {
+    const botao = evento.target.closest("[data-editar-compra]");
+    if (botao) abrirEdicao(JSON.parse(botao.dataset.editarCompra), botao);
   });
 
   function enviando() {

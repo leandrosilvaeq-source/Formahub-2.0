@@ -291,5 +291,15 @@
       const controle = controles.get(linha);
       if (controle) controle.mostrarGravada(url, nome);
     },
+    // A linha tem um arquivo novo escolhido? (foto gravada não conta)
+    arquivo: function (linha) {
+      const controle = controles.get(linha);
+      return controle ? controle.arquivo() : null;
+    },
+    // Tira a foto de uma linha (avisa a linha com imagemreferencia:alterada).
+    limparLinha: function (linha) {
+      const controle = controles.get(linha);
+      if (controle) controle.limpar();
+    },
   };
 })();

@@ -26,6 +26,7 @@
 <div class="alerta alerta-erro" role="alert">{{ erro }}</div>
 <a class="botao botao-secundario" href="/compras">Tentar novamente</a>
 {% else %}
+{% set filtro_local = "" if local == "todos" else "&local=" ~ local %}
 
 {# Cards e tabela mostram o período escolhido; os cards somam todas as compras dele, não só a página. #}
 <form class="compras-filtro" id="compras-filtro" method="get" action="/compras">
@@ -34,6 +35,13 @@
     <option value="todos"{% if periodo == "todos" %} selected{% endif %}>Todos</option>
     {% for valor, rotulo in opcoes_periodo %}
     <option value="{{ valor }}"{% if valor == periodo %} selected{% endif %}>{{ rotulo }}</option>
+    {% endfor %}
+  </select>
+  <label for="compras-local">Local</label>
+  <select class="campo-texto" id="compras-local" name="local">
+    <option value="todos"{% if local == "todos" %} selected{% endif %}>Todos</option>
+    {% for codigo, rotulo in locais.items() %}
+    <option value="{{ codigo }}"{% if codigo == local %} selected{% endif %}>{{ rotulo }}</option>
     {% endfor %}
   </select>
   {% if ordem != "recentes" %}<input type="hidden" name="ordem" value="{{ ordem }}">{% endif %}
@@ -57,7 +65,7 @@
 <section class="secao" id="ultimas-compras" aria-labelledby="titulo-ultimas-compras">
   <h2 id="titulo-ultimas-compras">Compras{% if periodo_rotulo %} de {{ periodo_rotulo }}{% endif %}</h2>
   {% if not linhas %}
-  <p class="compras-vazio">{% if periodo_rotulo %}Nenhuma compra em {{ periodo_rotulo }}{% else %}Nenhuma compra registrada{% endif %}</p>
+  <p class="compras-vazio">{% if periodo_rotulo %}Nenhuma compra em {{ periodo_rotulo }}{% if local != "todos" %} ({{ locais[local] }}){% endif %}{% elif local != "todos" %}Nenhuma compra em {{ locais[local] }}{% else %}Nenhuma compra registrada{% endif %}</p>
   {% else %}
   <div class="tabela-rolagem">
     <table class="tabela-pedidos tabela-compras" id="tabela-compras">
@@ -70,7 +78,7 @@
             <span class="th-conteudo">
               <span>Data</span>
               <a class="filtro-botao ordenar-botao{% if antigas %} ativo{% endif %}" id="ordenar-data"
-                href="/compras?periodo={{ periodo }}&amp;ordem={{ proxima }}"
+                href="/compras?periodo={{ periodo }}&amp;ordem={{ proxima }}{{ filtro_local }}"
                 aria-label="Ordenar por data: {{ 'mais recentes' if antigas else 'mais antigas' }} primeiro"
                 title="{{ 'Mais antigas primeiro (clique para mais recentes)' if antigas else 'Mais recentes primeiro (clique para mais antigas)' }}">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -122,9 +130,9 @@
   </div>
   {% if total_paginas > 1 %}
   <nav class="compras-paginas" aria-label="Páginas de compras">
-    {% if pagina > 1 %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;ordem={{ ordem }}&amp;pagina={{ pagina - 1 }}" rel="prev">Anterior</a>{% endif %}
+    {% if pagina > 1 %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;ordem={{ ordem }}&amp;pagina={{ pagina - 1 }}{{ filtro_local }}" rel="prev">Anterior</a>{% endif %}
     <span>Página {{ pagina }} de {{ total_paginas }}</span>
-    {% if pagina < total_paginas %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;ordem={{ ordem }}&amp;pagina={{ pagina + 1 }}" rel="next">Próxima</a>{% endif %}
+    {% if pagina < total_paginas %}<a class="botao botao-secundario" href="/compras?periodo={{ periodo }}&amp;ordem={{ ordem }}&amp;pagina={{ pagina + 1 }}{{ filtro_local }}" rel="next">Próxima</a>{% endif %}
   </nav>
   {% endif %}
   {% endif %}

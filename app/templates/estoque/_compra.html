@@ -111,7 +111,7 @@
   <form id="form-compra" method="post" action="/compras" novalidate
     data-campos='{{ campos_categoria | tojson }}' data-opcionais='{{ opcionais | tojson }}'
     data-categorias='{{ categorias | tojson }}' data-categorias-kit='{{ categorias_kit | list | tojson }}'
-    data-limite-itens="{{ limite_itens }}">
+    data-limite-itens="{{ limite_itens }}" data-fotos-anteriores='{{ sugestoes.fotos | tojson }}'>
     <input type="hidden" name="csrf" value="{{ request.state.csrf }}">
     <input type="hidden" name="chave_envio" value="">
 

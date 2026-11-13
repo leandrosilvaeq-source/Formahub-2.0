@@ -391,7 +391,7 @@ def test_scripts_da_previa_com_lupa_sao_carregados(estoque):
     html = client.get("/compras").text
 
     assert html.index("js/foto-previa.js") < html.index("js/compras-lista.js")
-    assert "FotoPrevia.iniciar(tabela, { lupa: true })" in (
+    assert "FotoPrevia.iniciar(lista, { lupa: true })" in (
         Path("app/static/js/compras-lista.js").read_text(encoding="utf-8")
     )
 
@@ -422,3 +422,66 @@ def test_valores_de_soma_usam_decimal_exato(estoque):
     registrar(estoque, filamento(0, quantidade="3", valor_unitario="R$ 0,10"))
 
     assert estoque.listar_compras().compras[0].total == Decimal("0.30")
+
+
+# ---------- Filtro de local ----------
+
+
+def test_filtro_de_local_lista_todos_e_os_locais(estoque):
+    html = client.get("/compras").text
+
+    assert 'id="compras-local" name="local"' in html
+    assert '<option value="todos" selected>Todos</option>' in html
+    assert '<option value="shopee">Shopee</option>' in html
+
+
+def test_filtro_de_local_atualiza_cards_e_tabela(estoque):
+    registrar(estoque, item(0, "acessorio", nome="Da Shopee"), local="shopee")
+    registrar(estoque, item(0, "acessorio", nome="Do Mercado"), local="mercado_livre")
+
+    html = client.get("/compras?local=shopee").text
+
+    assert '<option value="shopee" selected>' in html
+    tela = pagina(html)
+    assert "Da Shopee" in tela and "Do Mercado" not in tela
+    assert "1 compra " in card(html, "compras")
+
+
+def test_filtro_de_local_combina_com_o_periodo(estoque):
+    registrar(estoque, item(0, "acessorio", nome="Shopee setembro"), local="shopee")
+    outubro = {"local": "shopee", "data_compra": "05/10/2026"}
+    registrar(estoque, item(0, "acessorio", nome="Shopee outubro"), **outubro)
+    registrar(estoque, item(0, "acessorio", nome="Mercado setembro"))
+
+    tela = pagina(client.get("/compras?periodo=2026-09&local=shopee").text)
+
+    assert "Shopee setembro" in tela
+    assert "Shopee outubro" not in tela and "Mercado setembro" not in tela
+
+
+def test_local_sem_compras_mostra_mensagem(estoque):
+    registrar(estoque, item(0, "acessorio"))
+
+    html = client.get("/compras?local=aliexpress").text
+
+    assert "Nenhuma compra em AliExpress" in html
+    assert "R$ 0,00 0 compras" in card(html, "compras")
+
+
+@pytest.mark.parametrize("local", ["", "x", "LOJA"])
+def test_local_invalido_vale_todos(estoque, local):
+    registrar(estoque, item(0, "acessorio"))
+
+    html = client.get("/compras", params={"local": local}).text
+
+    assert "1 compra " in card(html, "compras")
+
+
+def test_ordem_e_paginas_preservam_o_local(estoque):
+    for _ in range(21):
+        registrar(estoque, item(0, "acessorio"), local="shopee")
+
+    html = client.get("/compras?local=shopee").text
+
+    assert 'href="/compras?periodo=todos&amp;ordem=antigas&amp;local=shopee"' in html
+    assert 'href="/compras?periodo=todos&amp;ordem=recentes&amp;pagina=2&amp;local=shopee"' in html

@@ -61,6 +61,7 @@ from app.estoque_compra import (
     ROTULOS_CAMPOS,
     CompraNaoEncontrada,
     CompraNaoSalva,
+    chave_da_foto,
     cores_conhecidas,
     descrever_item,
     gravar_compra,
@@ -241,9 +242,11 @@ def compras(
     periodo: str = "todos",
     pagina: str = "1",
     ordem: str = "recentes",
+    local: str = "todos",
     repo: RepositorioEstoque | None = Depends(get_repositorio_estoque),
 ):
     escolhido = ler_periodo(periodo)  # aaaa-mm; qualquer outro valor vale "Todos"
+    local = local if local in LOCAIS else "todos"
     ordem = ordem if ordem in ORDENS_COMPRAS else "recentes"
     contexto = {
         "erro": "",
@@ -263,7 +266,7 @@ def compras(
         "materiais_compra": MATERIAIS,
         "pesos_compra": PESOS_ROLO_G,
         "limite_rolos": LIMITE_ROLOS,
-        "sugestoes": {"cores": [], "marcas": [], "nomes": {}},
+        "sugestoes": {"cores": [], "marcas": [], "nomes": {}, "fotos": {}},
     }
     try:
         if repo is None:
@@ -275,20 +278,25 @@ def compras(
 
     # Filtro: "Todos" + os meses com compras (o período pedido entra mesmo vazio).
     meses = set(historico.meses) | ({escolhido[0]} if escolhido else set())
-    total_paginas = max(1, -(-len(historico.compras) // COMPRAS_POR_PAGINA))
+    contexto["sugestoes"] = _sugestoes(repo, historico.compras if escolhido is None else None)
+    # Filtro de local: cards e tabela passam a considerar só as compras daquele local.
+    lista = historico.compras
+    if local != "todos":
+        lista = tuple(c for c in lista if c.local_tipo == local)
+    total_paginas = max(1, -(-len(lista) // COMPRAS_POR_PAGINA))
     numero = int(pagina) if re.fullmatch(r"[0-9]{1,6}", pagina) else 1
     numero = min(max(numero, 1), total_paginas)
     inicio = (numero - 1) * COMPRAS_POR_PAGINA
 
-    contexto["sugestoes"] = _sugestoes(repo, historico.compras if escolhido is None else None)
     contexto["periodo"] = escolhido[0] if escolhido else "todos"
     contexto["periodo_rotulo"] = rotulo_do_periodo(escolhido[0]) if escolhido else ""
     contexto["opcoes_periodo"] = [(m, rotulo_do_periodo(m)) for m in sorted(meses, reverse=True)]
+    contexto["local"] = local
     contexto["ordem"] = ordem
-    contexto["resumo"] = resumir_compras(historico.compras)
+    contexto["resumo"] = resumir_compras(lista)
     # O banco devolve das mais recentes às mais antigas; "antigas" inverte a lista inteira
     # (antes de paginar), então a primeira página traz as compras mais antigas.
-    ordenadas = historico.compras[::-1] if ordem == "antigas" else historico.compras
+    ordenadas = lista[::-1] if ordem == "antigas" else lista
     contexto["linhas"] = _linhas_compras(repo, ordenadas[inicio : inicio + COMPRAS_POR_PAGINA])
     contexto["pagina"] = numero
     contexto["total_paginas"] = total_paginas
@@ -316,6 +324,28 @@ def _sugestoes(repo: RepositorioEstoque, compras) -> dict:
         "cores": cores_conhecidas(_cores_salvas(repo) + [i.cor for i in itens if i.cor]),
         "marcas": cores_conhecidas([i.marca for i in itens if i.marca]),
         "nomes": nomes,
+        "fotos": _fotos_anteriores(repo, itens),
+    }
+
+
+def _fotos_anteriores(repo: RepositorioEstoque, itens) -> dict[str, dict]:
+    """Chave do item (chave_da_foto) -> foto mais recente de um item igual, para a janela.
+
+    `itens` vem das compras mais recentes para as mais antigas. Só entram fotos que ainda
+    existem (com URL assinada); sem o Storage, a janela funciona sem elas.
+    """
+    caminhos: dict[str, str] = {}
+    for i in itens:
+        if i.imagem_caminho and (chave := chave_da_foto(i.categoria, i)):
+            caminhos.setdefault(f"{i.categoria}:{chave}", i.imagem_caminho)
+    try:
+        urls = repo.assinar_imagens(list(set(caminhos.values())))
+    except FalhaNoEstoque:
+        return {}
+    return {
+        chave: {"caminho": caminho, "url": urls[caminho]}
+        for chave, caminho in caminhos.items()
+        if caminho in urls
     }
 
 

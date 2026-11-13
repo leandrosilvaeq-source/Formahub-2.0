@@ -138,6 +138,12 @@ class RepositorioEstoqueMemoria:
         assert tipo in ("image/png", "image/jpeg", "image/webp")
         self.imagens[caminho] = conteudo
 
+    def copiar_imagem(self, origem: str, destino: str) -> None:
+        if "copiar" in self.falhar_em or origem not in self.imagens:
+            raise FalhaNoEstoque
+        assert destino not in self.imagens, "upsert desligado: o caminho não pode repetir"
+        self.imagens[destino] = self.imagens[origem]
+
     def remover_imagens(self, caminhos: list[str]) -> None:
         if "remover" in self.falhar_em:
             raise FalhaNoEstoque

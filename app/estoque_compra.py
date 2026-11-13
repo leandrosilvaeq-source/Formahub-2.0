@@ -207,6 +207,21 @@ def _chave_cor(cor: str) -> str:
     return " ".join(cor.split()).casefold()
 
 
+def chave_da_foto(categoria: str, item) -> str:
+    """Itens iguais (mesma categoria) reaproveitam a foto da compra anterior.
+
+    Filamento: material, tipo, cor e marca; demais categorias: nome. Espaços e caixa não contam.
+    `item` é um objeto com esses atributos ou um dict. Sem os dados, a chave é vazia.
+    """
+    campos = ("material", "tipo", "cor", "marca") if categoria == "filamento" else ("nome",)
+    valores = [
+        (item.get(c) if isinstance(item, dict) else getattr(item, c, None)) or "" for c in campos
+    ]
+    if not all(_chave_cor(v) for v in valores):
+        return ""
+    return "|".join(_chave_cor(v) for v in valores)
+
+
 def cores_conhecidas(cores: list[str]) -> list[str]:
     """Cores já salvas, sem repetição por espaços ou caixa.
 
@@ -507,6 +522,11 @@ def _foto_da_compra(compra_id: int, caminho: str) -> bool:
     return re.fullmatch(rf"compras/{compra_id}/itens/\d{{1,3}}/{FOTO_ARQUIVO}", caminho) is not None
 
 
+def _foto_de_outra_compra(caminho: str) -> bool:
+    """Foto de uma compra anterior (item igual): é copiada para a pasta da compra atual."""
+    return re.fullmatch(rf"compras/\d{{1,12}}/itens/\d{{1,3}}/{FOTO_ARQUIVO}", caminho) is not None
+
+
 def _gravar(
     repo: RepositorioEstoque,
     compra: Compra,
@@ -534,6 +554,18 @@ def _gravar(
                 compra_id, atual
             ):
                 item = replace(item, imagem_caminho=atual)
+            elif atual and _foto_de_outra_compra(atual):
+                # Cópia própria: editar ou apagar uma compra nunca mexe na foto da outra.
+                extensao = atual.rsplit(".", 1)[1]
+                caminho = f"compras/{compra_id}/itens/{item.ordem}/{novo_uuid()}.{extensao}"
+                try:
+                    repo.copiar_imagem(atual, caminho)
+                except FalhaNoEstoque:
+                    # Foto anterior apagada ou Storage fora do ar: a compra sai sem a foto.
+                    logger.warning("Não foi possível copiar a foto de uma compra anterior.")
+                else:
+                    enviadas.append(caminho)
+                    item = replace(item, imagem_caminho=caminho)
             itens.append(item)
         gravando = True
         resultado = gravar(
@@ -584,7 +616,10 @@ def gravar_compra(
         if not isinstance(erro, FalhaNoEstoque):
             logger.error("Erro inesperado ao gravar compra: %s", type(erro).__name__)
         raise CompraNaoSalva from None
-    compra = replace(compra, fotos_atuais={})  # compra nova não tem fotos já gravadas
+    # Compra nova não tem fotos já gravadas: só fotos de compras anteriores, que são copiadas.
+    pasta = f"compras/{compra_id}/"
+    anteriores = {o: c for o, c in compra.fotos_atuais.items() if not c.startswith(pasta)}
+    compra = replace(compra, fotos_atuais=anteriores)
     duplicada, enviadas = _gravar(
         repo, compra, compra_id, usuario_id, repo.registrar_compra, novo_uuid
     )

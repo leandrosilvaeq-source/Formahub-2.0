@@ -429,3 +429,76 @@ def test_repositorio_resposta_estranha_da_edicao_e_incerta():
     with pytest.raises(FalhaNoEstoque) as erro:
         RepositorioEstoqueSupabase(cliente).editar_compra(gravar)
     assert erro.value.incerta
+
+
+# ---------- Foto de uma compra anterior (item igual) ----------
+
+
+def fotos_anteriores(pagina_html: str) -> dict:
+    bruto = re.search(r"data-fotos-anteriores='([^']*)'", pagina_html).group(1)
+    return json.loads(html_lib.unescape(bruto))
+
+
+def test_janela_recebe_a_foto_mais_recente_de_cada_item(estoque):
+    registrar(item(0, "acessorio", nome="Chaveiro Gato"), fotos={0: ("a.png", PNG)})
+    registrar(item(0, "acessorio", nome="  chaveiro   GATO "), fotos={0: ("b.jpg", JPEG)})
+    registrar(filamento(0), item(1, "embalagem"), fotos={0: ("f.png", PNG)})  # caixa sem foto
+
+    fotos = fotos_anteriores(client.get("/compras").text)
+
+    assert set(fotos) == {"acessorio:chaveiro gato", "filamento:pla|silk|preto|marca teste"}
+    recente = fotos["acessorio:chaveiro gato"]
+    assert recente["caminho"].startswith("compras/2/") and recente["caminho"].endswith(".jpg")
+    assert recente["url"].startswith("https://storage.exemplo/assinada/compras/2/")
+
+
+def test_sem_storage_a_janela_abre_sem_fotos_anteriores(estoque):
+    registrar(item(0, "acessorio"), fotos={0: ("a.png", PNG)})
+    estoque.falhar_em.add("assinar")
+
+    assert fotos_anteriores(client.get("/compras").text) == {}
+
+
+def test_nova_compra_ganha_copia_da_foto_anterior(estoque):
+    registrar(item(0, "acessorio", nome="Chaveiro"), fotos={0: ("a.png", PNG)})
+    anterior = estoque.compras[1].compra.itens[0].imagem_caminho
+
+    registrar(item(0, "acessorio", nome="Chaveiro", foto_atual=anterior))
+
+    copia = estoque.compras[2].compra.itens[0].imagem_caminho
+    assert copia.startswith("compras/2/itens/1/") and copia.endswith(".png")
+    assert estoque.imagens[copia] == estoque.imagens[anterior] == PNG
+
+    # Cada compra tem a sua foto: tirar a foto da primeira não afeta a segunda.
+    assert editar(1, compra(item(0, "acessorio", nome="Chaveiro"))).status_code == 200
+    assert anterior not in estoque.imagens and copia in estoque.imagens
+
+
+def test_foto_anterior_que_nao_existe_mais_salva_sem_foto(estoque):
+    caminho = "compras/7/itens/1/11111111-1111-4111-8111-111111111111.png"
+
+    registrar(item(0, "acessorio", foto_atual=caminho))
+
+    assert estoque.compras[1].compra.itens[0].imagem_caminho is None
+    assert not estoque.imagens
+
+
+def test_foto_nova_vence_a_foto_anterior(estoque):
+    registrar(item(0, "acessorio"), fotos={0: ("a.png", PNG)})
+    anterior = estoque.compras[1].compra.itens[0].imagem_caminho
+
+    registrar(item(0, "acessorio", foto_atual=anterior), fotos={0: ("n.jpg", JPEG)})
+
+    assert estoque.compras[2].compra.itens[0].imagem_caminho.endswith(".jpg")
+    assert len(estoque.imagens) == 2  # nada copiado
+
+
+def test_compra_que_falha_remove_a_copia_da_foto(estoque):
+    registrar(item(0, "acessorio"), fotos={0: ("a.png", PNG)})
+    anterior = estoque.compras[1].compra.itens[0].imagem_caminho
+    estoque.falhar_em.add("registrar")
+
+    resposta = enviar(compra(item(0, "acessorio", foto_atual=anterior)))
+
+    assert resposta.status_code >= 500
+    assert list(estoque.imagens) == [anterior]

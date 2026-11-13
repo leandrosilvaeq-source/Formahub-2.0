@@ -1574,3 +1574,82 @@ def test_cancelar_edicao_e_registrar_volta_ao_modo_de_compra_nova(pagina, com_co
     assert pagina.valor(linha(1, "cor")) == "" and pagina.valor("#compra-frete") == ""
     assert pagina.valor("#compra-desconto") == ""
     assert com_compra_editavel.edicoes == []
+
+
+def test_filtro_de_local_atualiza_a_lista_sem_recarregar_a_tela(pagina, com_compras):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    pagina.js("window.semRecarga = true")
+
+    pagina.js(
+        "(() => { const s = document.getElementById('compras-local');"
+        " s.value = 'aliexpress'; s.dispatchEvent(new Event('change', {bubbles: true})) })()"
+    )
+    nav.esperar(lambda: "local=aliexpress" in pagina.js("location.search"))
+
+    assert pagina.js("window.semRecarga") is True  # a tela não foi recarregada
+    assert pagina.js("document.getElementById('compras-local').value") == "aliexpress"
+    assert pagina.js("document.querySelectorAll('.compra-registro').length") == 0
+    assert "Nenhuma compra em AliExpress" in pagina.texto("#ultimas-compras")
+
+    # Voltando a "Todos", a tabela trocada continua abrindo a edição e a prévia das fotos.
+    pagina.js(
+        "(() => { const s = document.getElementById('compras-local');"
+        " s.value = 'todos'; s.dispatchEvent(new Event('change', {bubbles: true})) })()"
+    )
+    nav.esperar(lambda: pagina.js("document.querySelectorAll('.compra-registro').length") == 2)
+    pagina.js("document.querySelector('[data-editar-compra]').click()")
+    assert pagina.js("document.getElementById('compra-janela').open") is True
+    assert pagina.js("window.semRecarga") is True
+
+
+def test_item_ja_comprado_recebe_a_foto_anterior_e_salva_uma_copia(pagina, com_compras):
+    # A compra 1 tem um filamento com foto (PETG silk, cor e marca longas).
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    escolher_local(pagina, "shopee")
+    nome_da_foto = linha(1, "foto_atual").replace('[data-campo="foto_atual"]', ".upload-nome")
+    remover = nome_da_foto.replace(".upload-nome", ".upload-remover")
+    anterior = "compras/1/itens/1/0f8fad5b-d9cb-469f-a165-70867728950e.png"
+
+    preencher_filamento(pagina, 1, cor="azul petróleo metalizado bem comprido", material="PETG")
+    # Marca diferente ("Marca Teste"): ainda não é o mesmo item.
+    assert pagina.js(f"document.querySelector('{linha(1, 'foto_atual')}').value") == ""
+    pagina.js(f"document.querySelector('{linha(1, 'marca')}').value = ''")
+    preencher(pagina, {linha(1, "marca"): "marca com nome bem comprido ltda"})
+
+    assert pagina.texto(nome_da_foto) == "Foto anterior"
+    assert pagina.js(f"document.querySelector('{linha(1, 'foto_atual')}').value") == anterior
+
+    # Outro item (cor diferente): a foto sugerida sai; voltando, ela volta.
+    preencher(pagina, {linha(1, "cor"): " X"})
+    assert pagina.js(f"document.querySelector('{linha(1, 'foto_atual')}').value") == ""
+    assert pagina.js(f"document.querySelector('{remover}').hidden") is True
+    pagina.js(f"document.querySelector('{linha(1, 'cor')}').value = ''")
+    preencher(pagina, {linha(1, "cor"): "Azul Petróleo Metalizado Bem Comprido"})
+    assert pagina.texto(nome_da_foto) == "Foto anterior"
+
+    salvar(pagina)
+    esperar_fim_do_envio(pagina)
+
+    (item,) = com_compras.compras[3].compra.itens
+    assert item.imagem_caminho.startswith("compras/3/itens/1/")
+    assert com_compras.imagens[item.imagem_caminho] == com_compras.imagens[anterior]
+
+
+def test_foto_anterior_removida_nao_volta_sozinha(pagina, com_compras):
+    pagina.tela(1280, 900)
+    pagina.abrir("/compras")
+    abrir_janela(pagina)
+    remover = linha(1, "foto_atual").replace('[data-campo="foto_atual"]', ".upload-remover")
+    preencher_filamento(pagina, 1, cor="Azul Petróleo Metalizado Bem Comprido", material="PETG")
+    pagina.js(f"document.querySelector('{linha(1, 'marca')}').value = ''")
+    preencher(pagina, {linha(1, "marca"): "Marca Com Nome Bem Comprido Ltda"})
+    assert pagina.js(f"document.querySelector('{linha(1, 'foto_atual')}').value") != ""
+
+    pagina.clicar(remover)
+    preencher(pagina, {linha(1, "marca"): " "})  # digitar de novo não traz a foto de volta
+
+    assert pagina.js(f"document.querySelector('{linha(1, 'foto_atual')}').value") == ""
+    assert pagina.js(f"document.querySelector('{remover}').hidden") is True

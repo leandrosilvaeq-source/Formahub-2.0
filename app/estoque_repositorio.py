@@ -191,6 +191,8 @@ class RepositorioEstoque(Protocol):
 
     def remover_imagens(self, caminhos: list[str]) -> None: ...
 
+    def copiar_imagem(self, origem: str, destino: str) -> None: ...
+
     def registrar_compra(self, compra: CompraParaGravar) -> bool:
         """Grava compra, itens e lotes numa única transação (ou nada).
 
@@ -381,6 +383,10 @@ class RepositorioEstoqueSupabase:
     def remover_imagens(self, caminhos: list[str]) -> None:
         bucket = self._c.storage.from_(BUCKET_IMAGENS)
         self._executar("a remoção das fotos", lambda: bucket.remove(list(caminhos)))
+
+    def copiar_imagem(self, origem: str, destino: str) -> None:
+        bucket = self._c.storage.from_(BUCKET_IMAGENS)
+        self._executar("a cópia da foto", lambda: bucket.copy(origem, destino))
 
     def registrar_compra(self, compra: CompraParaGravar) -> bool:
         parametros = {
